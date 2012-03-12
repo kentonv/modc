@@ -1,0 +1,225 @@
+// Kenton's Code Playground -- http://code.google.com/p/kentons-code
+// Author: Kenton Varda (temporal@gmail.com)
+// Copyright (c) 2012 Google, Inc. and contributors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// I only wrote this file for outlining purposes...  the actual code probably won't use protobufs.
+
+package modc.ast;
+
+message Block {
+  repeated Statement statement = 1;
+}
+
+message Visibility {  // union
+  optional string module_prefix = 1;
+
+  optional ScopeName scope_name = 2;
+  message ScopeName {
+    required bool relative = 2;
+    repeated string name_part = 1;
+  }
+}
+
+message Statement {  // union
+  optional Block sub_block = 10;
+
+  optional Assignment assignment = 1;
+  message Assignment {
+    required Expression variable = 1;
+    required Expression value = 2;
+
+    repeated Visibility visibility = 4;
+
+    // E.g. ADDITION for "+=".
+    optional BinaryOperator compound_op = 3;
+  }
+
+  optional Expression expression = 2;
+  optional Expression return_statement = 7;
+
+  optional BreakStatement break_statement = 8;
+  message BreakStatement {
+    required string iterator_name = 1;
+  }
+
+  optional VariableDeclaration variable_declaration = 3;  // type required
+  message VariableDeclaration {
+    required string name = 1;
+    required BindingType binding_type = 2;
+    optional Expression type = 3;
+  }
+
+  optional VariableDefinition variable_definition = 5;
+  message VariableDefinition {
+    optional bool is_public = 3 [default=false];
+
+    required VariableDeclaration declaration = 1;
+    required Expression value = 2;
+  }
+
+  optional ForLoop for_loop = 4;
+  message ForLoop {
+    required VariableDeclaration iterator_declaration = 1;
+
+    // If not given, then the type is required in iterator_declaration.
+    optional Expression collection = 2;
+
+    // If more than this many elements, fork some threads.
+    optional int32 parallelism_interval = 3;
+  }
+
+  optional MethodDefinition method_definition = 6;
+  message MethodDefinition {
+    optional bool is_public = 6 [default=false];
+
+    required string name = 1;
+    required BindingType return_type = 2;
+    repeated Parameter parameter = 3;
+    repeated Parameter named_parameter = 7;
+    message Parameter {
+      // union
+      optional VariableDeclaration variable = 1;
+      optional Expression exact_value = 2;
+      // TODO:  patterns?
+    }
+
+    // Cannot be "NORMAL".
+    optional BindingType this_binding_type = 4 [default=IMMUTABLE_REFERENCE];
+
+    repeated Statement statement = 5;
+  }
+
+  optional ParallelBlock parallel_block = 9;
+  message ParallelBlock {
+    repeated Block block = 1;
+  }
+}
+
+enum BindingType {
+  NORMAL = 0;
+  IMMUTABLE_REFERENCE = 1;
+  MUTABLE_REFERENCE = 2;
+  ENTANGLED_REFERENCE = 3;
+}
+
+enum BindingAllowance {
+  VALUE_ONLY = 0;
+  EXPLICIT_MOVE = 1;
+  MUTABLE_REFERENCE = 2;
+}
+
+// Should these be strings?
+enum BinaryOperator {
+  ADDITION = 1;
+  SUBTRACTION = 2;
+  MULTIPLICATION = 3;
+  DIVISION = 4;
+  MODULUS = 5;
+  POWER = 6;
+
+  AND = 7;
+  OR = 8;
+  XOR = 9;
+
+  LEFT_SHIFT = 10;
+  RIGHT_SHIFT = 11;
+
+  EQUALS = 12;
+  NOT_EQUALS = 13;
+  LESS_THAN = 14;
+  GREATER_THAN = 15;
+  LESS_OR_EQUAL = 16;
+  GREATER_OR_EQUAL = 17;
+
+  SHORT_CIRCUIT_AND = 18;
+  SHORT_CIRCUIT_OR = 19;
+}
+
+enum UnaryOperator {
+  NOT = 1;
+  NEGATE = 2;
+}
+
+message Expression {  // union
+  optional string varibale = 6;
+
+  optional Literal literal = 9;
+  message Literal {
+    optional int32 int_literal = 1;
+    optional int64 int64_literal = 2;
+    optional uint32 uint_literal = 3;
+    optional uint64 uint64_literal = 4;
+    optional bytes bigint_literal = 5;
+
+    optional float float_literal = 6;
+    optional double double_literal = 7;
+
+    optional string string_literal = 8;
+
+    optional bool boolean_literal = 9;
+  }
+
+  optional BinaryOpApplication binary_operator = 1;
+  message BinaryOpApplication {
+    required BinaryOperator op = 1;
+    required Expression left = 2;
+    required Expression right = 3;
+  }
+
+  optional UnaryOpApplication unary_operator = 2;
+  message UnaryOpApplication {
+    required UnaryOperator op = 1;
+    required Expression operand = 2;
+  }
+
+  optional FunctionCall function_call = 3;
+  message FunctionCall {
+    required Expression function = 1;
+    repeated Parameter parameter = 2;
+    message Parameter {
+      required Expression experssion = 1;
+      required BindingAllowance binding_allowance = 2;
+    }
+  }
+
+  optional MemberAccess member_access = 4;
+  message MemberAccess {
+    required Expression object = 1;
+    required string member_name = 2;
+  }
+
+  optional Subscript subscript = 10;
+  message Subscript {
+    required Expression container = 1;
+    required Expression key = 2;
+  }
+
+  optional Conditional conditional = 8;
+  message Conditional {
+    required Expression condition = 1;
+    required Expression if_true = 2;
+    required Expression if_false = 3;
+  }
+
+  optional Lambda lambda = 5;
+  message Lambda {
+    // TODO
+  }
+
+  optional Import import = 7;
+  message Import {
+    required string filename = 1;
+  }
+}
