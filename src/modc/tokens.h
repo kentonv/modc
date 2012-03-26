@@ -19,9 +19,17 @@
 
 #include <string>
 #include <vector>
+#include <set>
 #include <stdint.h>
 
 #include "base/OwnedPtr.h"
+#include "Maybe.h"
+
+namespace modc {
+  namespace chars {
+    class CharClass;
+  }
+}
 
 namespace modc {
 namespace tokens {
@@ -30,45 +38,36 @@ using ekam::OwnedPtr;
 using ekam::newOwned;
 using std::string;
 
-enum class Keyword {
+class Token;
+class TokenSequence;
 
-};
+Token errorToken();
 
-class Tree;
+Token keyword(string&& keyword);
+Token keyword(const string& keyword);
+Token identifier(string&& name);
+Token identifier(const string& name);
 
-Tree parse(const string& text);
+Token bracketed(std::vector<TokenSequence>&& content);
+Token bracketed(const std::vector<TokenSequence>& content);
+Token parenthesized(std::vector<TokenSequence>&& content);
+Token parenthesized(const std::vector<TokenSequence>& content);
 
-Tree keyword(Keyword keyword);
-Tree identifier(string&& name);
-Tree identifier(const string& name);
-Tree sequence(std::vector<Tree>&& elements);
-Tree sequence(const std::vector<Tree>& elements);
+Token literal(int value);
+Token literal(double value);
+Token literal(string&& value);
+Token literal(const string& value);
 
-Tree block(std::vector<Tree>&& statements);
-Tree block(const std::vector<Tree>& statements);
-Tree bracketed(Tree&& content);
-Tree bracketed(const Tree& content);
-Tree parenthesized(Tree&& content);
-Tree parenthesized(const Tree& content);
-Tree list(std::vector<Tree>&& elements);
-Tree list(const std::vector<Tree>& elements);
-
-Tree literal(int value);
-Tree literal(double value);
-Tree literal(string&& value);
-Tree literal(const string& value);
-
-class Tree {
+class Token {
 public:
   enum class Type {
+    ERROR,
+
     KEYWORD,
     IDENTIFIER,
-    SEQUENCE,
 
-    BLOCK,
     BRACKETED,
     PARENTHESIZED,
-    LIST,
 
     LITERAL_INT,
     LITERAL_DOUBLE,
@@ -77,37 +76,30 @@ public:
     // TODO:  Empty lines, comments -- should these be allowed only between statements?
   };
 
-  Tree(Tree&& other);
-  Tree(const Tree& other);
-  ~Tree();
+  Token(Token&& other);
+  Token(const Token& other);
+  ~Token();
 
-  Tree& operator=(Tree&& other);
-  Tree& operator=(const Tree& other);
+  Token& operator=(Token&& other);
+  Token& operator=(const Token& other);
 
-  const Type type;
+  bool operator==(const Token& other) const;
+  bool operator!=(const Token& other) const { return !(*this == other); }
+
+  Type getType() const { return type; }
 
   union {
     // A keyword or symbol.
-    Keyword keyword;
+    string keyword;
 
     // An identifier, e.g. a variable name.
     string identifier;
 
-    // A sequence of tokens with no particular separator.
-    std::vector<Tree> sequence;
+    // Comma-delimited token sequences in square brackets.
+    std::vector<TokenSequence> bracketed;
 
-    // A block in curly-braces consisting of statements terminated by either a semicolon or a
-    // sub-block.
-    std::vector<Tree> block;
-
-    // Expression in square brackets.
-    OwnedPtr<Tree> bracketed;
-
-    // Expression in parentheses.
-    OwnedPtr<Tree> parenthesized;
-
-    // A comma-separated list.
-    std::vector<Tree> list;
+    // Comma-delimited token sequences in parentheses.
+    std::vector<TokenSequence> parenthesized;
 
     // A literal value.
     int literalInt;
@@ -120,58 +112,75 @@ public:
   int length;
 
 private:
-  Tree(Type type);
+  Type type;
 
-  friend Tree keyword(Keyword keyword);
-  friend Tree identifier(string&& name);
-  friend Tree identifier(const string& name);
-  friend Tree sequence(std::vector<Tree>&& elements);
-  friend Tree sequence(const std::vector<Tree>& elements);
+  Token(Type type);
 
-  friend Tree block(std::vector<Tree>&& statements);
-  friend Tree block(const std::vector<Tree>& statements);
-  friend Tree bracketed(Tree&& content);
-  friend Tree bracketed(const Tree& content);
-  friend Tree parenthesized(Tree&& content);
-  friend Tree parenthesized(const Tree& content);
-  friend Tree list(std::vector<Tree>&& elements);
-  friend Tree list(const std::vector<Tree>& elements);
+  friend Token keyword(string&& keyword);
+  friend Token keyword(const string& keyword);
+  friend Token identifier(string&& name);
+  friend Token identifier(const string& name);
 
-  friend Tree literal(int value);
-  friend Tree literal(double value);
-  friend Tree literal(string&& value);
-  friend Tree literal(const string& value);
+  friend Token bracketed(std::vector<TokenSequence>&& content);
+  friend Token bracketed(const std::vector<TokenSequence>& content);
+  friend Token parenthesized(std::vector<TokenSequence>&& content);
+  friend Token parenthesized(const std::vector<TokenSequence>& content);
+
+  friend Token literal(int value);
+  friend Token literal(double value);
+  friend Token literal(string&& value);
+  friend Token literal(const string& value);
 };
 
-template <typename T>
-void appendAll(std::vector<T>& vec) {}
+std::ostream& operator<<(std::ostream& os, const Token& token);
 
-template <typename T, typename First, typename... Rest>
-void appendAll(std::vector<T>& vec, First&& first, Rest&&... rest) {
-  vec.push_back(std::forward<First>(first));
-  appendAll(vec, std::forward<Rest>(rest)...);
-}
+class TokenSequence {
+public:
+  std::vector<Token> tokens;
 
-template <typename... Params>
-Tree sequence(Params&&... params) {
-  std::vector<Tree> vec;
-  appendAll(vec, params...);
-  return sequence(std::move(vec));
-}
+  bool operator==(const TokenSequence& other) const { return tokens == other.tokens; }
+  bool operator!=(const TokenSequence& other) const { return tokens != other.tokens; }
+};
 
-template <typename... Params>
-Tree block(Params&&... params) {
-  std::vector<Tree> vec;
-  appendAll(vec, params...);
-  return block(std::move(vec));
-}
+std::ostream& operator<<(std::ostream& os, const TokenSequence& sequence);
 
-template <typename... Params>
-Tree list(Params&&... params) {
-  std::vector<Tree> vec;
-  appendAll(vec, params...);
-  return list(std::move(vec));
-}
+class Statement {
+public:
+  TokenSequence tokens;
+  Maybe<std::vector<Statement>> block;
+
+  bool operator==(const Statement& other) const;
+  bool operator!=(const Statement& other) const { return !(*this == other); }
+};
+
+std::ostream& operator<<(std::ostream& os, const Statement& statement);
+
+class Parser {
+public:
+  Parser(std::set<string> keywords);
+
+  std::vector<Statement> parse(const string& text);
+
+  const std::vector<string>& getErrors() { return errors; }
+
+private:
+  std::set<string> keywords;
+  std::vector<string> errors;
+
+  class Reader;
+
+  int parseInt(const string& str, int base);
+  double parseDouble(const string& str);
+  string toUtf8(char16_t c);
+  string toUtf8(char32_t c);
+  char interpretEscape(char c);
+
+  Token parseQuote(Reader& reader, const chars::CharClass& quotable, const chars::CharClass& quote);
+  Token parseNumber(Reader& reader);
+  TokenSequence parseSequence(Reader& reader);
+  void skipStatement(Reader& reader);
+  Statement parseStatement(Reader& reader);
+};
 
 }  // namespace tokens
 }  // namespace modc

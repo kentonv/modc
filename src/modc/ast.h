@@ -17,53 +17,18 @@
 #ifndef KENTONSCODE_MODC_AST_H_
 #define KENTONSCODE_MODC_AST_H_
 
-#include <map>
 #include <string>
 #include <vector>
 
 #include "base/OwnedPtr.h"
+#include "Maybe.h"
 
 namespace modc {
+namespace ast {
 
-using namespace ekam;
 using std::string;
-
-template <typename T> class Array;
-template <typename T> class Maybe;
-
-namespace tokens {
-  class Tree;
-}
-
-class CodePrinter;
-
-class Type;
-class Value;
-class Function;
-
-class Descriptor;
-class Visibility;
-class UnboundName;
-
-class Block;
-class Statement;
-class Expression;
-
-class Scope;
-
-class Value {
-public:
-};
-
-class Type {
-public:
-
-};
-
-class Function {
-public:
-
-};
+using ekam::OwnedPtr;
+using ekam::Indirect;
 
 enum class Kind {
   VARIABLE,
@@ -72,151 +37,206 @@ enum class Kind {
   ERROR
 };
 
-class UnboundName {
-public:
-  bool relative;
-  std::vector<string> parts;
+enum class Style {
+  VALUE,
+  IMMUTABLE_REFERENCE,
+  MUTABLE_REFERENCE,
+  ENTANGLED_REFERENCE
 };
 
-class Visibility {
-public:
-};
-
-class ValueDescriptor {
-public:
-  OwnedPtr<Type> type;
-
-  enum class Style {
-    VALUE,
-    IMMUTABLE_REFERENCE,
-    MUTABLE_REFERENCE,
-    ENTANGLED_REFERENCE
-  };
-
-  Style style;
-
-  // TODO:  lifecycle
-  // TODO:  range
-  // TODO:  stage
-
-  // TODO:  constant value?  Do we put that here or in Binding?
-};
-
-class TypeDescriptor {
-public:
-  OwnedPtr<Type> supertype;
-
-  OwnedPtrMap<string, Descriptor> members;
-};
-
-class FunctionDescriptor {
-public:
-  class Parameter {
-  public:
-    string name;
-    bool isType;
-    union {
-      ValueDescriptor value;
-      TypeDescriptor type;
-    };
-  };
-  OwnedPtrVector<Parameter> parameters;
-
-  bool returnsType;
-  union {
-    ValueDescriptor returnValue;
-    TypeDescriptor returnType;
-  };
-};
-
-class Descriptor {
-public:
-  Descriptor() = delete;
-  Descriptor(Kind kind);
-  Descriptor(ValueDescriptor&& valueDescriptor);
-  Descriptor(TypeDescriptor&& typeDescriptor);
-  Descriptor(FunctionDescriptor&& functionDescriptor);
-  Descriptor(Descriptor&& other);
-  ~Descriptor();
-
-  const Kind kind;
-
-  union {
-    ValueDescriptor value;
-    TypeDescriptor type;
-    FunctionDescriptor funciton;
-  };
-};
-
-extern const Descriptor errorDescriptor;
-
-enum class ScopeType {
-  CLASS,
-  FUNCTION
-};
-
-class Binding {
-public:
-  virtual const Descriptor& descriptor() const = 0;
-
-  virtual const Scope& scope() const = 0;
-
-  inline bool operator==(const Binding& other) const { return this == &other; }
-  inline bool operator!=(const Binding& other) const { return this != &other; }
-};
-
-class Scope {
-public:
-  const Binding& lookupBinding(const string& name) const;
-
-  Binding& declareValueBinding(const string& name, ValueDescriptor&& descriptor);
-
-  void declareBinding(const string& name, Descriptor&& descriptor);
-
-  // Return false if already initialized, in which case the statement should probably be considered
-  // an assignment instead of an initialization.
-  bool initializeBinding(const string& name);
-
-  // Code will be compiled on-demand.
-  void declareClass(const string& name, const Block& code);
-
-  // Code will be compiled on-demand.
-  void declareFunction(const string& name, Function&& function, const Block& code);
-
-private:
-  const Scope& parent;
-
-  OwnedPtrMap<string, Binding> bindings;
-  std::map<string, OwnedPtrVector<Function> > functions;
-};
-
-class CompiledStatement {
-public:
-  virtual void toCpp(CodePrinter& printer) const = 0;
-};
-
-class CompiledExpression {
-public:
-  virtual const Descriptor& descriptor() const = 0;
-  virtual void toCpp(CodePrinter& printer) const = 0;
-};
-
-class Statement {
-public:
-  virtual ~Statement();
-
-  virtual void toCode(CodePrinter& printer) const = 0;
-  virtual OwnedPtr<CompiledStatement> bind(Scope& scope) const = 0;
+enum class StyleAllowance {
+  VALUE_ONLY,
+  EXPLICIT_MOVE,
+  MUTABLE_REFERENCE
 };
 
 class Expression {
 public:
-  virtual ~Expression();
+  Expression(Expression&& other);
+  Expression(const Expression& other);
+  ~Expression();
 
-  virtual void toCode(CodePrinter& printer) const = 0;
-  virtual OwnedPtr<CompiledExpression> bind(Scope& scope) const = 0;
+  Expression& operator=(Expression&& other);
+  Expression& operator=(const Expression& other);
+
+  bool operator==(const Expression& other) const;
+  bool operator!=(const Expression& other) const { return !(*this == other); }
+
+  enum class Type {
+    ERROR,
+
+    LITERAL_INT,
+    LITERAL_DOUBLE,
+    LITERAL_STRING,
+    LITERAL_ARRAY,
+
+    BINARY_OPERATOR,
+    UNARY_OPERATOR,
+
+    FUNCTION_CALL,
+    SUBSCRIPT,
+    MEMBER_ACCESS,
+    CONDITIONAL,
+
+    LAMBDA,
+    IMPORT
+  };
+
+  Type getType();
+
+  struct BinaryOperator {
+    string op;
+    Indirect<Expression> left;
+    Indirect<Expression> right;
+
+    bool operator==(const BinaryOperator& other) const {
+      return op == other.op && left == other.left && right == other.right;
+    }
+  };
+
+  struct UnaryOperator {
+    string op;
+    Indirect<Expression> value;
+
+    bool operator==(const UnaryOperator& other) const {
+      return op == other.op && value == other.value;
+    }
+  };
+
+  struct FunctionCall {
+    Indirect<Expression> function;
+    struct Parameter {
+      Indirect<Expression> expression;
+      StyleAllowance styleAllowance;
+
+      bool operator==(const Parameter& other) const {
+        return expression == other.expression && styleAllowance == other.styleAllowance;
+      }
+    };
+    std::vector<Parameter> parameters;
+
+    bool operator==(const FunctionCall& other) const {
+      return function == other.function && parameters == other.parameters;
+    }
+  };
+
+  struct Subscript {
+    Indirect<Expression> container;
+    Indirect<Expression> subscript;
+
+    bool operator==(const Subscript& other) const {
+      return container == other.container && subscript == other.subscript;
+    }
+  };
+
+  struct MemberAccess {
+    Indirect<Expression> object;
+    string member;
+
+    bool operator==(const MemberAccess& other) const {
+      return object == other.object && member == other.member;
+    }
+  };
+
+  struct Conditional {
+    Indirect<Expression> condition;
+    Indirect<Expression> ifTrue;
+    Indirect<Expression> ifFalse;
+
+    bool operator==(const Conditional& other) const {
+      return condition == other.condition && ifTrue == other.ifTrue && ifFalse == other.ifFalse;
+    }
+  };
+
+  struct Lambda {
+    struct Parameter {
+      string name;
+      Style style;
+      Maybe<Indirect<Expression>> type;
+
+      bool operator==(const Parameter& other) const {
+        return name == other.name && style == other.style && type == other.type;
+      }
+    };
+    std::vector<Parameter> parameters;
+    Indirect<Expression> body;
+
+    bool operator==(const Lambda& other) const {
+      return parameters == other.parameters && body == other.body;
+    }
+  };
+
+  union {
+    int literalInt;
+    double literalDouble;
+    string literalString;
+    std::vector<Expression> literalArray;
+
+    BinaryOperator binaryOperator;
+    UnaryOperator unaryOperator;
+
+    FunctionCall functionCall;
+    Subscript subscript;
+    MemberAccess memberAccess;
+    Conditional conditional;
+
+    Lambda lambda;
+    string import;
+  };
+
+private:
+  Type type;
 };
 
+class Statement {
+public:
+  Statement(Statement&& other);
+  Statement(const Statement& other);
+  ~Statement();
+
+  Statement& operator=(Statement&& other);
+  Statement& operator=(const Statement& other);
+
+  bool operator==(const Statement& other);
+  bool operator!=(const Statement& other) { return !(*this == other); }
+
+  enum class Type {
+    ERROR,
+
+    EXPRESSION,
+    RETURN,
+    BREAK,
+
+    VARIABLE_DECLARATION,
+    VARIABLE_DEFINITION,
+    VARIABLE_ASSIGNMENT,
+
+    METHOD_DECLARATION,
+    METHOD_DEFINITION,
+
+    SUB_BLOCK,
+    IF,
+    ELSE,
+    FOR,
+    WHILE,
+    LOOP,
+    PARALLEL
+
+    // TODO:  Type definitions.
+  };
+
+  Type getType();
+
+  union {
+    Expression expression;
+    Expression return_;
+    string break_;
+
+    // TODO
+  };
+};
+
+}  // namespace ast
 }  // namespace modc
 
 #endif /* KENTONSCODE_MODC_AST_H_ */
