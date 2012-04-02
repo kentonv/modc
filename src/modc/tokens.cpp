@@ -22,6 +22,7 @@
 
 #include "base/Debug.h"
 #include "chars.h"
+#include "errors.h"
 
 namespace modc {
 namespace tokens {
@@ -35,6 +36,7 @@ Token::Token(Type type): type(type) {}
 Token::Token(Token&& other): type(other.type) {
   switch (type) {
     case Type::ERROR:
+      new (&error) std::vector<errors::Error>(move(other.error));
       break;
 
     case Type::KEYWORD:
@@ -66,6 +68,7 @@ Token::Token(Token&& other): type(other.type) {
 Token::Token(const Token& other): type(other.type) {
   switch (type) {
     case Type::ERROR:
+      new (&error) std::vector<errors::Error>(other.error);
       break;
 
     case Type::KEYWORD:
@@ -97,6 +100,7 @@ Token::Token(const Token& other): type(other.type) {
 Token::~Token() {
   switch (type) {
     case Type::ERROR:
+      error.~vector<errors::Error>();
       break;
 
     case Type::KEYWORD:
@@ -140,7 +144,7 @@ bool Token::operator==(const Token& other) const {
   if (type == other.type) {
     switch (type) {
       case Type::ERROR:
-        return true;
+        return error == other.error;
 
       case Type::KEYWORD:
         return keyword == other.keyword;
@@ -165,6 +169,31 @@ bool Token::operator==(const Token& other) const {
 }
 
 // =======================================================================================
+
+Token errorToken(errors::Error&& error) {
+  Token result(Token::Type::ERROR);
+  new (&result.error) std::vector<errors::Error>();
+  result.error.push_back(move(error));
+  return result;
+}
+Token errorToken(const errors::Error& error) {
+  Token result(Token::Type::ERROR);
+  new (&result.error) std::vector<errors::Error>();
+  result.error.push_back(error);
+  return result;
+}
+
+Token errorToken(std::vector<errors::Error>&& errors) {
+  Token result(Token::Type::ERROR);
+  new (&result.error) std::vector<errors::Error>(move(errors));
+  return result;
+}
+
+Token errorToken(const std::vector<errors::Error>& errors) {
+  Token result(Token::Type::ERROR);
+  new (&result.error) std::vector<errors::Error>(errors);
+  return result;
+}
 
 Token keyword(string&& keyword) {
   Token result(Token::Type::KEYWORD);
@@ -234,9 +263,20 @@ Token literal(const string& value) {
 
 std::ostream& operator<<(std::ostream& os, const Token& token) {
   switch (token.getType()) {
-    case Token::Type::ERROR:
-      os << "errorToken()";
+    case Token::Type::ERROR: {
+      os << "errorToken([";
+      bool first = true;
+      for (const errors::Error& error : token.error) {
+        if (first) {
+          first = false;
+        } else {
+          os << ", ";
+        }
+        os << error;
+      }
+      os << "])";
       break;
+    }
 
     case Token::Type::KEYWORD:
       os << "keyword(" << token.keyword << ")";
@@ -363,9 +403,11 @@ Parser::Parser(std::set<string> keywords): keywords(move(keywords)) {}
 class Parser::Reader {
 public:
   Reader(const string& text, std::vector<string>& errors)
-      : parent(NULL), errors(errors), start(&text.front()), end(start), limit(&text.back() + 1) {}
+      : parent(NULL), errors(errors), fileStart(&text.front()), start(fileStart), end(start),
+        limit(&text.back() + 1) {}
   Reader(Reader& parent)
-      : parent(&parent), errors(parent.errors), start(parent.end), end(start), limit(parent.limit) {
+      : parent(&parent), errors(parent.errors), fileStart(parent.fileStart), start(parent.end),
+        end(start), limit(parent.limit) {
     parent.end = NULL;
   }
 
@@ -402,28 +444,37 @@ public:
   }
 
   template <typename... Parts>
-  void error(Parts&&... message) {
-    std::ostringstream os;
-    // TODO:  line/column number
-    os << "\"" << string(start, end) << "\": ";
-    writeError(os, std::forward<Parts>(message)...);
-    errors.push_back(os.str());
+  errors::Error error(Parts&&... message) {
+    return errors::error(start - fileStart, end - fileStart, std::forward<Parts>(message)...);
+  }
+
+  template <typename... Parts>
+  errors::Error errorAtEnd(int byteCount, Parts&&... message) {
+    if (byteCount > end - start) {
+      DEBUG_ERROR << "errorAtEnd() byteCount overflow.";
+    }
+
+    return errors::error(end - fileStart - byteCount, end - fileStart,
+                         std::forward<Parts>(message)...);
+  }
+
+  template <typename... Parts>
+  Token errorToken(Parts&&... message) {
+    return tokens::errorToken(error(std::forward<Parts>(message)...));
+  }
+
+  template <typename... Parts>
+  Token errorTokenAtEnd(int byteCount, Parts&&... message) {
+    return tokens::errorToken(errorAtEnd(byteCount, std::forward<Parts>(message)...));
   }
 
 private:
   Reader* const parent;
   std::vector<string>& errors;
+  const char* const fileStart;
   const char* const start;
   const char* end;
   const char* const limit;
-
-  void writeError(std::ostream& os) {}
-
-  template <typename Part1, typename... Parts>
-  void writeError(std::ostream& os, Part1&& part1, Parts&&... message) {
-    os << std::forward<Part1>(part1);
-    writeError(os, std::forward<Parts>(message)...);
-  }
 };
 
 int Parser::parseInt(const string& str, int base) {
@@ -516,6 +567,7 @@ char Parser::interpretEscape(char c) {
 Token Parser::parseQuote(Reader& reader, const CharClass& quotable, const CharClass& quote) {
   Reader span(reader);
   string text;
+  std::vector<errors::Error> errors;
 
   span.tryConsume(quote);
 
@@ -553,7 +605,7 @@ Token Parser::parseQuote(Reader& reader, const CharClass& quotable, const CharCl
             charCodeSpan.tryConsume(chars::HEX_DIGIT)) {
           text += (char) parseInt(charCodeSpan.content(), 16);
         } else {
-          charCodeSpan.error("Expected two hex digits for \\x.");
+          errors.push_back(charCodeSpan.error("Expected two hex digits for \\x."));
         }
       } else if (escapeSpan.tryConsume('u')) {
         Reader charCodeSpan(escapeSpan);
@@ -563,7 +615,7 @@ Token Parser::parseQuote(Reader& reader, const CharClass& quotable, const CharCl
             charCodeSpan.tryConsume(chars::HEX_DIGIT)) {
           text += toUtf8((char16_t) parseInt(charCodeSpan.content(), 16));
         } else {
-          charCodeSpan.error("Expected four hex digits for \\u.");
+          errors.push_back(charCodeSpan.error("Expected four hex digits for \\u."));
         }
       } else if (escapeSpan.tryConsume('U')) {
         Reader charCodeSpan(escapeSpan);
@@ -577,33 +629,38 @@ Token Parser::parseQuote(Reader& reader, const CharClass& quotable, const CharCl
             charCodeSpan.tryConsume(chars::HEX_DIGIT)) {
           char32_t rune = (char32_t) parseInt(charCodeSpan.content(), 16);
           if (rune >= 0x80000000) {
-            charCodeSpan.error("Code point too large; maximum size is 31 bits.");
+            errors.push_back(charCodeSpan.error("Code point too large; maximum size is 31 bits."));
           } else {
             text += toUtf8(rune);
           }
         } else {
-          escapeSpan.error("Expected eight hex digits for \\U.");
+          errors.push_back(escapeSpan.error("Expected eight hex digits for \\U."));
         }
       } else {
-        escapeSpan.error("Invalid escape sequence.");
+        errors.push_back(escapeSpan.error("Invalid escape sequence."));
       }
     } else if (unquotableSpan.tryConsume(quote)) {
       break;
     } else if (!unquotableSpan.lookingAt(chars::ANY)) {
-      unquotableSpan.error("Unexpected EOF in string literal.");
+      errors.push_back(unquotableSpan.error("Unexpected EOF in string literal."));
       break;
     } else if (unquotableSpan.lookingAt(chars::UNPRINTABLE)) {
       unquotableSpan.consumeAll(chars::UNPRINTABLE);
-      unquotableSpan.error("Unprintable characters in string literal must be escaped.");
+      errors.push_back(unquotableSpan.error(
+          "Unprintable characters in string literal must be escaped."));
       text += unquotableSpan.content();
     } else {
       // Shouldn't get here.
       unquotableSpan.tryConsume(chars::ANY);
-      unquotableSpan.error("Internal error:  Character not handled.");
+      errors.push_back(unquotableSpan.error("Internal error:  Character not handled."));
     }
   }
 
-  return literal(text);
+  if (errors.empty()) {
+    return literal(move(text));
+  } else {
+    return errorToken(move(errors));
+  }
 }
 
 Token Parser::parseNumber(Reader& reader) {
@@ -645,7 +702,7 @@ TokenSequence Parser::parseSequence(Reader& reader) {
       case CharType::UNPRINTABLE: {
         Reader span(reader);
         span.consumeAll(chars::UNPRINTABLE);
-        span.error("Encountered unprintable characters.");
+        result.tokens.push_back(span.errorToken("Encountered unprintable characters."));
         break;
       }
 
@@ -663,7 +720,7 @@ TokenSequence Parser::parseSequence(Reader& reader) {
         while (!op.empty()) {
           for (string::size_type i = op.size(); ; i--) {
             if (i == 0) {
-              span.error("Invalid operator: ", op);
+              result.tokens.push_back(span.errorTokenAtEnd(op.size(), "Invalid operator: ", op));
               op.clear();
               break;
             }
@@ -696,7 +753,8 @@ TokenSequence Parser::parseSequence(Reader& reader) {
         if (reader.lookingAt(chars::ALPHANUMERIC)) {
           Reader span(reader);
           span.consumeAll(chars::ALPHANUMERIC);
-          span.error("Need space before additional letters/digits after end of number.");
+          result.tokens.push_back(span.errorToken(
+              "Need space before additional letters/digits after end of number."));
         }
         break;
       }
@@ -730,11 +788,11 @@ TokenSequence Parser::parseSequence(Reader& reader) {
               terms.push_back(parseSequence(span));
             } while (span.tryConsume(','));
 
-            if (!span.tryConsume(')')) {
-              span.error("Expected ')'.");
+            if (span.tryConsume(')')) {
+              result.tokens.push_back(parenthesized(move(terms)));
+            } else {
+              result.tokens.push_back(span.errorToken("Expected ')'."));
             }
-
-            result.tokens.push_back(parenthesized(move(terms)));
             break;
           }
 
@@ -747,25 +805,28 @@ TokenSequence Parser::parseSequence(Reader& reader) {
               terms.push_back(parseSequence(span));
             } while (span.tryConsume(','));
 
-            if (!span.tryConsume(']')) {
-              span.error("Expected ']'.");
+            if (span.tryConsume(']')) {
+              result.tokens.push_back(bracketed(move(terms)));
+            } else {
+              result.tokens.push_back(span.errorToken("Expected ']'."));
             }
 
-            result.tokens.push_back(bracketed(move(terms)));
             break;
           }
 
           case '_': {
             Reader span(reader);
             span.tryConsume('_');
-            span.error("Names beginning with an underscore are reserved for the implementation.");
+            span.consumeAll(chars::ALPHANUMERIC);
+            result.tokens.push_back(span.errorToken(
+                "Names beginning with an underscore are reserved for the implementation."));
             break;
           }
 
           default: {
             Reader span(reader);
             if (span.tryConsume(chars::ANY)) {
-              span.error("Unknown character.");
+              result.tokens.push_back(span.errorToken("Unknown character."));
             } else {
               // EOF
               return result;
@@ -797,19 +858,26 @@ Statement Parser::parseStatement(Reader& reader) {
     Reader blockSpan(span);
     blockSpan.tryConsume('{');
     result.block.init();
-    while (!blockSpan.tryConsume('}')) {
+    while (true) {
+      blockSpan.consumeAll(chars::WHITESPACE);
+
+      if (blockSpan.tryConsume('}')) {
+        break;
+      }
+
       if (blockSpan.lookingAt(chars::ANY)) {
         result.block->push_back(parseStatement(blockSpan));
       } else {
-        blockSpan.error("Block missing closing brace.");
+        Statement errorStatement;
+        errorStatement.tokens.tokens.push_back(
+            blockSpan.errorTokenAtEnd(0, "Block missing closing brace."));
+        result.block->push_back(errorStatement);
         break;
       }
     }
   } else if (!span.tryConsume(';')) {
-    if (!result.tokens.tokens.empty()) {
-      span.error("Expected ';'.");
-      skipStatement(span);
-    }
+    result.tokens.tokens.push_back(span.errorTokenAtEnd(0, "Expected ';'."));
+    skipStatement(span);
   }
   return result;
 }

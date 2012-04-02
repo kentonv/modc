@@ -24,6 +24,12 @@
 #include "Maybe.h"
 
 namespace modc {
+  namespace errors {
+    class Error;
+  }
+}
+
+namespace modc {
 namespace ast {
 
 using std::string;
@@ -45,13 +51,41 @@ enum class Style {
 };
 
 enum class StyleAllowance {
-  VALUE_ONLY,
-  EXPLICIT_MOVE,
+  VALUE,
   MUTABLE_REFERENCE
 };
 
+class Expression;
+
+Expression errorExpression(errors::Error&& error);
+Expression errorExpression(const errors::Error& error);
+Expression errorExpression(std::vector<errors::Error>&& errors);
+Expression errorExpression(const std::vector<errors::Error>& errors);
+
+Expression variable(string&& name);
+Expression variable(const string& name);
+
+Expression literalArray(std::vector<Expression>&& elements);
+Expression literalArray(const std::vector<Expression>& elements);
+
+Expression literalInt(int value);
+Expression literalDouble(double value);
+Expression literalString(string&& value);
+Expression literalString(const string& value);
+
+Expression import(string&& moduleName);
+Expression import(const string& moduleName);
+
+Expression subscript(Expression&& container, Expression&& key);
+Expression memberAccess(Expression&& object, const string& member);
+
+Expression binaryOperator(string&& op, Expression&& left, Expression&& right);
+
+Expression conditional(Expression&& condition, Expression&& trueClause, Expression&& falseClause);
+
 class Expression {
 public:
+  Expression();
   Expression(Expression&& other);
   Expression(const Expression& other);
   ~Expression();
@@ -167,6 +201,8 @@ public:
   };
 
   union {
+    std::vector<errors::Error> error;
+
     int literalInt;
     double literalDouble;
     string literalString;
@@ -197,8 +233,8 @@ public:
   Statement& operator=(Statement&& other);
   Statement& operator=(const Statement& other);
 
-  bool operator==(const Statement& other);
-  bool operator!=(const Statement& other) { return !(*this == other); }
+  bool operator==(const Statement& other) const;
+  bool operator!=(const Statement& other) const { return !(*this == other); }
 
   enum class Type {
     ERROR,
@@ -228,12 +264,17 @@ public:
   Type getType();
 
   union {
+    std::vector<errors::Error> error;
+
     Expression expression;
     Expression return_;
     string break_;
 
     // TODO
   };
+
+private:
+  Type type;
 };
 
 }  // namespace ast

@@ -29,6 +29,9 @@ namespace modc {
   namespace chars {
     class CharClass;
   }
+  namespace errors {
+    class Error;
+  }
 }
 
 namespace modc {
@@ -40,23 +43,6 @@ using std::string;
 
 class Token;
 class TokenSequence;
-
-Token errorToken();
-
-Token keyword(string&& keyword);
-Token keyword(const string& keyword);
-Token identifier(string&& name);
-Token identifier(const string& name);
-
-Token bracketed(std::vector<TokenSequence>&& content);
-Token bracketed(const std::vector<TokenSequence>& content);
-Token parenthesized(std::vector<TokenSequence>&& content);
-Token parenthesized(const std::vector<TokenSequence>& content);
-
-Token literal(int value);
-Token literal(double value);
-Token literal(string&& value);
-Token literal(const string& value);
 
 class Token {
 public:
@@ -89,6 +75,9 @@ public:
   Type getType() const { return type; }
 
   union {
+    // Placeholder indicating that token parsing failed.
+    std::vector<errors::Error> error;
+
     // A keyword or symbol.
     string keyword;
 
@@ -116,6 +105,11 @@ private:
 
   Token(Type type);
 
+  friend Token errorToken(errors::Error&& error);
+  friend Token errorToken(const errors::Error& error);
+  friend Token errorToken(std::vector<errors::Error>&& errors);
+  friend Token errorToken(const std::vector<errors::Error>& errors);
+
   friend Token keyword(string&& keyword);
   friend Token keyword(const string& keyword);
   friend Token identifier(string&& name);
@@ -131,6 +125,26 @@ private:
   friend Token literal(string&& value);
   friend Token literal(const string& value);
 };
+
+Token errorToken(errors::Error&& error);
+Token errorToken(const errors::Error& error);
+Token errorToken(std::vector<errors::Error>&& errors);
+Token errorToken(const std::vector<errors::Error>& errors);
+
+Token keyword(string&& keyword);
+Token keyword(const string& keyword);
+Token identifier(string&& name);
+Token identifier(const string& name);
+
+Token bracketed(std::vector<TokenSequence>&& content);
+Token bracketed(const std::vector<TokenSequence>& content);
+Token parenthesized(std::vector<TokenSequence>&& content);
+Token parenthesized(const std::vector<TokenSequence>& content);
+
+Token literal(int value);
+Token literal(double value);
+Token literal(string&& value);
+Token literal(const string& value);
 
 std::ostream& operator<<(std::ostream& os, const Token& token);
 
