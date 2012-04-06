@@ -19,27 +19,222 @@
 
 #include <utility>
 #include <vector>
+#include <string>
 
 #include "base/OwnedPtr.h"
-#include "modc/chars.h"
 #include "modc/errors.h"
 
 namespace modc {
-namespace ast {
+namespace parser {
 
 using ekam::OwnedPtr;
 using std::move;
+using std::remove_reference;
+using std::string;
+
+// I don't understand std::tuple.
+template <typename... T>
+struct Tuple;
+
+template <>
+struct Tuple<> {
+  Tuple() {}
+
+  template <typename ReturnType = void, typename Func, typename... InitialParams>
+  ReturnType apply(Func&& f, InitialParams&&... initialParams) const {
+    return f(std::forward<InitialParams>(initialParams)...);
+  }
+
+  template <typename ReturnType = void, typename Func, typename... InitialParams>
+  ReturnType applyAsRvalue(Func&& f, InitialParams&&... initialParams) {
+    return f(std::forward<InitialParams>(initialParams)...);
+  }
+};
+
+template <typename First, typename... Rest>
+struct Tuple<First, Rest...> {
+  Tuple() {}
+
+  Tuple(Tuple&& other): first(move(other.first)), rest(move(other.rest)) {}
+  Tuple(const Tuple& other): first(other.first), rest(other.rest) {}
+  Tuple(Tuple& other): first(other.first), rest(other.rest) {}
+
+  template <typename First2, typename... Rest2>
+  explicit Tuple(First2&& first2, Rest2&&... rest2)
+      : first(std::forward<First2>(first2)),
+        rest(std::forward<Rest2>(rest2)...) {}
+
+  First first;
+  Tuple<Rest...> rest;
+
+  template <typename ReturnType = void, typename Func, typename... InitialParams>
+  ReturnType apply(Func&& f, InitialParams&&... initialParams) const {
+    return rest.apply<ReturnType>(
+        std::forward<Func>(f), std::forward<InitialParams>(initialParams)..., first);
+  }
+
+  template <typename ReturnType = void, typename Func, typename... InitialParams>
+  ReturnType applyAsRvalue(Func&& f, InitialParams&&... initialParams) {
+    return rest.applyAsRvalue<ReturnType>(
+        std::forward<Func>(f), std::forward<InitialParams>(initialParams)..., std::move(first));
+  }
+};
+
+template <typename... First, typename... Rest>
+struct Tuple<Tuple<First...>, Rest...> {
+  Tuple() {}
+
+  Tuple(Tuple&& other): first(move(other.first)), rest(move(other.rest)) {}
+  Tuple(const Tuple& other): first(other.first), rest(other.rest) {}
+  Tuple(Tuple& other): first(other.first), rest(other.rest) {}
+
+  template <typename First2, typename... Rest2>
+  Tuple(First2&& first2, Rest2&&... rest2)
+      : first(std::forward<First2>(first2)),
+        rest(std::forward<Rest2>(rest2)...) {}
+
+  Tuple<First...> first;
+  Tuple<Rest...> rest;
+
+  template <typename ReturnType, typename Func>
+  struct Continue {
+    Continue(const Tuple* self, Func&& f): self(self), f(f) {}
+    const Tuple* self;
+    Func& f;
+
+    template <typename... T>
+    ReturnType operator()(T&&... t) const {
+      return self->rest.apply<ReturnType>(std::forward<Func>(f), std::forward<T>(t)...);
+    }
+  };
+
+  template <typename ReturnType, typename Func>
+  struct ContinueAsRvalue {
+    ContinueAsRvalue(Tuple* self, Func&& f): self(self), f(f) {}
+    Tuple* self;
+    Func& f;
+
+    template <typename... T>
+    ReturnType operator()(T&&... t) const {
+      return self->rest.applyAsRvalue<ReturnType>(std::forward<Func>(f), std::forward<T>(t)...);
+    }
+  };
+
+  template <typename ReturnType = void, typename Func, typename... InitialParams>
+  ReturnType apply(Func&& f, InitialParams&&... initialParams) const {
+    return first.apply<ReturnType>(
+        Continue<ReturnType, Func>(this, std::forward<Func>(f)),
+        std::forward<InitialParams>(initialParams)...);
+  }
+
+  template <typename ReturnType = void, typename Func, typename... InitialParams>
+  ReturnType applyAsRvalue(Func&& f, InitialParams&&... initialParams) {
+    return first.applyAsRvalue<ReturnType>(
+        ContinueAsRvalue<ReturnType, Func>(this, std::forward<Func>(f)),
+        std::forward<InitialParams>(initialParams)...);
+  }
+};
+
+template <typename... Rest>
+struct Tuple<Tuple<>, Rest...> {
+  Tuple() {}
+
+  Tuple(Tuple&& other): first(move(other.first)), rest(move(other.rest)) {}
+  Tuple(const Tuple& other): first(other.first), rest(other.rest) {}
+  Tuple(Tuple& other): first(other.first), rest(other.rest) {}
+
+  template <typename First2, typename... Rest2>
+  Tuple(First2&& first2, Rest2&&... rest2)
+      : first(std::forward<First2>(first2)),
+        rest(std::forward<Rest2>(rest2)...) {}
+
+  Tuple<> first;
+  Tuple<Rest...> rest;
+
+  template <typename ReturnType = void, typename Func, typename... InitialParams>
+  ReturnType apply(Func&& f, InitialParams&&... initialParams) const {
+    return rest.apply<ReturnType>(
+        std::forward<Func>(f), std::forward<InitialParams>(initialParams)...);
+  }
+
+  template <typename ReturnType = void, typename Func, typename... InitialParams>
+  ReturnType applyAsRvalue(Func&& f, InitialParams&&... initialParams) {
+    return rest.applyAsRvalue<ReturnType>(
+        std::forward<Func>(f), std::forward<InitialParams>(initialParams)...);
+  }
+};
+
+template <typename... T>
+Tuple<T...> tuple(T&&... elements) {
+  return Tuple<T...>(elements...);
+}
+
+typedef Tuple<> Void;
+
+
 
 template <typename T>
-class ErrorOr {
-public:
-  ErrorOr(ErrorOr&& other);
-  ErrorOr(const ErrorOr& other);
-  ErrorOr(errors::Error&& error);
-  ErrorOr(std::vector<errors::Error>&& errors);
-  ErrorOr(T&& value);
+T any();
 
-  bool isError();
+template <typename ReturnType = void, typename Transform, typename T>
+ReturnType applyMaybeTuple(Transform& transform, T&& t) {
+  return transform(move(t));
+}
+
+template <typename ReturnType = void, typename Transform, typename... T>
+ReturnType applyMaybeTuple(Transform& transform, Tuple<T...>&& t) {
+  return t.template applyAsRvalue<ReturnType>(transform);
+}
+
+// =======================================================================================
+
+template <typename T>
+class ParseResult {
+public:
+  ParseResult(ParseResult&& other): isError_(other.isError_) {
+    if (isError_) {
+      new (&errors) std::vector<errors::Error>(move(other.errors));
+    } else {
+      new (&value) T(move(other.value));
+    }
+  }
+  ParseResult(const ParseResult& other): isError_(other.isError_) {
+    if (isError_) {
+      new (&errors) std::vector<errors::Error>(other.errors);
+    } else {
+      new (&value) T(other.value);
+    }
+  }
+  ParseResult(errors::Error&& error): isError_(true) {
+    new (&errors) std::vector<errors::Error>();
+    errors.push_back(move(error));
+  }
+  ParseResult(std::vector<errors::Error>&& errors): isError_(true) {
+    new (&this->errors) std::vector<errors::Error>(move(errors));
+  }
+  ParseResult(T&& value): isError_(false) {
+    new (&this->value) T(move(value));
+  }
+  ~ParseResult() {
+    if (isError_) {
+      errors.~vector();
+    } else {
+      value.~T();
+    }
+  }
+
+  ParseResult& operator=(ParseResult&& other) {
+    this->~ParseResult();
+    new (this) ParseResult(move(other));
+    return *this;
+  }
+  ParseResult& operator=(const ParseResult& other) {
+    this->~ParseResult();
+    new (this) ParseResult(other);
+    return *this;
+  }
+
+  bool isError() { return isError_; }
 
   union {
     std::vector<errors::Error> errors;
@@ -50,104 +245,82 @@ private:
   bool isError_;
 };
 
-struct Void {};
-
-// I don't understand std::tuple.
-template <typename... T>
-struct Tuple;
-
-template <typename First, typename... Rest>
-struct Tuple<First, Rest...> {
-  template <typename First2, typename... Rest2>
-  Tuple(First2&& first2, Rest2&&... rest2)
-      : first(std::forward(first2)),
-        rest(std::forward(rest2)...) {}
-
-  First first;
-  Tuple<Rest...> rest;
-
-  template <typename Func, typename... InitialParams>
-  void apply(Func&& f, InitialParams&&... initialParams) {
-    rest.apply(f, std::forward(initialParams)..., first);
-  }
-
-  template <typename Func, typename... InitialParams>
-  void applyAsRvalue(Func&& f, InitialParams&&... initialParams) {
-    rest.applyAsRvalue(f, std::forward(initialParams)..., std::move(first));
-  }
-};
-
-template <typename... Rest>
-struct Tuple<Void, Rest...> {
-  template <typename... Rest2>
-  Tuple(Void first, Rest2&&... rest2)
-      : rest(std::forward(rest2)...) {}
-
-  Tuple<Rest...> rest;
-
-  template <typename Func, typename... InitialParams>
-  void apply(Func&& f, InitialParams&&... initialParams) {
-    rest.apply(f, std::forward(initialParams)...);
-  }
-
-  template <typename Func, typename... InitialParams>
-  void applyAsRvalue(Func&& f, InitialParams&&... initialParams) {
-    rest.applyAsRvalue(f, std::forward(initialParams)...);
-  }
-};
-
-template <>
-struct Tuple<> {
-  template <typename Func, typename... InitialParams>
-  void apply(Func&& f, InitialParams&&... initialParams) {
-    f(std::forward(initialParams)...);
-  }
-
-  template <typename Func, typename... InitialParams>
-  void applyAsRvalue(Func&& f, InitialParams&&... initialParams) {
-    f(std::forward(initialParams)...);
-  }
-};
-
-template <typename... T>
-Tuple<T...> tuple(T&&... elements) {
-  return Tuple<T...>(elements...);
-}
-
-
-
-
-
-template <typename Input>
-class TokenIterator {
+template <typename Element, typename Iterator>
+class IteratorInput {
 public:
-  bool atEnd();
-  const Input& current();
-  void next();
+  typedef Element ElementType;
 
-  void setBroken();
-  bool isBroken();
+  IteratorInput(Iterator begin, Iterator end)
+      : pos(begin), end(end), broken(false), committed(false) {}
 
-  void commit();
-  bool isCommitted();
+  bool atEnd() { return pos == end; }
+  const Element& current() { return *pos; }
+  void next() { ++pos; }
+
+  errors::Error error(const string& message) {
+    // TODO: Location.
+    return errors::error(-1, -1, message);
+  }
+
+  // Indicates that we have lost context due to a syntax error, and therefore subsequent tokens
+  // are meaningless unless we can skip forward to some sort of marker that lets us figure out
+  // where we are.  (E.g., if a syntax error occurs in a parenthesized sub-expression, we cannot
+  // parse the rest of the inner expression, but we can continue parsing the outer expression after
+  // the closing parenthesis.)
+  void setBroken(bool broken) { this->broken = broken; }
+
+  // Returns true after error() has been called.
+  bool isBroken() { return broken; }
+
+  // Indicates that we've parsed enough input to be sure that we have chosen the correct branch of
+  // the enclosing "alternative".  If a parse error occurs before committing, then AlternativeParser
+  // will discard the error and choose the next branch instead.
+  void setCommitted(bool committed) { this->committed = committed; }
+  bool isCommitted() { return committed; }
+
+private:
+  Iterator pos;
+  Iterator end;
+  bool broken;
+  bool committed;
 };
 
-template <typename InputType, typename OutputType>
+template <typename T>
+struct ExtractParseFuncType;
+
+template <typename I, typename O, typename Object>
+struct ExtractParseFuncType<ParseResult<O> (Object::*)(I&) const> {
+  typedef I InputType;
+  typedef typename I::ElementType ElementType;
+  typedef O OutputType;
+};
+
+template <typename I, typename O, typename Object>
+struct ExtractParseFuncType<ParseResult<O> (Object::*)(I&)> {
+  typedef I InputType;
+  typedef typename I::ElementType ElementType;
+  typedef O OutputType;
+};
+
+template <typename T>
+struct ExtractParserType: public ExtractParseFuncType<decltype(&T::operator())> {};
+
+// =======================================================================================
+
+template <typename Input, typename Output>
 class ParserWrapper {
 public:
-  typedef InputType Input;
-  typedef OutputType Output;
+  typedef Input InputType;
+  typedef typename Input::ElementType ElementType;
+  typedef Output OutputType;
 
-  virtual ErrorOr<Output> parse(TokenIterator<Input>& input) = 0;
+  virtual ParseResult<Output> operator()(Input& input) const = 0;
   virtual OwnedPtr<ParserWrapper> clone() = 0;
 };
 
-template <typename InputType, typename OutputType>
+template <typename Input, typename Output>
 class Parser {
 public:
-  typedef InputType Input;
-  typedef OutputType Output;
-
   Parser(const Parser& other): wrapper(other.wrapper->clone()) {}
   Parser(Parser&& other): wrapper(move(other.wrapper)) {}
   Parser(OwnedPtr<ParserWrapper<Input, Output>> wrapper): wrapper(move(wrapper)) {}
@@ -155,8 +328,8 @@ public:
   Parser& operator=(const Parser& other) { wrapper = other.wrapper->clone(); }
   Parser& operator=(Parser&& other) { wrapper = move(other.wrapper); }
 
-  ErrorOr<Output> parse(TokenIterator<Input>& input) {
-    return wrapper.parse(input);
+  ParseResult<Output> operator()(Input& input) const {
+    return (*wrapper)(input);
   }
 
 private:
@@ -164,15 +337,18 @@ private:
 };
 
 template <typename ParserImpl>
-Parser<typename ParserImpl::InputType, typename ParserImpl::OutputType> wrap(ParserImpl&& impl) {
-  typedef typename ParserImpl::InputType Input;
-  typedef typename ParserImpl::OutputType Output;
+Parser<typename ExtractParserType<ParserImpl>::InputType,
+       typename ExtractParserType<ParserImpl>::OutputType>
+wrap(ParserImpl&& impl) {
+  typedef typename ExtractParserType<ParserImpl>::InputType Input;
+  typedef typename ExtractParserType<ParserImpl>::ElementType Element;
+  typedef typename ExtractParserType<ParserImpl>::OutputType Output;
 
   struct WrapperImpl: public ParserWrapper<Input, Output> {
     WrapperImpl(ParserImpl&& impl): impl(move(impl)) {};
 
-    ErrorOr<Output> parse(TokenIterator<Input>& input) {
-      return impl.parse(input);
+    ParseResult<Output> operator()(Input& input) const {
+      return impl(input);
     }
 
     OwnedPtr<ParserWrapper<Input, Output>> clone() {
@@ -185,107 +361,99 @@ Parser<typename ParserImpl::InputType, typename ParserImpl::OutputType> wrap(Par
   return Parser<Input, Output>(ekam::newOwned<WrapperImpl>(move(impl)));
 }
 
-
-
-// Output = Void.
-template <typename Input> class ExactTokenParser;
-template <typename Input>
-ExactTokenParser<Input> token(Input&& expected);
-
-// Output = Input.
-template <typename Input> class OneOfParser;
-template <typename Input>
-OneOfParser<Input> oneOf(std::vector<Input>&& options);
-
-// Output = Tuple of outputs of sub-parsers, eliding voids.
-template <typename Input, typename... SubParsers> class SequenceParser;
-template <typename FirstSubParser, typename... MoreSubParsers>
-SequenceParser<typename FirstSubParser::Input, FirstSubParser, MoreSubParsers...>
-sequence(FirstSubParser&& first, MoreSubParsers&&... rest);
-
-// All SubParsers must have same output type, which becomes the output type of the
-// AlternativeParser.
-template <typename Input, typename Output, typename... SubParsers> class AlternativeParser;
-template <typename FirstSubParser, typename... MoreSubParsers>
-AlternativeParser<typename FirstSubParser::Input, typename FirstSubParser::Output,
-                  FirstSubParser, MoreSubParsers...>
-alternative(FirstSubParser&& first, MoreSubParsers&&... rest);
-
-// Output = Result of applying transform functor to input value.  If input is a tuple, it is
-// unpacked to form the transformation parameters.
-template <typename SubParser, typename Transform> class TransformParser;
-template <typename SubParser, typename Transform>
-TransformParser<SubParser, Transform> transform(SubParser&& subParser, Transform&& transform);
-
-
-
-
-template <typename InputType>
-class ExactTokenParser {
+template <typename SubParser>
+class ParserRef {
 public:
-  typedef InputType Input;
-  typedef Void Output;
+  ParserRef(const SubParser& parser): parser(&parser) {}
 
-  ExactTokenParser(Input&& expected): expected(expected) {}
+  ParseResult<typename ExtractParserType<SubParser>::OutputType> operator()(
+      typename ExtractParserType<SubParser>::InputType& input) const {
+    return (*parser)(input);
+  }
 
-  virtual ErrorOr<Void> parse(TokenIterator<Input>& input) {
+private:
+  const SubParser* parser;
+};
+
+template <typename SubParser>
+ParserRef<typename remove_reference<SubParser>::type> ref(const SubParser& impl) {
+  return ParserRef<SubParser>(impl);
+}
+
+// -------------------------------------------------------------------
+// ExactElementParser
+// Output = Void
+
+template <typename Input>
+class ExactElementParser {
+public:
+  ExactElementParser(typename Input::ElementType&& expected): expected(expected) {}
+
+  virtual ParseResult<Void> operator()(Input& input) const {
     if (input.atEnd() || input.current() != expected) {
-      return ErrorOr<Void>(errors::error(-1, -1, "Expected: ", expected));
+      input.setBroken(true);
+      return ParseResult<Void>(input.error("Expected [TODO: complete error message]"));
     } else {
       input.next();
-      return ErrorOr<Void>(Void());
+      return ParseResult<Void>(Void());
     }
   }
 
 private:
-  Input expected;
+  typename Input::ElementType expected;
 };
 
 template <typename Input>
-ExactTokenParser<typename std::remove_reference<Input>::type> token(Input&& expected) {
-  return ExactTokenParser<typename std::remove_reference<Input>::type>(
-      std::forward<Input>(expected));
+ExactElementParser<Input> exactElement(typename Input::ElementType&& expected) {
+  return ExactElementParser<typename remove_reference<Input>::type>(move(expected));
 }
 
+// -------------------------------------------------------------------
+// SequenceParser
+// Output = Tuple of outputs of sub-parsers, eliding voids.
 
+template <typename Input, typename... SubParsers> class SequenceParser;
 
-
-
-
-
-template <typename InputType, typename FirstSubParser, typename... SubParsers>
-class SequenceParser<InputType, FirstSubParser, SubParsers...> {
+template <typename Input, typename FirstSubParser, typename... SubParsers>
+class SequenceParser<Input, FirstSubParser, SubParsers...> {
 public:
-  typedef InputType Input;
-  typedef Tuple<typename FirstSubParser::Output, typename SubParsers::Output...> Output;
-
   template <typename T, typename... U>
   SequenceParser(T&& firstSubParser, U&&... rest)
-      : first(std::forward(firstSubParser)), rest(std::forward(rest)...) {}
+      : first(std::forward<T>(firstSubParser)), rest(std::forward<U>(rest)...) {}
+
+  ParseResult<Tuple<typename ExtractParserType<FirstSubParser>::OutputType,
+                    typename ExtractParserType<SubParsers>::OutputType...>>
+  operator()(Input& input) const {
+    return parseNext(input);
+  }
 
   template <typename... InitialParams>
-  ErrorOr<Tuple<InitialParams..., typename FirstSubParser::Output, typename SubParsers::Output...>>
-  parse(TokenIterator<Input>& input, InitialParams&&... initialParams) {
-    typedef ErrorOr<Tuple<InitialParams..., typename FirstSubParser::Output,
-        typename SubParsers::Output...>> Result;
-
-    ErrorOr<typename FirstSubParser::Output> firstResult = first.parse(input);
+  ParseResult<Tuple<InitialParams...,
+      typename ExtractParserType<FirstSubParser>::OutputType,
+      typename ExtractParserType<SubParsers>::OutputType...>>
+  parseNext(Input& input, InitialParams&&... initialParams) const {
+    auto firstResult = first(input);
     if (firstResult.isError()) {
       if (!input.isBroken()) {
         rest.parseForErrors(input, firstResult.errors);
       }
-      return Result(move(firstResult.errors));
+      return move(firstResult.errors);
     } else {
-      return rest.parse(input, move(firstResult.value), std::forward(initialParams)...);
+      return rest.parseNext(input, std::forward<InitialParams>(initialParams)...,
+                            move(firstResult.value));
     }
   }
 
-  void parseForErrors(TokenIterator<Input>& input, std::vector<errors::Error>& errors) {
-    ErrorOr<typename FirstSubParser::Output> firstResult = first.parse(input);
-    if (firstResult.isError()) {
-      errors.push_back(move(firstResult.errors));
-      if (input.isBroken()) {
-        return;
+  void parseForErrors(Input& input, std::vector<errors::Error>& errors) const {
+    {
+      auto firstResult = first(input);
+      if (firstResult.isError()) {
+        for (auto& error : firstResult.errors) {
+          errors.push_back(move(error));
+        }
+        if (input.isBroken()) {
+          return;
+        }
       }
     }
 
@@ -297,71 +465,114 @@ private:
   SequenceParser<Input, SubParsers...> rest;
 };
 
-template <typename InputType>
-class SequenceParser<InputType> {
+template <typename Input>
+class SequenceParser<Input> {
 public:
-  typedef InputType Input;
-  typedef Tuple<> Output;
-
-  template <typename... Params>
-  ErrorOr<Tuple<Params...>>
-  parse(TokenIterator<Input>& input, Params&&... params) {
-    return ErrorOr<Tuple<Params...>>(Tuple<Params...>(params...));
+  ParseResult<Tuple<>> operator()(Input& input) const {
+    return parseNext(input);
   }
 
-  void parseForErrors(TokenIterator<Input>& input, std::vector<errors::Error>& errors) {
+  template <typename... Params>
+  ParseResult<Tuple<Params...>>
+  parseNext(Input& input, Params&&... params) const {
+    return ParseResult<Tuple<Params...>>(Tuple<Params...>(params...));
+  }
+
+  void parseForErrors(Input& input, std::vector<errors::Error>& errors) const {
     // Nothing.
   }
 };
 
 template <typename FirstSubParser, typename... MoreSubParsers>
-SequenceParser<typename FirstSubParser::Input, FirstSubParser, MoreSubParsers...>
+SequenceParser<typename ExtractParserType<FirstSubParser>::InputType,
+               FirstSubParser, MoreSubParsers...>
 sequence(FirstSubParser&& first, MoreSubParsers&&... rest) {
-  return SequenceParser<typename FirstSubParser::Input, FirstSubParser, MoreSubParsers...>(
-      std::forward(first), std::forward(rest)...);
+  return SequenceParser<typename ExtractParserType<FirstSubParser>::InputType,
+                        FirstSubParser, MoreSubParsers...>(
+      std::forward<FirstSubParser>(first), std::forward<MoreSubParsers>(rest)...);
 }
 
 
+// -------------------------------------------------------------------
+// RepeatedParser
+// Output = Vector of output of sub-parser.
 
-
-
-
-
-template <typename InputType, typename OutputType, typename FirstSubParser, typename... SubParsers>
-class AlternativeParser<InputType, OutputType, FirstSubParser, SubParsers...> {
+template <typename SubParser>
+class RepeatedParser {
 public:
-  typedef InputType Input;
-  typedef OutputType Output;
+  RepeatedParser(SubParser&& subParser)
+      : subParser(move(subParser)) {}
 
+  ParseResult<std::vector<typename ExtractParserType<SubParser>::OutputType>> operator()(
+      typename ExtractParserType<SubParser>::InputType& input) const {
+    typedef std::vector<typename ExtractParserType<SubParser>::OutputType> Results;
+    Results results;
+
+    while (!input.atEnd()) {
+      typename ExtractParserType<SubParser>::InputType subInput(input);
+      subInput.setCommitted(false);
+      auto subResult = subParser(subInput);
+
+      if (subResult.isError()) {
+        if (subInput.isCommitted()) {
+          // Note that we intentionally don't swallow the committed bit.
+          input = subInput;
+          return ParseResult<Results>(move(subResult.errors));
+        } else {
+          break;
+        }
+      } else {
+        // Note that we intentionally don't swallow the committed bit.
+        input = subInput;
+        results.push_back(move(subResult.value));
+      }
+    }
+
+    return ParseResult<Results>(move(results));
+  }
+
+private:
+  SubParser subParser;
+};
+
+template <typename SubParser>
+RepeatedParser<typename remove_reference<SubParser>::type>
+repeated(SubParser&& subParser) {
+  return RepeatedParser<typename remove_reference<SubParser>::type>(
+      std::forward<SubParser>(subParser));
+}
+
+// -------------------------------------------------------------------
+// AlternativeParser
+// All SubParsers must have same output type, which becomes the output type of the
+// AlternativeParser.
+
+template <typename Input, typename Output, typename... SubParsers>
+class AlternativeParser;
+
+template <typename Input, typename Output, typename FirstSubParser, typename... SubParsers>
+class AlternativeParser<Input, Output, FirstSubParser, SubParsers...> {
+public:
   template <typename T, typename... U>
   AlternativeParser(T&& firstSubParser, U&&... rest)
-      : first(std::forward(firstSubParser)), rest(std::forward(rest)...) {}
+      : first(std::forward<T>(firstSubParser)), rest(std::forward<U>(rest)...) {}
 
-  ErrorOr<Output> parse(TokenIterator<Input>& input) {
-    TokenIterator<Input> subInput(input);
-    ErrorOr<Output> firstResult = first.parse(subInput);
+  ParseResult<Output> operator()(Input& input) const {
+    {
+      Input subInput(input);
+      subInput.setCommitted(false);
+      ParseResult<Output> firstResult = first(subInput);
 
-    if (subInput.isCommitted()) {
-      if (rest.tryParse(input)) {
-        return ErrorOr<Output>(errors::error(-1, -1, "Ambiguous."));
-      } else {
+      if (!firstResult.isError() || subInput.isCommitted()) {
+        // MAYBE: Should we try parsing with "rest" in order to check for ambiguities?
+        subInput.setCommitted(input.isCommitted());
         input = subInput;
         return move(firstResult);
       }
-    } else {
-      return rest.parse(input);
     }
-  }
 
-  bool tryParse(TokenIterator<Input>& input) {
-    TokenIterator<Input> subInput(input);
-    first.parse(subInput);
-
-    if (subInput.isCommitted()) {
-      return true;
-    } else {
-      return rest.tryParse(input);
-    }
+    // Hoping for some tail recursion here...
+    return rest(input);
   }
 
 private:
@@ -369,48 +580,62 @@ private:
   AlternativeParser<Input, Output, SubParsers...> rest;
 };
 
-template <typename InputType, typename OutputType>
-class AlternativeParser<InputType, OutputType> {
+template <typename Input, typename Output>
+class AlternativeParser<Input, Output> {
 public:
-  typedef InputType Input;
-  typedef OutputType Output;
-
-  ErrorOr<Output> parse(TokenIterator<Input>& input) {
-    return ErrorOr<Output>(-1, -1, "Syntax error.");
-  }
-
-  bool tryParse(TokenIterator<Input>& input) {
-    return false;
+  ParseResult<Output> operator()(Input& input) const {
+    input.setBroken(true);
+    return ParseResult<Output>(input.error("Syntax error."));
   }
 };
 
 template <typename FirstSubParser, typename... MoreSubParsers>
-AlternativeParser<typename FirstSubParser::Input, typename FirstSubParser::Output,
+AlternativeParser<typename ExtractParserType<FirstSubParser>::InputType,
+                  typename ExtractParserType<FirstSubParser>::OutputType,
                   FirstSubParser, MoreSubParsers...>
 alternative(FirstSubParser&& first, MoreSubParsers&&... rest) {
-  return AlternativeParser<typename FirstSubParser::Input, FirstSubParser, MoreSubParsers...>(
-      std::forward(first), std::forward(rest)...);
+  return AlternativeParser<typename ExtractParserType<FirstSubParser>::InputType,
+                           typename ExtractParserType<FirstSubParser>::OutputType,
+                           FirstSubParser, MoreSubParsers...>(
+      std::forward<FirstSubParser>(first), std::forward<MoreSubParsers>(rest)...);
 }
 
+class CommitParser {
+public:
+  template <typename Input>
+  ParseResult<Void> operator()(Input& input) const {
+    input.setCommitted(true);
+    return ParseResult<Void>(Void());
+  }
+};
 
-template <typename T>
-T any();
+template <>
+struct ExtractParserType<CommitParser> {
+  typedef Void OutputType;
+};
 
-template <typename SubParser, typename Transform>
+CommitParser commit() {
+  return CommitParser();
+}
+
+// -------------------------------------------------------------------
+// TransformParser
+// Output = Result of applying transform functor to input value.  If input is a tuple, it is
+// unpacked to form the transformation parameters.
+
+template <typename Output, typename SubParser, typename Transform>
 class TransformParser {
 public:
-  typedef typename SubParser::Input Input;
-  typedef decltype(any<Transform>()(any<typename SubParser::Output>()).value) Output;
-
   TransformParser(SubParser&& subParser, Transform&& transform)
       : subParser(move(subParser)), transform(move(transform)) {}
 
-  ErrorOr<Output> parse(TokenIterator<Input>& input) {
-    ErrorOr<Input> subResult = subParser.parse(input);
+  ParseResult<Output> operator()(typename ExtractParserType<SubParser>::InputType& input) const {
+    ParseResult<typename ExtractParserType<SubParser>::OutputType> subResult =
+        subParser(input);
     if (subResult.isError()) {
-      return ErrorOr<Output>(subResult.error);
+      return ParseResult<Output>(move(subResult.errors));
     } else {
-      return transform(subResult.value);
+      return ParseResult<Output>(applyMaybeTuple<Output>(transform, move(subResult.value)));
     }
   }
 
@@ -419,17 +644,16 @@ private:
   Transform transform;
 };
 
-template <typename SubParser, typename Transform>
-TransformParser<typename std::remove_reference<SubParser>::type,
-                typename std::remove_reference<Transform>::type>
+template <typename Output, typename SubParser, typename Transform>
+TransformParser<Output,
+                typename remove_reference<SubParser>::type,
+                typename remove_reference<Transform>::type>
 transform(SubParser&& subParser, Transform&& transform) {
-  return TransformParser<typename std::remove_reference<SubParser>::type,
-                         typename std::remove_reference<Transform>::type>(
-      std::forward(subParser), std::forward(transform));
+  return TransformParser<Output,
+                         typename remove_reference<SubParser>::type,
+                         typename remove_reference<Transform>::type>(
+      std::forward<SubParser>(subParser), std::forward<Transform>(transform));
 }
-
-
-
 
 }  // namespace ast
 }  // namespace modc
