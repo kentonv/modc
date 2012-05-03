@@ -14,27 +14,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "grammar.h"
+#include "astParser.h"
 
 #include <utility>
 #include <functional>
 
-#include "expressions.h"
-#include "statements.h"
+#include "ast.h"
 #include "tokens.h"
 #include "errors.h"
 #include "parser.h"
 #include "base/Debug.h"
 
 namespace modc {
-namespace grammar {
+namespace astParser {
 
 using std::move;
 using std::vector;
 using std::string;
-using expressions::StyleAllowance;
-using expressions::Expression;
-using statements::Statement;
+using ast::StyleAllowance;
+using ast::Expression;
+using ast::Statement;
 
 using tokens::Token;
 using tokens::TokenSequence;
@@ -412,5 +411,5 @@ vector<Statement> parse(const vector<TokenStatement>& statements) {
   return vector<Statement>();
 }
 
-}  // namespace grammar
+}  // namespace astParser
 }  // namespace modc

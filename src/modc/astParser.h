@@ -14,23 +14,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef KENTONSCODE_MODC_GRAMMAR_H_
-#define KENTONSCODE_MODC_GRAMMAR_H_
+#ifndef KENTONSCODE_MODC_ASTPARSER_H_
+#define KENTONSCODE_MODC_ASTPARSER_H_
 
 #include <vector>
 
 namespace modc {
   namespace tokens { class TokenStatement; }
-  namespace expressions { class Expression; }
-  namespace statements { class Statement; }
+  namespace ast {
+    class Expression;
+    class Statement;
+  }
 }
 
 namespace modc {
-namespace grammar {
+namespace astParser {
 
-std::vector<statements::Statement> parse(const std::vector<tokens::TokenStatement>& statements);
+std::vector<ast::Statement> parse(const std::vector<tokens::TokenStatement>& statements);
 
-}  // namespace grammar
+}  // namespace astParser
 }  // namespace modc
 
-#endif /* KENTONSCODE_MODC_GRAMMAR_H_ */
+#endif /* KENTONSCODE_MODC_ASTPARSER_H_ */

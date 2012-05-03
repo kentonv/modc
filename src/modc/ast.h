@@ -14,8 +14,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef KENTONSCODE_MODC_EXPRESSIONS_H_
-#define KENTONSCODE_MODC_EXPRESSIONS_H_
+#ifndef KENTONSCODE_MODC_AST_H_
+#define KENTONSCODE_MODC_AST_H_
 
 #include <string>
 #include <vector>
@@ -30,7 +30,7 @@ namespace modc {
 }
 
 namespace modc {
-namespace expressions {
+namespace ast {
 
 using std::string;
 using std::vector;
@@ -242,7 +242,171 @@ private:
   Expression(Type type): type(type) {}
 };
 
-}  // namespace expressions
+class Statement;
+struct ParameterDeclaration;
+
+struct Declaration {
+  enum class Kind {
+    UNDECLARED,
+
+    VARIABLE,
+    ENVIRONMENT,
+
+    FUNCTION,
+    CONSTRUCTOR,
+    DESTRUCTOR,
+    CONVERSION,
+    DEFAULT_CONVERSION,  // TODO:  Combine with CONVERSION somehow?
+
+    CLASS,
+    INTERFACE,
+    ENUM
+  };
+
+  Kind kind;
+
+  string name;  // empty for implicit constructor, destructor, conversion
+  Style style;
+  vector<ParameterDeclaration> parameters;
+
+  Maybe<Expression> type;
+  vector<Expression> supertypes;
+  vector<Expression> subtypes;
+  vector<Expression> annotations;
+  string documentation;
+
+  class Definition {
+  public:
+    Definition();
+    Definition(const Definition& other);
+    Definition(Definition&& other);
+    ~Definition() noexcept;
+
+    enum class Type {
+      NONE,
+      VALUE,
+      BLOCK
+    };
+
+    Type getType() { return type; }
+
+    union {
+      Expression value;
+      vector<Statement> body;
+    };
+
+  private:
+    Type type;
+  };
+};
+
+struct ParameterDeclaration {
+  enum class Type {
+    CONSTANT,
+    VARIABLE
+  };
+
+  union {
+    Declaration variable;
+    Expression constant;
+  };
+};
+
+class Statement {
+public:
+  Statement(Statement&& other);
+  Statement(const Statement& other);
+  ~Statement() noexcept;
+
+  Statement& operator=(Statement&& other);
+  Statement& operator=(const Statement& other);
+
+  bool operator==(const Statement& other) const;
+  bool operator!=(const Statement& other) const { return !(*this == other); }
+
+  enum class Type {
+    ERROR,
+
+    EXPRESSION,
+    SUB_BLOCK,
+
+    DECLARATION,
+    ASSIGNMENT,
+
+    UNION,
+
+    IF,
+    ELSE,
+    FOR,
+    WHILE,
+    LOOP,
+    PARALLEL,
+
+    RETURN,
+    BREAK,
+    CONTINUE,
+
+    BLANK,
+    COMMENT
+  };
+
+  Type getType();
+
+  struct Assignment {
+    Expression variable;
+    Expression value;
+  };
+
+  struct If {
+    Expression condition;
+    Indirect<Statement> body;
+  };
+
+  struct For {
+    vector<Declaration> range;
+    Indirect<Statement> body;
+  };
+
+  struct While {
+    Expression condition;
+    Indirect<Statement> body;
+  };
+
+  struct Loop {
+    Maybe<string> name;
+    Indirect<Statement> body;
+  };
+
+  union {
+    std::vector<errors::Error> error;
+
+    Expression expression;
+    vector<Statement> subBlock;
+
+    Declaration declaration;
+    Assignment assignment;
+
+    vector<Declaration> union_;
+
+    If if_;
+    Indirect<Statement> else_;
+    For for_;
+    While while_;
+    Loop loop;
+    vector<Statement> parallel;
+
+    Expression return_;  // if not returning a value, expression will be empty tuple.
+    string break_;
+    string continue_;
+
+    string comment;
+  };
+
+private:
+  Type type;
+};
+
+}  // namespace ast
 }  // namespace modc
 
-#endif /* KENTONSCODE_MODC_EXPRESSIONS_H_ */
+#endif /* KENTONSCODE_MODC_AST_H_ */

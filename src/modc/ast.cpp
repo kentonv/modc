@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "expressions.h"
+#include "ast.h"
 
 #include <utility>
 #include <functional>
@@ -25,7 +25,7 @@
 #include "base/Debug.h"
 
 namespace modc {
-namespace expressions {
+namespace ast {
 
 using std::move;
 
@@ -207,5 +207,86 @@ Expression Expression::fromTernaryOperator(Expression&& condition, Expression&& 
   return result;
 }
 
-}  // namespace expressions
+// =============================================================================
+
+#define FOR_ALL_STATEMENTS(HANDLE) \
+  HANDLE(ERROR, error, std::vector<errors::Error>) \
+  HANDLE(EXPRESSION, expression, Expression) \
+  HANDLE(RETURN, return_, Expression) \
+  HANDLE(BREAK, break_, string)
+
+Statement::Statement(Statement&& other): type(other.type) {
+  switch (type) {
+#define MOVE_CONSTRUCT(ID, NAME, TYPE) \
+    case Type::ID: \
+      new (&NAME) TYPE(move(other.NAME)); \
+      break;
+      FOR_ALL_STATEMENTS(MOVE_CONSTRUCT)
+#undef MOVE_CONSTRUCT
+
+    default:  // temporary
+      break;
+  }
+}
+
+Statement::Statement(const Statement& other): type(other.type) {
+  switch (type) {
+#define COPY_CONSTRUCT(ID, NAME, TYPE) \
+    case Type::ID: \
+      new (&NAME) TYPE(other.NAME); \
+      break;
+      FOR_ALL_STATEMENTS(COPY_CONSTRUCT)
+#undef COPY_CONSTRUCT
+
+    default:  // temporary
+      break;
+  }
+}
+
+Statement::~Statement() noexcept {
+  switch (type) {
+#define DESTRUCT(ID, NAME, TYPE) \
+    case Type::ID: \
+      Destroy(NAME); \
+      break;
+      FOR_ALL_STATEMENTS(DESTRUCT)
+#undef DESTRUCT
+
+    default:  // temporary
+      break;
+  }
+}
+
+Statement& Statement::operator=(Statement&& other) {
+  // Lazy.
+  this->~Statement();
+  new(this) Statement(move(other));
+  return *this;
+}
+
+Statement& Statement::operator=(const Statement& other) {
+  // Lazy.
+  this->~Statement();
+  new(this) Statement(other);
+  return *this;
+}
+
+bool Statement::operator==(const Statement& other) const {
+  if (type == other.type) {
+    switch (type) {
+#define COMPARE(ID, NAME, TYPE) \
+      case Type::ID: \
+        return NAME == other.NAME;
+        FOR_ALL_STATEMENTS(COMPARE)
+#undef MOVE_CONSTRUCT
+
+      default:  // temporary
+        break;
+    }
+  }
+
+  return false;
+}
+
+}  // namespace ast
 }  // namespace modc
