@@ -18,11 +18,13 @@
 #define KENTONSCODE_MODC_PARSER_H_
 
 #include <utility>
+#include <type_traits>
 #include <vector>
 #include <string>
 
 #include "base/OwnedPtr.h"
 #include "modc/errors.h"
+#include "Maybe.h"
 
 namespace modc {
 namespace parser {
@@ -188,6 +190,13 @@ ReturnType applyMaybeTuple(Transform& transform, Tuple<T...>&& t) {
 
 // =======================================================================================
 
+template <typename T, typename Return, typename... Params>
+Return extractReturnType(Return (T::*func)(Params...) const);
+template <typename T, typename Return, typename... Params>
+Return extractReturnType(Return (T::*func)(Params...));
+
+// =======================================================================================
+
 template <typename T>
 class ParseResult {
 public:
@@ -214,6 +223,9 @@ public:
   }
   ParseResult(T&& value): isError_(false) {
     new (&this->value) T(move(value));
+  }
+  ParseResult(const T& value): isError_(false) {
+    new (&this->value) T(value);
   }
   ~ParseResult() {
     if (isError_) {
@@ -273,7 +285,7 @@ public:
   bool isBroken() { return broken; }
 
   // Indicates that we've parsed enough input to be sure that we have chosen the correct branch of
-  // the enclosing "alternative".  If a parse error occurs before committing, then AlternativeParser
+  // the enclosing "oneOf".  If a parse error occurs before committing, then OneOfParser
   // will discard the error and choose the next branch instead.
   void setCommitted(bool committed) { this->committed = committed; }
   bool isCommitted() { return committed; }
@@ -304,12 +316,24 @@ struct ExtractParseFuncType<ParseResult<O> (Object::*)(I&)> {
 
 template <typename T>
 struct ExtractParserType: public ExtractParseFuncType<decltype(&T::operator())> {};
+template <typename T>
+struct ExtractParserType<T&>: public ExtractParseFuncType<decltype(&T::operator())> {};
+template <typename T>
+struct ExtractParserType<T&&>: public ExtractParseFuncType<decltype(&T::operator())> {};
+template <typename T>
+struct ExtractParserType<const T>: public ExtractParseFuncType<decltype(&T::operator())> {};
+template <typename T>
+struct ExtractParserType<const T&>: public ExtractParseFuncType<decltype(&T::operator())> {};
+template <typename T>
+struct ExtractParserType<const T&&>: public ExtractParseFuncType<decltype(&T::operator())> {};
 
 // =======================================================================================
 
 template <typename Input, typename Output>
 class ParserWrapper {
 public:
+  virtual ~ParserWrapper() {}
+
   typedef Input InputType;
   typedef typename Input::ElementType ElementType;
   typedef Output OutputType;
@@ -324,6 +348,25 @@ public:
   Parser(const Parser& other): wrapper(other.wrapper->clone()) {}
   Parser(Parser&& other): wrapper(move(other.wrapper)) {}
   Parser(OwnedPtr<ParserWrapper<Input, Output>> wrapper): wrapper(move(wrapper)) {}
+
+  template <typename Other>
+  Parser(Other&& other) {
+    struct WrapperImpl: public ParserWrapper<Input, Output> {
+      WrapperImpl(Other&& impl): impl(move(impl)) {};
+
+      ParseResult<Output> operator()(Input& input) const {
+        return impl(input);
+      }
+
+      OwnedPtr<ParserWrapper<Input, Output>> clone() {
+        return ekam::newOwned<WrapperImpl>(*this);
+      }
+
+      Other impl;
+    };
+
+    wrapper = ekam::newOwned<WrapperImpl>(move(other));
+  }
 
   Parser& operator=(const Parser& other) { wrapper = other.wrapper->clone(); }
   Parser& operator=(Parser&& other) { wrapper = move(other.wrapper); }
@@ -341,30 +384,15 @@ Parser<typename ExtractParserType<ParserImpl>::InputType,
        typename ExtractParserType<ParserImpl>::OutputType>
 wrap(ParserImpl&& impl) {
   typedef typename ExtractParserType<ParserImpl>::InputType Input;
-  typedef typename ExtractParserType<ParserImpl>::ElementType Element;
   typedef typename ExtractParserType<ParserImpl>::OutputType Output;
 
-  struct WrapperImpl: public ParserWrapper<Input, Output> {
-    WrapperImpl(ParserImpl&& impl): impl(move(impl)) {};
-
-    ParseResult<Output> operator()(Input& input) const {
-      return impl(input);
-    }
-
-    OwnedPtr<ParserWrapper<Input, Output>> clone() {
-      return ekam::newOwned<WrapperImpl>(*this);
-    }
-
-    ParserImpl impl;
-  };
-
-  return Parser<Input, Output>(ekam::newOwned<WrapperImpl>(move(impl)));
+  return Parser<Input, Output>(move(impl));
 }
 
 template <typename SubParser>
 class ParserRef {
 public:
-  ParserRef(const SubParser& parser): parser(&parser) {}
+  explicit ParserRef(const SubParser& parser): parser(&parser) {}
 
   ParseResult<typename ExtractParserType<SubParser>::OutputType> operator()(
       typename ExtractParserType<SubParser>::InputType& input) const {
@@ -380,6 +408,39 @@ ParserRef<typename remove_reference<SubParser>::type> ref(const SubParser& impl)
   return ParserRef<SubParser>(impl);
 }
 
+template <typename T>
+struct MaybeRef {
+  typedef typename std::remove_reference<T>::type Type;
+
+  template <typename U>
+  static Type from(U&& parser) {
+    return static_cast<Type&&>(parser);
+  }
+};
+
+template <typename T>
+struct MaybeRef<T&> {
+  typedef ParserRef<typename std::decay<T>::type> Type;
+
+  template <typename U>
+  static Type from(U& parser) {
+    // Apparent GCC 4.6 bug:  If "ref" is not qualified with "parser::" here, GCC will sometimes
+    // call std::ref instead.  WTF.
+    return parser::ref(parser);
+  }
+};
+
+template <template <typename SubParser> class WrapperParser>
+struct WrapperParserConstructor {
+  template <typename SubParser, typename... Args>
+  WrapperParser<typename MaybeRef<SubParser>::Type> operator()(
+      SubParser&& subParser, Args&&... args) {
+    return WrapperParser<typename MaybeRef<SubParser>::Type>(
+        MaybeRef<SubParser>::from(subParser),
+        std::forward(args)...);
+  }
+};
+
 // -------------------------------------------------------------------
 // ExactElementParser
 // Output = Void
@@ -387,7 +448,7 @@ ParserRef<typename remove_reference<SubParser>::type> ref(const SubParser& impl)
 template <typename Input>
 class ExactElementParser {
 public:
-  ExactElementParser(typename Input::ElementType&& expected): expected(expected) {}
+  explicit ExactElementParser(typename Input::ElementType&& expected): expected(expected) {}
 
   virtual ParseResult<Void> operator()(Input& input) const {
     if (input.atEnd() || input.current() != expected) {
@@ -418,7 +479,7 @@ template <typename Input, typename FirstSubParser, typename... SubParsers>
 class SequenceParser<Input, FirstSubParser, SubParsers...> {
 public:
   template <typename T, typename... U>
-  SequenceParser(T&& firstSubParser, U&&... rest)
+  explicit SequenceParser(T&& firstSubParser, U&&... rest)
       : first(std::forward<T>(firstSubParser)), rest(std::forward<U>(rest)...) {}
 
   ParseResult<Tuple<typename ExtractParserType<FirstSubParser>::OutputType,
@@ -485,11 +546,13 @@ public:
 
 template <typename FirstSubParser, typename... MoreSubParsers>
 SequenceParser<typename ExtractParserType<FirstSubParser>::InputType,
-               FirstSubParser, MoreSubParsers...>
+               typename MaybeRef<FirstSubParser>::Type,
+               typename MaybeRef<MoreSubParsers>::Type...>
 sequence(FirstSubParser&& first, MoreSubParsers&&... rest) {
   return SequenceParser<typename ExtractParserType<FirstSubParser>::InputType,
-                        FirstSubParser, MoreSubParsers...>(
-      std::forward<FirstSubParser>(first), std::forward<MoreSubParsers>(rest)...);
+                        typename MaybeRef<FirstSubParser>::Type,
+                        typename MaybeRef<MoreSubParsers>::Type...>(
+      MaybeRef<FirstSubParser>::from(first), MaybeRef<MoreSubParsers>::from(rest)...);
 }
 
 
@@ -500,7 +563,7 @@ sequence(FirstSubParser&& first, MoreSubParsers&&... rest) {
 template <typename SubParser>
 class RepeatedParser {
 public:
-  RepeatedParser(SubParser&& subParser)
+  explicit RepeatedParser(SubParser&& subParser)
       : subParser(move(subParser)) {}
 
   ParseResult<std::vector<typename ExtractParserType<SubParser>::OutputType>> operator()(
@@ -536,25 +599,69 @@ private:
 };
 
 template <typename SubParser>
-RepeatedParser<typename remove_reference<SubParser>::type>
+RepeatedParser<typename MaybeRef<SubParser>::Type>
 repeated(SubParser&& subParser) {
-  return RepeatedParser<typename remove_reference<SubParser>::type>(
-      std::forward<SubParser>(subParser));
+  return RepeatedParser<typename MaybeRef<SubParser>::Type>(
+      MaybeRef<SubParser>::from(subParser));
 }
 
 // -------------------------------------------------------------------
-// AlternativeParser
+// OptionalParser
+// Output = Maybe<output of sub-parser>
+
+template <typename SubParser>
+class OptionalParser {
+public:
+  explicit OptionalParser(SubParser&& subParser)
+      : subParser(move(subParser)) {}
+
+  ParseResult<Maybe<typename ExtractParserType<SubParser>::OutputType>> operator()(
+      typename ExtractParserType<SubParser>::InputType& input) const {
+    typedef Maybe<typename ExtractParserType<SubParser>::OutputType> Result;
+
+    typename ExtractParserType<SubParser>::InputType subInput(input);
+    subInput.setCommitted(false);
+    auto subResult = subParser(subInput);
+
+    if (subResult.isError()) {
+      if (subInput.isCommitted()) {
+        // Note that we intentionally don't swallow the committed bit.
+        input = subInput;
+        return ParseResult<Result>(move(subResult.errors));
+      } else {
+        return ParseResult<Result>(Result());
+      }
+    } else {
+      // Note that we intentionally don't swallow the committed bit.
+      input = subInput;
+      return ParseResult<Result>(Result(move(subResult.value)));
+    }
+  }
+
+private:
+  SubParser subParser;
+};
+
+template <typename SubParser>
+OptionalParser<typename MaybeRef<SubParser>::Type>
+optional(SubParser&& subParser) {
+  return OptionalParser<typename MaybeRef<SubParser>::Type>(
+      MaybeRef<SubParser>::from(subParser));
+}
+
+// -------------------------------------------------------------------
+// OneOfParser
 // All SubParsers must have same output type, which becomes the output type of the
-// AlternativeParser.
+// OneOfParser.
 
 template <typename Input, typename Output, typename... SubParsers>
-class AlternativeParser;
+class OneOfParser;
 
 template <typename Input, typename Output, typename FirstSubParser, typename... SubParsers>
-class AlternativeParser<Input, Output, FirstSubParser, SubParsers...> {
+class OneOfParser<Input, Output, FirstSubParser, SubParsers...> {
 public:
   template <typename T, typename... U>
-  AlternativeParser(T&& firstSubParser, U&&... rest)
+  explicit OneOfParser(T&& firstSubParser, U&&... rest)
       : first(std::forward<T>(firstSubParser)), rest(std::forward<U>(rest)...) {}
 
   ParseResult<Output> operator()(Input& input) const {
@@ -577,11 +684,11 @@ public:
 
 private:
   FirstSubParser first;
-  AlternativeParser<Input, Output, SubParsers...> rest;
+  OneOfParser<Input, Output, SubParsers...> rest;
 };
 
 template <typename Input, typename Output>
-class AlternativeParser<Input, Output> {
+class OneOfParser<Input, Output> {
 public:
   ParseResult<Output> operator()(Input& input) const {
     input.setBroken(true);
@@ -590,14 +697,16 @@ public:
 };
 
 template <typename FirstSubParser, typename... MoreSubParsers>
-AlternativeParser<typename ExtractParserType<FirstSubParser>::InputType,
-                  typename ExtractParserType<FirstSubParser>::OutputType,
-                  FirstSubParser, MoreSubParsers...>
-alternative(FirstSubParser&& first, MoreSubParsers&&... rest) {
-  return AlternativeParser<typename ExtractParserType<FirstSubParser>::InputType,
-                           typename ExtractParserType<FirstSubParser>::OutputType,
-                           FirstSubParser, MoreSubParsers...>(
-      std::forward<FirstSubParser>(first), std::forward<MoreSubParsers>(rest)...);
+OneOfParser<typename ExtractParserType<FirstSubParser>::InputType,
+            typename ExtractParserType<FirstSubParser>::OutputType,
+            typename MaybeRef<FirstSubParser>::Type,
+            typename MaybeRef<MoreSubParsers>::Type...>
+oneOf(FirstSubParser&& first, MoreSubParsers&&... rest) {
+  return OneOfParser<typename ExtractParserType<FirstSubParser>::InputType,
+                     typename ExtractParserType<FirstSubParser>::OutputType,
+                     typename MaybeRef<FirstSubParser>::Type,
+                     typename MaybeRef<MoreSubParsers>::Type...>(
+      MaybeRef<FirstSubParser>::from(first), MaybeRef<MoreSubParsers>::from(rest)...);
 }
 
 class CommitParser {
@@ -626,7 +735,7 @@ CommitParser commit() {
 template <typename Output, typename SubParser, typename Transform>
 class TransformParser {
 public:
-  TransformParser(SubParser&& subParser, Transform&& transform)
+  explicit TransformParser(SubParser&& subParser, Transform&& transform)
       : subParser(move(subParser)), transform(move(transform)) {}
 
   ParseResult<Output> operator()(typename ExtractParserType<SubParser>::InputType& input) const {
@@ -644,15 +753,15 @@ private:
   Transform transform;
 };
 
-template <typename Output, typename SubParser, typename Transform>
-TransformParser<Output,
-                typename remove_reference<SubParser>::type,
+template <typename SubParser, typename Transform>
+TransformParser<decltype(extractReturnType(&Transform::operator())),
+                typename MaybeRef<SubParser>::Type,
                 typename remove_reference<Transform>::type>
 transform(SubParser&& subParser, Transform&& transform) {
-  return TransformParser<Output,
-                         typename remove_reference<SubParser>::type,
+  return TransformParser<decltype(extractReturnType(&Transform::operator())),
+                         typename MaybeRef<SubParser>::Type,
                          typename remove_reference<Transform>::type>(
-      std::forward<SubParser>(subParser), std::forward<Transform>(transform));
+      MaybeRef<SubParser>::from(subParser), std::forward<Transform>(transform));
 }
 
 }  // namespace ast

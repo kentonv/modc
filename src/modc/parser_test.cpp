@@ -111,7 +111,7 @@ TEST(Parsers, SequenceParser) {
 TEST(Parsers, TransformParser) {
   string text = "foo";
 
-  auto parser = transform<int>(
+  auto parser = transform(
       sequence(exactChar('f'), exactChar('o'), exactChar('o')),
       []() -> int { return 123; });
 
@@ -125,10 +125,49 @@ TEST(Parsers, TransformParser) {
   }
 }
 
+TEST(Parsers, TransformParser_MaybeRef) {
+  struct Transform {
+    int value;
+
+    Transform(int value): value(value) {}
+
+    int operator()() const { return value; }
+  };
+
+  // Don't use auto for the TransformParsers here because we're trying to make sure that MaybeRef
+  // is working correctly.  When transform() is given an lvalue, it should wrap the type in
+  // ParserRef.
+
+  TransformParser<int, ExactElementParser<Input>, Transform> parser1 =
+      transform(exactChar('f'), Transform(12));
+
+  auto otherParser = exactChar('o');
+  TransformParser<int, ParserRef<ExactElementParser<Input>>, Transform> parser2 =
+      transform(otherParser, Transform(34));
+
+  auto otherParser2 = exactChar('b');
+  TransformParser<int, ExactElementParser<Input>, Transform> parser3 =
+      transform(move(otherParser2), Transform(56));
+
+  string text = "foob";
+  auto parser = transform(
+      sequence(parser1, parser2, exactChar('o'), parser3),
+      [](int i, int j, int k) { return i + j + k; });
+
+  {
+    Input input(text.begin(), text.end());
+    ParseResult<int> result = parser(input);
+    ASSERT_FALSE(result.isError());
+    EXPECT_EQ(12 + 34 + 56, result.value);
+    EXPECT_FALSE(input.isBroken());
+    EXPECT_TRUE(input.atEnd());
+  }
+}
+
 TEST(Parsers, RepeatedParser) {
   string text = "foooob";
 
-  auto parser = transform<int>(
+  auto parser = transform(
       sequence(exactChar('f'), repeated(exactChar('o'))),
       [](std::vector<Void>&& values) -> int { return values.size(); });
 
@@ -160,12 +199,12 @@ TEST(Parsers, RepeatedParser) {
   }
 }
 
-TEST(Parsers, AlternativeParser) {
-  auto parser = alternative(
-      transform<string>(sequence(exactChar('f'), commit(), exactChar('o'), exactChar('o')),
-                        []() -> string { return "foo"; }),
-      transform<string>(sequence(exactChar('b'), exactChar('a'), commit(), exactChar('r')),
-                        []() -> string { return "bar"; }));
+TEST(Parsers, OneOfParser) {
+  auto parser = oneOf(
+      transform(sequence(exactChar('f'), commit(), exactChar('o'), exactChar('o')),
+                []() -> string { return "foo"; }),
+      transform(sequence(exactChar('b'), exactChar('a'), commit(), exactChar('r')),
+                []() -> string { return "bar"; }));
 
   {
     string text = "foo";

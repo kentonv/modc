@@ -55,33 +55,7 @@ enum class StyleAllowance {
   MUTABLE_REFERENCE
 };
 
-class Expression;
-
-Expression errorExpression(errors::Error&& error);
-Expression errorExpression(const errors::Error& error);
-Expression errorExpression(std::vector<errors::Error>&& errors);
-Expression errorExpression(const std::vector<errors::Error>& errors);
-
-Expression variable(string&& name);
-Expression variable(const string& name);
-
-Expression literalArray(std::vector<Expression>&& elements);
-Expression literalArray(const std::vector<Expression>& elements);
-
-Expression literalInt(int value);
-Expression literalDouble(double value);
-Expression literalString(string&& value);
-Expression literalString(const string& value);
-
-Expression import(string&& moduleName);
-Expression import(const string& moduleName);
-
-Expression subscript(Expression&& container, Expression&& key);
-Expression memberAccess(Expression&& object, const string& member);
-
-Expression binaryOperator(string&& op, Expression&& left, Expression&& right);
-
-Expression conditional(Expression&& condition, Expression&& trueClause, Expression&& falseClause);
+struct expression;
 
 class Expression {
 public:
@@ -97,6 +71,7 @@ public:
   bool operator!=(const Expression& other) const { return !(*this == other); }
 
   enum class Type {
+    PLACEHOLDER,
     ERROR,
 
     LITERAL_INT,
@@ -105,7 +80,9 @@ public:
     LITERAL_ARRAY,
 
     BINARY_OPERATOR,
-    UNARY_OPERATOR,
+    PREFIX_OPERATOR,
+    POSTFIX_OPERATOR,
+    TERNARY_OPERATOR,
 
     FUNCTION_CALL,
     SUBSCRIPT,
@@ -128,12 +105,32 @@ public:
     }
   };
 
-  struct UnaryOperator {
+  struct PrefixOperator {
     string op;
     Indirect<Expression> value;
 
-    bool operator==(const UnaryOperator& other) const {
+    bool operator==(const PrefixOperator& other) const {
       return op == other.op && value == other.value;
+    }
+  };
+
+  struct PostfixOperator {
+    string op;
+    Indirect<Expression> value;
+
+    bool operator==(const PostfixOperator& other) const {
+      return op == other.op && value == other.value;
+    }
+  };
+
+  struct TernaryOperator {
+    Indirect<Expression> condition;
+    Indirect<Expression> trueClause;
+    Indirect<Expression> falseClause;
+
+    bool operator==(const TernaryOperator& other) const {
+      return condition == other.condition && trueClause == other.trueClause &&
+          falseClause == other.falseClause;
     }
   };
 
@@ -148,6 +145,9 @@ public:
       }
     };
     std::vector<Parameter> parameters;
+
+    FunctionCall(Expression&& function, std::vector<Parameter>&& parameters)
+        : function(function), parameters(parameters) {}
 
     bool operator==(const FunctionCall& other) const {
       return function == other.function && parameters == other.parameters;
@@ -209,7 +209,9 @@ public:
     std::vector<Expression> literalArray;
 
     BinaryOperator binaryOperator;
-    UnaryOperator unaryOperator;
+    PrefixOperator prefixOperator;
+    PostfixOperator postfixOperator;
+    TernaryOperator ternaryOperator;
 
     FunctionCall functionCall;
     Subscript subscript;
@@ -222,6 +224,48 @@ public:
 
 private:
   Type type;
+
+  friend struct expression;
+};
+
+struct expression {
+  static Expression placeholder();
+
+  static Expression error(errors::Error&& error);
+  static Expression error(const errors::Error& error);
+  static Expression error(std::vector<errors::Error>&& errors);
+  static Expression error(const std::vector<errors::Error>& errors);
+
+  static Expression variable(string&& name);
+  static Expression variable(const string& name);
+
+  static Expression tuple(std::vector<Expression>&& elements);
+  static Expression tuple(const std::vector<Expression>& elements);
+
+  static Expression literalArray(std::vector<Expression>&& elements);
+  static Expression literalArray(const std::vector<Expression>& elements);
+
+  static Expression literalInt(int value);
+  static Expression literalDouble(double value);
+  static Expression literalString(string&& value);
+  static Expression literalString(const string& value);
+
+  static Expression import(string&& moduleName);
+  static Expression import(const string& moduleName);
+
+  static Expression subscript(Expression&& container, Expression&& key);
+  static Expression memberAccess(Expression&& object, const string& member);
+  static Expression functionCall(Expression&& function,
+                                 std::vector<Expression::FunctionCall::Parameter>&& parameters);
+
+  static Expression binaryOperator(string&& op, Expression&& left, Expression&& right);
+  static Expression prefixOperator(string&& op, Expression&& exp);
+  static Expression postfixOperator(Expression&& exp, string&& op);
+  static Expression ternaryOperator(Expression&& condition, Expression&& trueClause,
+                                    Expression&& falseClause);
+
+  static Expression conditional(Expression&& condition, Expression&& trueClause,
+                                Expression&& falseClause);
 };
 
 class Statement {

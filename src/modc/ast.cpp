@@ -17,6 +17,7 @@
 #include "ast.h"
 
 #include <utility>
+#include <functional>
 
 #include "tokens.h"
 #include "errors.h"
@@ -38,301 +39,349 @@ struct TokenParserInput : public parser::IteratorInput<Token, std::vector<Token>
           sequence.tokens.begin(), sequence.tokens.end()) {}
 };
 
-template <typename SubParser, Token::Type type, std::vector<TokenSequence> Token::*member,
-          bool multiElement>
-struct ListParser {
-  ListParser(SubParser&& subParser): subParser(move(subParser)) {}
 
-  typedef std::vector<typename parser::ExtractParserType<SubParser>::OutputType> SubResults;
-
-  parser::ParseResult<SubResults>
-  operator()(TokenParserInput& input) const {
-    if (!input.atEnd() && input.current().getType() == type) {
-      SubResults subResults;
-      std::vector<errors::Error> errors;
-
-      for (const TokenSequence& element: input.current().*member) {
-        TokenParserInput subInput(element);
-        auto subResult = subParser(subInput);
-        if (subResult.isError()) {
-          errors.push_back(move(subResult.error));
-        } else {
-          subResults.push_back(move(subResult.value));
-        }
-      }
-
-      input.next();
-
-      if (errors.empty()) {
-        if (!multiElement && subResults.size() != 1) {
-          return parser::ParseResult<SubResults>(input.error("Must have exactly one element."));
-        } else {
-          return parser::ParseResult<SubResults>(move(subResults));
-        }
-      } else {
-        return parser::ParseResult<SubResults>(move(errors));
-      }
-    } else {
-      input.setBroken(true);
-      return parser::ParseResult<SubResults>(input.error("Expected list."));
-    }
-  }
-
-  SubParser subParser;
-};
-
-template <typename SubParser>
-ListParser<typename std::remove_reference<SubParser>::type, Token::Type::BRACKETED,
-           &Token::bracketed, false>
-bracketed(SubParser&& subParser) {
-  return ListParser<typename std::remove_reference<SubParser>::type, Token::Type::BRACKETED,
-      &Token::bracketed, false>(std::forward<SubParser>(subParser));
-}
-
-template <typename SubParser>
-ListParser<typename std::remove_reference<SubParser>::type, Token::Type::BRACKETED,
-           &Token::bracketed, true>
-bracketedList(SubParser&& subParser) {
-  return ListParser<typename std::remove_reference<SubParser>::type, Token::Type::BRACKETED,
-      &Token::bracketed, true>(std::forward<SubParser>(subParser));
-}
-
-template <typename SubParser>
-ListParser<typename std::remove_reference<SubParser>::type, Token::Type::PARENTHESIZED,
-           &Token::parenthesized, false>
-parenthesized(SubParser&& subParser) {
-  return ListParser<typename std::remove_reference<SubParser>::type, Token::Type::PARENTHESIZED,
-      &Token::parenthesized, false>(std::forward<SubParser>(subParser));
-}
-
-template <typename SubParser>
-ListParser<typename std::remove_reference<SubParser>::type, Token::Type::PARENTHESIZED,
-           &Token::parenthesized, true>
-parenthesizedList(SubParser&& subParser) {
-  return ListParser<typename std::remove_reference<SubParser>::type, Token::Type::PARENTHESIZED,
-      &Token::parenthesized, true>(std::forward<SubParser>(subParser));
-}
 
 parser::ExactElementParser<TokenParserInput> keyword(string&& name) {
   return parser::exactElement<TokenParserInput>(tokens::keyword(move(name)));
 }
+
+
+class OneOfKeywordsParser {
+public:
+  OneOfKeywordsParser(std::initializer_list<string> names)
+      : keywords(names) {}
+
+  parser::ParseResult<string> operator()(TokenParserInput& input) const {
+    if (input.atEnd() || input.current().getType() != Token::Type::KEYWORD ||
+        keywords.count(input.current().keyword) == 0) {
+      input.setBroken(true);
+      return parser::ParseResult<string>(input.error("TODO"));
+    } else {
+      parser::ParseResult<string> result(input.current().keyword);
+      input.next();
+      return move(result);
+    }
+  }
+
+private:
+  std::set<string> keywords;
+};
+
+
+OneOfKeywordsParser oneOfKeywords(std::initializer_list<string> names) {
+  return OneOfKeywordsParser(names);
+}
+
+
+
+auto errorTokens = [](TokenParserInput& input) -> parser::ParseResult<parser::Void> {
+  if (input.atEnd() || input.current().getType() != Token::Type::ERROR) {
+    input.setBroken(true);
+    return parser::ParseResult<parser::Void>(std::vector<errors::Error>());
+  } else {
+    std::vector<errors::Error> result = input.current().error;
+    input.next();
+    while (!input.atEnd() && input.current().getType() == Token::Type::ERROR) {
+      result.insert(result.end(), input.current().error.begin(), input.current().error.end());
+      input.next();
+    }
+    return parser::ParseResult<parser::Void>(move(result));
+  }
+};
 
 auto identifier = [](TokenParserInput& input) -> parser::ParseResult<string> {
   if (input.atEnd() || input.current().getType() != Token::Type::IDENTIFIER) {
     input.setBroken(true);
     return parser::ParseResult<string>(input.error("Expected identifier."));
   } else {
-    const string& result = input.current().identifier;
+    string result = input.current().identifier;
     input.next();
-    return parser::ParseResult<string>(string(result));
+    return parser::ParseResult<string>(move(result));
   }
 };
 
-
-auto outerExpression = [](TokenParserInput& input) -> parser::ParseResult<Expression> {
-  return parser::ParseResult<Expression>(errors::error(-1, -1, "TODO"));
+auto literalInt = [](TokenParserInput& input) -> parser::ParseResult<int> {
+  if (input.atEnd() || input.current().getType() != Token::Type::LITERAL_INT) {
+    input.setBroken(true);
+    return parser::ParseResult<int>(input.error("Expected integer."));
+  } else {
+    int result = input.current().literalInt;
+    input.next();
+    return parser::ParseResult<int>(result);
+  }
 };
 
-using parser::alternative;
+auto literalDouble = [](TokenParserInput& input) -> parser::ParseResult<double> {
+  if (input.atEnd() || input.current().getType() != Token::Type::LITERAL_DOUBLE) {
+    input.setBroken(true);
+    return parser::ParseResult<double>(input.error("Expected double."));
+  } else {
+    double result = input.current().literalDouble;
+    input.next();
+    return parser::ParseResult<double>(result);
+  }
+};
+
+auto literalString = [](TokenParserInput& input) -> parser::ParseResult<string> {
+  if (input.atEnd() || input.current().getType() != Token::Type::LITERAL_STRING) {
+    input.setBroken(true);
+    return parser::ParseResult<string>(input.error("Expected string."));
+  } else {
+    string result = input.current().literalString;
+    input.next();
+    return parser::ParseResult<string>(move(result));
+  }
+};
+
+template <Token::Type type, std::vector<TokenSequence> Token::*member>
+struct BracketedParserTemplate {
+  template <typename SubParser>
+  struct Parser {
+    Parser(SubParser&& subParser): subParser(move(subParser)) {}
+
+    typedef typename parser::ExtractParserType<SubParser>::OutputType SubResult;
+
+    parser::ParseResult<SubResult>
+    operator()(TokenParserInput& input) const {
+      if (!input.atEnd() && input.current().getType() == type) {
+        if ((input.current().*member).size() == 1) {
+          TokenParserInput subInput((input.current().*member)[0]);
+          input.next();
+          return subParser(subInput);
+        } else {
+          auto result = parser::ParseResult<SubResult>(
+              input.error("Must have exactly one element."));
+          input.next();
+          return move(result);
+        }
+      } else {
+        input.setBroken(true);
+        return parser::ParseResult<SubResult>(input.error("Expected list."));
+      }
+    }
+
+    SubParser subParser;
+  };
+};
+
+template <Token::Type type, std::vector<TokenSequence> Token::*member>
+struct ListParserTemplate {
+  template <typename SubParser>
+  struct Parser {
+    Parser(SubParser&& subParser): subParser(move(subParser)) {}
+
+    typedef std::vector<typename parser::ExtractParserType<SubParser>::OutputType> SubResults;
+
+    parser::ParseResult<SubResults>
+    operator()(TokenParserInput& input) const {
+      if (!input.atEnd() && input.current().getType() == type) {
+        SubResults subResults;
+        std::vector<errors::Error> errors;
+
+        for (const TokenSequence& element: input.current().*member) {
+          TokenParserInput subInput(element);
+          auto subResult = subParser(subInput);
+          if (subResult.isError()) {
+            for (auto& error : subResult.errors) {
+              errors.push_back(move(error));
+            }
+          } else {
+            subResults.push_back(move(subResult.value));
+          }
+        }
+
+        input.next();
+
+        if (errors.empty()) {
+          return parser::ParseResult<SubResults>(move(subResults));
+        } else {
+          return parser::ParseResult<SubResults>(move(errors));
+        }
+      } else {
+        input.setBroken(true);
+        return parser::ParseResult<SubResults>(input.error("Expected list."));
+      }
+    }
+
+    SubParser subParser;
+  };
+};
+
+parser::WrapperParserConstructor<BracketedParserTemplate<
+    Token::Type::BRACKETED, &Token::bracketed>::Parser> bracketed;
+parser::WrapperParserConstructor<ListParserTemplate<
+    Token::Type::BRACKETED, &Token::bracketed>::Parser> bracketedList;
+parser::WrapperParserConstructor<BracketedParserTemplate<
+    Token::Type::PARENTHESIZED, &Token::bracketed>::Parser> parenthesized;
+parser::WrapperParserConstructor<ListParserTemplate<
+    Token::Type::PARENTHESIZED, &Token::bracketed>::Parser> parenthesizedList;
+
+// =======================================================================================
+
+template <typename Func, typename Param>
+struct Binding {
+  Func func;
+  Param param;
+
+  Binding(Func&& func, Param&& param): func(move(func)), param(move(param)) {}
+
+  template <typename... MoreParams>
+  auto operator()(MoreParams&&... moreParams) ->
+      decltype(func(move(param), std::forward<MoreParams>(moreParams)...)) {
+    return func(move(param), std::forward<MoreParams>(moreParams)...);
+  }
+};
+
+template <typename Func, typename Param>
+Binding<typename std::remove_reference<Func>::type,
+        typename std::remove_reference<Param>::type>
+bind(Param&& param, Func&& func) {
+  return Binding<typename std::remove_reference<Func>::type,
+                 typename std::remove_reference<Param>::type>(move(func), move(param));
+}
+
+// =======================================================================================
+
+using parser::oneOf;
 using parser::sequence;
 using parser::transform;
 using parser::repeated;
-using parser::ref;
+using parser::optional;
+using parser::commit;
 
-auto atomicExpression = alternative(
-    transform<Expression>(ref(identifier),
-        [](string&& name) { return variable(move(name)); }),
-    parenthesized(ref(outerExpression)),
-    transform<Expression>(bracketedList(ref(outerExpression)),
-        [](std::vector<Expression>&& expressions) { return literalArray(move(expressions)); })
-    // TODO: literals, import
-    );
+typedef expression ex;
 
+typedef parser::Parser<TokenParserInput, Expression> ExpressionParser;
 
+extern ExpressionParser outerExpression;
 
+ExpressionParser atomicExpression = oneOf(
+    // Identifier.
+    transform(identifier,
+        [](string&& name) { return ex::variable(move(name)); }),
 
+    // Parenthesized expression or tuple.
+    transform(parenthesizedList(outerExpression),
+        [](std::vector<Expression>&& expressions) {
+          if (expressions.size() == 1) {
+            return expressions[0];
+          } else {
+            return ex::tuple(move(expressions));
+          }
+        }),
 
+    // Array literal
+    transform(bracketedList(outerExpression),
+        [](std::vector<Expression>&& expressions) { return ex::literalArray(move(expressions)); }),
 
-class TokenReader {
-public:
-  TokenReader(const TokenSequence& sequnece) : handledAtEnd(false) {}
-  ~TokenReader() {
-    if (!handledAtEnd) {
-      DEBUG_ERROR << "Failed to check if all tokens were consumed on TokenReader.";
-    }
-  }
+    // Import
+    transform(sequence(keyword("import"), literalString),
+        [](string&& moduleName) { return ex::import(move(moduleName)); }),
 
-  Token::Type nextTokenType();
-  bool atEnd();
+    // Primitive literals
+    transform(literalInt, [](int value) { return ex::literalInt(value); }),
+    transform(literalDouble, [](double value) { return ex::literalDouble(value); }),
+    transform(literalString, [](string&& value) { return ex::literalString(value); }));
 
-  bool lookingAt(Token::Type type);
-  const string& nextKeyword();
-
-  bool tryReadKeyword(const string& keyword);
-  const string& readIdentifier();
-  int readLiteralInt();
-  double readLiteralDouble();
-  string readLiteralString();
-
-  const std::vector<TokenSequence>& readParenthesized();
-  const std::vector<TokenSequence>& readBraketed();
-
-  const std::vector<errors::Error>& readError();
-
-  template <typename... Parts>
-  errors::Error error(Parts&&... message) {
-    // Location?
-    return errors::error(-1, -1, std::forward<Parts>(message)...);
-  }
-
-  template <typename... Parts>
-  Expression errorExpression(Parts&&... message) {
-    return ast::errorExpression(error(message...));
-  }
-
-  Expression errorIfNotConsumed(Expression&& parsed) {
-    handledAtEnd = true;
-    if (atEnd() || parsed.getType() == Expression::Type::ERROR) {
-      return move(parsed);
-    } else {
-      // TODO:  Span all remaining tokens.
-      return errorExpression("I do not understand these tokens.");
-    }
-  }
-
-private:
-  bool handledAtEnd;
+auto functionCallParameter = [](TokenParserInput& input) {
+  return parser::ParseResult<Expression::FunctionCall::Parameter>(errors::error(-1, -1, "TODO"));
 };
 
-Expression parseExpression(TokenReader& reader);
+parser::Parser<TokenParserInput, std::function<Expression(Expression&&)>> suffix = oneOf(
+    // Member access
+    transform(sequence(keyword("."), identifier),
+        [](string&& name) -> std::function<Expression(Expression&&)> {
+          return bind(move(name), [](string&& name, Expression&& seed) {
+            return ex::memberAccess(move(seed), move(name));
+          });
+        }),
 
-Expression parseAtomicExpression(TokenReader& reader) {
-  switch (reader.nextTokenType()) {
-    case Token::Type::ERROR:
-      return errorExpression(reader.readError());
-    case Token::Type::KEYWORD:
-      if (reader.tryReadKeyword("import")) {
-        return import(reader.readLiteralString());
+    // Function call
+    transform(parenthesizedList(functionCallParameter),
+        [](std::vector<Expression::FunctionCall::Parameter>&& params) ->
+            std::function<Expression(Expression&&)> {
+          return bind(move(params),
+            [](std::vector<Expression::FunctionCall::Parameter>&& params, Expression&& seed) {
+              return ex::functionCall(move(seed), move(params));
+            });
+        }),
+
+    // Subscript
+    transform(bracketed(outerExpression),
+        [](Expression&& key) -> std::function<Expression(Expression&&)> {
+          return bind(move(key), [](Expression&& key, Expression&& seed) {
+            return ex::subscript(move(seed), move(key));
+          });
+        }),
+
+    // postincrement / postdecrement
+    transform(oneOfKeywords({"++", "--"}),
+        [](string&& op) -> std::function<Expression(Expression&&)> {
+          return bind(move(op), [](string&& op, Expression&& seed) {
+            return ex::postfixOperator(move(seed), move(op));
+          });
+        }));
+
+ExpressionParser suffixedExpression = transform(
+    sequence(atomicExpression, commit(), repeated(suffix)),
+    [] (Expression&& seed, std::vector<std::function<Expression(Expression&&)>>&& suffixes) {
+      for (auto& suffix : suffixes) {
+        seed = move(suffix(move(seed)));
+      }
+      return move(seed);
+    });
+
+ExpressionParser prefixedExpression = oneOf(
+    transform(sequence(oneOfKeywords({"++", "--", "+", "-", "!", "~"}),
+                       commit(), suffixedExpression),
+        [](string&& op, Expression&& seed) { return ex::prefixOperator(move(op), move(seed)); }),
+
+    suffixedExpression);
+
+ExpressionParser binaryOpParser(const ExpressionParser& next,
+                                std::initializer_list<string> ops) {
+  auto multiplicativeSuffix = transform(
+      sequence(oneOfKeywords(ops), commit(), next),
+      [](string&& op, Expression&& operand) {
+        return std::make_pair(move(op), move(operand));
+      });
+
+  return transform(sequence(next, commit(), repeated(move(multiplicativeSuffix))),
+      [](Expression&& seed, std::vector<std::pair<string, Expression>>&& ops) {
+        for (auto& op : ops) {
+          seed = ex::binaryOperator(move(op.first), move(seed), move(op.second));
+        }
+        return move(seed);
+      });
+}
+
+ExpressionParser multiplyExpression = binaryOpParser(prefixedExpression, {"*", "/", "%"});
+ExpressionParser addExpression      = binaryOpParser(multiplyExpression, {"+", "-"});
+ExpressionParser shiftExpression    = binaryOpParser(addExpression     , {"<<", ">>"});
+ExpressionParser bitandExpression   = binaryOpParser(shiftExpression   , {"&"});
+ExpressionParser bitxorExpression   = binaryOpParser(bitandExpression  , {"^"});
+ExpressionParser bitorExpression    = binaryOpParser(bitxorExpression  , {"|"});
+ExpressionParser andExpression      = binaryOpParser(bitorExpression   , {"&&"});
+ExpressionParser orExpression       = binaryOpParser(andExpression     , {"||"});
+
+auto ternarySuffix = transform(
+    sequence(keyword("?"), commit(), outerExpression, keyword(":"), outerExpression),
+    [](Expression&& trueClause, Expression&& falseClause) {
+      return std::make_pair(move(trueClause), move(falseClause));
+    });
+
+ExpressionParser outerExpression = transform(
+    sequence(orExpression, optional(move(ternarySuffix))),
+    [](Expression&& condition, Maybe<std::pair<Expression, Expression>>&& clauses) {
+      if (clauses) {
+        return ex::ternaryOperator(move(condition), move(clauses->first), move(clauses->second));
       } else {
-        return errorExpression(reader.error("Expected expression."));
+        return move(condition);
       }
-    case Token::Type::IDENTIFIER:
-      return variable(reader.readIdentifier());
-    case Token::Type::BRACKETED: {
-      std::vector<Expression> elementExpressions;
-      for (const TokenSequence& sequence: reader.readParenthesized()) {
-        TokenReader subReader(sequence);
-        elementExpressions.push_back(subReader.errorIfNotConsumed(parseExpression(subReader)));
-      }
-      return literalArray(move(elementExpressions));
-    }
-    case Token::Type::PARENTHESIZED: {
-      const std::vector<TokenSequence>& parts = reader.readParenthesized();
-      if (parts.size() != 1) {
-        return reader.errorExpression(
-            "Parenthesized sub-expression must have exactly one element (no commas).");
-      } else {
-        TokenReader subReader(parts[0]);
-        return subReader.errorIfNotConsumed(parseExpression(subReader));
-      }
-    }
-    case Token::Type::LITERAL_INT:
-      return literalInt(reader.readLiteralInt());
-    case Token::Type::LITERAL_DOUBLE:
-      return literalDouble(reader.readLiteralDouble());
-    case Token::Type::LITERAL_STRING:
-      return literalString(reader.readLiteralString());
-    default:
-      return reader.errorExpression("Expected expression.");
-  }
-}
+    });
 
-Expression parseSuffixedExpression(TokenReader& reader) {
-  Expression seed = parseAtomicExpression(reader);
-
-  while (!reader.atEnd()) {
-    switch (reader.nextTokenType()) {
-      case Token::Type::KEYWORD:
-        if (reader.tryReadKeyword(".")) {
-          seed = memberAccess(move(seed), reader.readIdentifier());
-        } else {
-          return seed;
-        }
-        break;
-      case Token::Type::BRACKETED: {
-        Expression key;
-        const std::vector<TokenSequence>& parts = reader.readBraketed();
-        if (parts.size() != 1) {
-          key = reader.errorExpression("Subscript must have exactly one element (no commas).");
-        } else {
-          TokenReader subReader(parts[0]);
-          key = subReader.errorIfNotConsumed(parseExpression(subReader));
-        }
-
-        seed = subscript(move(seed), move(key));
-        break;
-      }
-      case Token::Type::PARENTHESIZED: {
-        std::vector<Expression::FunctionCall::Parameter> parameters;
-        for (const TokenSequence& sequence: reader.readParenthesized()) {
-          Expression::FunctionCall::Parameter parameter;
-          TokenReader subReader(sequence);
-          Expression expression = parseExpression(subReader);
-
-          if (subReader.tryReadKeyword("&")) {
-            parameter.styleAllowance = StyleAllowance::MUTABLE_REFERENCE;
-          } else {
-            parameter.styleAllowance = StyleAllowance::VALUE;
-          }
-
-          parameter.expression = subReader.errorIfNotConsumed(move(expression));
-
-          parameters.push_back(parameter);
-        }
-
-        break;
-      }
-      default:
-        return seed;
-    }
-  }
-
-  return seed;
-}
-
-Maybe<int> getOperatorPriority(const string& keyword);
-
-Expression parseArithmeticExpression(TokenReader& reader, int priority) {
-  Expression left = parseSuffixedExpression(reader);
-
-  while (reader.lookingAt(Token::Type::KEYWORD)) {
-    Maybe<int> opPriority = getOperatorPriority(reader.nextKeyword());
-    if (opPriority && *opPriority > priority) {
-      string keyword = reader.nextKeyword();
-      reader.tryReadKeyword(keyword);
-      Expression right = parseArithmeticExpression(reader, opPriority);
-      left = binaryOperator(move(keyword), move(left), move(right));
-    } else {
-      break;
-    }
-  }
-
-  return left;
-}
-
-Expression parseExpression(TokenReader& reader) {
-  Expression seed = parseArithmeticExpression(reader, 0);
-
-  if (reader.tryReadKeyword("?")) {
-    Expression trueClause = parseExpression(reader);
-    if (!reader.tryReadKeyword(":")) {
-      return reader.errorExpression("Expected ':'.");
-    }
-    Expression falseClause = parseExpression(reader);
-    seed = conditional(move(seed), move(trueClause), move(falseClause));
-  }
-
-  return seed;
+void foo(TokenParserInput& input) {
+  outerExpression(input);
 }
 
 // =============================================================================
@@ -349,7 +398,9 @@ void Destroy(T& obj) {
   HANDLE(LITERAL_STRING, literalString, string) \
   HANDLE(LITERAL_ARRAY, literalArray, std::vector<Expression>) \
   HANDLE(BINARY_OPERATOR, binaryOperator, BinaryOperator) \
-  HANDLE(UNARY_OPERATOR, unaryOperator, UnaryOperator) \
+  HANDLE(PREFIX_OPERATOR, prefixOperator, PrefixOperator) \
+  HANDLE(POSTFIX_OPERATOR, postfixOperator, PostfixOperator) \
+  HANDLE(TERNARY_OPERATOR, ternaryOperator, TernaryOperator) \
   HANDLE(FUNCTION_CALL, functionCall, FunctionCall) \
   HANDLE(SUBSCRIPT, subscript, Subscript) \
   HANDLE(MEMBER_ACCESS, memberAccess, MemberAccess) \
@@ -359,6 +410,9 @@ void Destroy(T& obj) {
 
 Expression::Expression(Expression&& other): type(other.type) {
   switch (type) {
+    case Type::PLACEHOLDER:
+      break;
+
 #define MOVE_CONSTRUCT(ID, NAME, TYPE) \
     case Type::ID: \
       new (&NAME) TYPE(move(other.NAME)); \
@@ -370,6 +424,9 @@ Expression::Expression(Expression&& other): type(other.type) {
 
 Expression::Expression(const Expression& other): type(other.type) {
   switch (type) {
+    case Type::PLACEHOLDER:
+      break;
+
 #define COPY_CONSTRUCT(ID, NAME, TYPE) \
     case Type::ID: \
       new (&NAME) TYPE(other.NAME); \
@@ -381,6 +438,9 @@ Expression::Expression(const Expression& other): type(other.type) {
 
 Expression::~Expression() {
   switch (type) {
+    case Type::PLACEHOLDER:
+      break;
+
 #define DESTRUCT(ID, NAME, TYPE) \
     case Type::ID: \
       Destroy(NAME); \
@@ -407,6 +467,9 @@ Expression& Expression::operator=(const Expression& other) {
 bool Expression::operator==(const Expression& other) const {
   if (type == other.type) {
     switch (type) {
+      case Type::PLACEHOLDER:
+        return true;
+
 #define COMPARE(ID, NAME, TYPE) \
       case Type::ID: \
         return NAME == other.NAME;

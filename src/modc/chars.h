@@ -36,14 +36,14 @@ static constexpr std::uint64_t bit(int index) {
 
 class CharClass {
 public:
-  constexpr CharClass(): bits({0, 0, 0, 0}) {}
+  constexpr CharClass(): bits{0, 0, 0, 0} {}
   constexpr CharClass(unsigned char c)
-      : bits({bit(c), bit(c - 64), bit(c - 128), bit(c - 192)}) {}
-  constexpr CharClass(unsigned char start, unsigned char end): bits({
+      : bits{bit(c), bit(c - 64), bit(c - 128), bit(c - 192)} {}
+  constexpr CharClass(unsigned char start, unsigned char end): bits{
       oneBits(end +   1) & ~oneBits(start      ),
       oneBits(end -  63) & ~oneBits(start -  64),
       oneBits(end - 127) & ~oneBits(start - 128),
-      oneBits(end - 191) & ~oneBits(start - 192)}) {}
+      oneBits(end - 191) & ~oneBits(start - 192)} {}
 
   constexpr CharClass operator+(const CharClass& other) const {
     return CharClass(bits[0] | other.bits[0],
@@ -64,7 +64,7 @@ public:
   }
 
 private:
-  constexpr CharClass(uint64_t a, uint64_t b, uint64_t c, uint64_t d): bits({a, b, c, d}) {}
+  constexpr CharClass(uint64_t a, uint64_t b, uint64_t c, uint64_t d): bits{a, b, c, d} {}
   std::uint64_t bits[4];
 };
 
@@ -92,7 +92,7 @@ struct CharTypeMapInit;
 
 class CharTypeMap {
 public:
-  constexpr CharTypeMap(): charTypes({CharType::UNKNOWN}) {}
+  constexpr CharTypeMap(): charTypes{CharType::UNKNOWN} {}
 
   constexpr CharType operator[](char c) const {
     return charTypes[(unsigned char) c];
@@ -104,7 +104,7 @@ private:
   template <int... I>
   constexpr CharTypeMap(const CharTypeMap& orig, const CharClass& charClass,
                         CharType type, TemplateInts<I...> hack)
-      : charTypes({charClass.contains(I) ? type : orig.charTypes[I]...}) {}
+      : charTypes{charClass.contains(I) ? type : orig.charTypes[I]...} {}
 
   friend constexpr CharTypeMap operator+(const CharTypeMap& orig, const CharTypeMapInit& init);
 };
