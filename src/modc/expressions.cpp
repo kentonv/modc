@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "ast.h"
+#include "expressions.h"
 
 #include <utility>
 #include <functional>
@@ -25,26 +25,203 @@
 #include "base/Debug.h"
 
 namespace modc {
-namespace ast {
+namespace expressions {
 
 using std::move;
+
+// =============================================================================
+
+template <typename T>
+void Destroy(T& obj) {
+  obj.~T();
+}
+
+#define FOR_ALL_EXPRESSIONS(HANDLE) \
+  HANDLE(ERROR, error, vector<errors::Error>) \
+  HANDLE(VARIABLE, variable, string) \
+  HANDLE(TUPLE, tuple, vector<Expression>) \
+  HANDLE(LITERAL_INT, literalInt, int) \
+  HANDLE(LITERAL_DOUBLE, literalDouble, double) \
+  HANDLE(LITERAL_STRING, literalString, string) \
+  HANDLE(LITERAL_ARRAY, literalArray, vector<Expression>) \
+  HANDLE(BINARY_OPERATOR, binaryOperator, BinaryOperator) \
+  HANDLE(PREFIX_OPERATOR, prefixOperator, PrefixOperator) \
+  HANDLE(POSTFIX_OPERATOR, postfixOperator, PostfixOperator) \
+  HANDLE(TERNARY_OPERATOR, ternaryOperator, TernaryOperator) \
+  HANDLE(FUNCTION_CALL, functionCall, FunctionCall) \
+  HANDLE(SUBSCRIPT, subscript, Subscript) \
+  HANDLE(MEMBER_ACCESS, memberAccess, MemberAccess) \
+  HANDLE(IMPORT, import, string)
+
+Expression::Expression(Expression&& other): type(other.type) {
+  switch (type) {
+#define MOVE_CONSTRUCT(ID, NAME, TYPE) \
+    case Type::ID: \
+      new (&NAME) TYPE(move(other.NAME)); \
+      break;
+    FOR_ALL_EXPRESSIONS(MOVE_CONSTRUCT)
+#undef MOVE_CONSTRUCT
+  }
+}
+
+Expression::Expression(const Expression& other): type(other.type) {
+  switch (type) {
+#define COPY_CONSTRUCT(ID, NAME, TYPE) \
+    case Type::ID: \
+      new (&NAME) TYPE(other.NAME); \
+      break;
+    FOR_ALL_EXPRESSIONS(COPY_CONSTRUCT)
+#undef COPY_CONSTRUCT
+  }
+}
+
+Expression::~Expression() {
+  switch (type) {
+#define DESTRUCT(ID, NAME, TYPE) \
+    case Type::ID: \
+      Destroy(NAME); \
+      break;
+    FOR_ALL_EXPRESSIONS(DESTRUCT)
+#undef DESTRUCT
+  }
+}
+
+Expression& Expression::operator=(Expression&& other) {
+  // Lazy.
+  this->~Expression();
+  new(this) Expression(move(other));
+  return *this;
+}
+
+Expression& Expression::operator=(const Expression& other) {
+  // Lazy.
+  this->~Expression();
+  new(this) Expression(other);
+  return *this;
+}
+
+bool Expression::operator==(const Expression& other) const {
+  if (type == other.type) {
+    switch (type) {
+#define COMPARE(ID, NAME, TYPE) \
+      case Type::ID: \
+        return NAME == other.NAME;
+      FOR_ALL_EXPRESSIONS(COMPARE)
+#undef MOVE_CONSTRUCT
+    }
+  }
+
+  return false;
+}
+
+// ---------------------------------------------------------------------------------------
+
+Expression Expression::fromError(errors::Error&& error) {
+  Expression result(Type::ERROR);
+  new (&result.error) vector<errors::Error>;
+  result.error.push_back(move(error));
+  return result;
+}
+Expression Expression::fromError(vector<errors::Error>&& errors) {
+  Expression result(Type::ERROR);
+  new (&result.error) vector<errors::Error>(move(errors));
+  return result;
+}
+
+Expression Expression::fromVariable(string&& name) {
+  Expression result(Type::VARIABLE);
+  new (&result.variable) string(move(name));
+  return result;
+}
+
+Expression Expression::fromTuple(vector<Expression>&& elements) {
+  Expression result(Type::TUPLE);
+  new (&result.tuple) vector<Expression>(move(elements));
+  return result;
+}
+
+Expression Expression::fromLiteralInt(int value) {
+  Expression result(Type::LITERAL_INT);
+  new (&result.literalInt) int(value);
+  return result;
+}
+Expression Expression::fromLiteralDouble(double value) {
+  Expression result(Type::LITERAL_DOUBLE);
+  new (&result.literalDouble) double(value);
+  return result;
+}
+Expression Expression::fromLiteralString(string&& value) {
+  Expression result(Type::LITERAL_STRING);
+  new (&result.literalString) string(move(value));
+  return result;
+}
+Expression Expression::fromLiteralArray(vector<Expression>&& elements) {
+  Expression result(Type::LITERAL_ARRAY);
+  new (&result.literalArray) vector<Expression>(move(elements));
+  return result;
+}
+
+Expression Expression::fromImport(string&& moduleName) {
+  Expression result(Type::IMPORT);
+  new (&result.import) string(moduleName);
+  return result;
+}
+
+Expression Expression::fromSubscript(Expression&& container, Expression&& key) {
+  Expression result(Type::SUBSCRIPT);
+  new (&result.subscript) Subscript(move(container), move(key));
+  return result;
+}
+Expression Expression::fromMemberAccess(Expression&& object, string&& member) {
+  Expression result(Type::MEMBER_ACCESS);
+  new (&result.memberAccess) MemberAccess(move(object), move(member));
+  return result;
+}
+Expression Expression::fromFunctionCall(Expression&& function,
+                                        vector<FunctionCall::Parameter>&& parameters) {
+  Expression result(Type::FUNCTION_CALL);
+  new (&result.functionCall) FunctionCall(move(function), move(parameters));
+  return result;
+}
+
+Expression Expression::fromBinaryOperator(string&& op, Expression&& left, Expression&& right) {
+  Expression result(Type::BINARY_OPERATOR);
+  new (&result.binaryOperator) BinaryOperator(move(op), move(left), move(right));
+  return result;
+}
+Expression Expression::fromPrefixOperator(string&& op, Expression&& exp) {
+  Expression result(Type::PREFIX_OPERATOR);
+  new (&result.prefixOperator) PrefixOperator(move(op), move(exp));
+  return result;
+}
+Expression Expression::fromPostfixOperator(Expression&& exp, string&& op) {
+  Expression result(Type::POSTFIX_OPERATOR);
+  new (&result.postfixOperator) PostfixOperator(move(exp), move(op));
+  return result;
+}
+Expression Expression::fromTernaryOperator(Expression&& condition, Expression&& trueClause,
+                                           Expression&& falseClause) {
+  Expression result(Type::TERNARY_OPERATOR);
+  new (&result.ternaryOperator) TernaryOperator(
+      move(condition), move(trueClause), move(falseClause));
+  return result;
+}
+
+// =======================================================================================
+// Parsers for simple tokens
+
 using tokens::Token;
 using tokens::TokenSequence;
 
-
-
-struct TokenParserInput : public parser::IteratorInput<Token, std::vector<Token>::const_iterator> {
+struct TokenParserInput : public parser::IteratorInput<Token, vector<Token>::const_iterator> {
   explicit TokenParserInput(const TokenSequence& sequence)
-      : parser::IteratorInput<Token, std::vector<Token>::const_iterator>(
+      : parser::IteratorInput<Token, vector<Token>::const_iterator>(
           sequence.tokens.begin(), sequence.tokens.end()) {}
 };
-
-
 
 parser::ExactElementParser<TokenParserInput> keyword(string&& name) {
   return parser::exactElement<TokenParserInput>(tokens::keyword(move(name)));
 }
-
 
 class OneOfKeywordsParser {
 public:
@@ -67,19 +244,16 @@ private:
   std::set<string> keywords;
 };
 
-
 OneOfKeywordsParser oneOfKeywords(std::initializer_list<string> names) {
   return OneOfKeywordsParser(names);
 }
 
-
-
 auto errorTokens = [](TokenParserInput& input) -> parser::ParseResult<parser::Void> {
   if (input.atEnd() || input.current().getType() != Token::Type::ERROR) {
     input.setBroken(true);
-    return parser::ParseResult<parser::Void>(std::vector<errors::Error>());
+    return parser::ParseResult<parser::Void>(vector<errors::Error>());
   } else {
-    std::vector<errors::Error> result = input.current().error;
+    vector<errors::Error> result = input.current().error;
     input.next();
     while (!input.atEnd() && input.current().getType() == Token::Type::ERROR) {
       result.insert(result.end(), input.current().error.begin(), input.current().error.end());
@@ -133,7 +307,7 @@ auto literalString = [](TokenParserInput& input) -> parser::ParseResult<string> 
   }
 };
 
-template <Token::Type type, std::vector<TokenSequence> Token::*member>
+template <Token::Type type, vector<TokenSequence> Token::*member>
 struct BracketedParserTemplate {
   template <typename SubParser>
   struct Parser {
@@ -164,19 +338,19 @@ struct BracketedParserTemplate {
   };
 };
 
-template <Token::Type type, std::vector<TokenSequence> Token::*member>
+template <Token::Type type, vector<TokenSequence> Token::*member>
 struct ListParserTemplate {
   template <typename SubParser>
   struct Parser {
     Parser(SubParser&& subParser): subParser(move(subParser)) {}
 
-    typedef std::vector<typename parser::ExtractParserType<SubParser>::OutputType> SubResults;
+    typedef vector<typename parser::ExtractParserType<SubParser>::OutputType> SubResults;
 
     parser::ParseResult<SubResults>
     operator()(TokenParserInput& input) const {
       if (!input.atEnd() && input.current().getType() == type) {
         SubResults subResults;
-        std::vector<errors::Error> errors;
+        vector<errors::Error> errors;
 
         for (const TokenSequence& element: input.current().*member) {
           TokenParserInput subInput(element);
@@ -207,6 +381,7 @@ struct ListParserTemplate {
   };
 };
 
+// These are actually declaring functions, where the parameter is another parser.
 parser::WrapperParserConstructor<BracketedParserTemplate<
     Token::Type::BRACKETED, &Token::bracketed>::Parser> bracketed;
 parser::WrapperParserConstructor<ListParserTemplate<
@@ -217,6 +392,7 @@ parser::WrapperParserConstructor<ListParserTemplate<
     Token::Type::PARENTHESIZED, &Token::bracketed>::Parser> parenthesizedList;
 
 // =======================================================================================
+// A generic helper.  TODO:  Move elsewhere?
 
 template <typename Func, typename Param>
 struct Binding {
@@ -233,14 +409,13 @@ struct Binding {
 };
 
 template <typename Func, typename Param>
-Binding<typename std::remove_reference<Func>::type,
-        typename std::remove_reference<Param>::type>
+Binding<decay(Func), decay(Param)>
 bind(Param&& param, Func&& func) {
-  return Binding<typename std::remove_reference<Func>::type,
-                 typename std::remove_reference<Param>::type>(move(func), move(param));
+  return Binding<decay(Func), decay(Param)>(move(func), move(param));
 }
 
 // =======================================================================================
+// Expression parser!
 
 using parser::oneOf;
 using parser::sequence;
@@ -249,8 +424,6 @@ using parser::repeated;
 using parser::optional;
 using parser::commit;
 
-typedef expression ex;
-
 typedef parser::Parser<TokenParserInput, Expression> ExpressionParser;
 
 extern ExpressionParser outerExpression;
@@ -258,51 +431,67 @@ extern ExpressionParser outerExpression;
 ExpressionParser atomicExpression = oneOf(
     // Identifier.
     transform(identifier,
-        [](string&& name) { return ex::variable(move(name)); }),
+        [](string&& name) { return Expression::fromVariable(move(name)); }),
 
     // Parenthesized expression or tuple.
     transform(parenthesizedList(outerExpression),
-        [](std::vector<Expression>&& expressions) {
+        [](vector<Expression>&& expressions) {
           if (expressions.size() == 1) {
             return expressions[0];
           } else {
-            return ex::tuple(move(expressions));
+            return Expression::fromTuple(move(expressions));
           }
         }),
 
     // Array literal
     transform(bracketedList(outerExpression),
-        [](std::vector<Expression>&& expressions) { return ex::literalArray(move(expressions)); }),
+        [](vector<Expression>&& expressions) {
+          return Expression::fromLiteralArray(move(expressions));
+        }),
 
     // Import
     transform(sequence(keyword("import"), literalString),
-        [](string&& moduleName) { return ex::import(move(moduleName)); }),
+        [](string&& moduleName) { return Expression::fromImport(move(moduleName)); }),
 
     // Primitive literals
-    transform(literalInt, [](int value) { return ex::literalInt(value); }),
-    transform(literalDouble, [](double value) { return ex::literalDouble(value); }),
-    transform(literalString, [](string&& value) { return ex::literalString(value); }));
+    transform(literalInt, [](int value) { return Expression::fromLiteralInt(value); }),
+    transform(literalDouble, [](double value) { return Expression::fromLiteralDouble(value); }),
+    transform(literalString,
+        [](string&& value) { return Expression::fromLiteralString(move(value)); }));
 
-auto functionCallParameter = [](TokenParserInput& input) {
-  return parser::ParseResult<Expression::FunctionCall::Parameter>(errors::error(-1, -1, "TODO"));
-};
+parser::Parser<TokenParserInput, Expression::FunctionCall::Parameter> functionCallParameter =
+    transform(sequence(optional(oneOfKeywords({"@", "&", "<-"})), outerExpression),
+        [](Maybe<string>&& prefix, Expression&& exp) {
+          StyleAllowance style = StyleAllowance::VALUE;
+          if (prefix) {
+            if (*prefix == "@") {
+              style = StyleAllowance::IMMUTABLE_REFERENCE;
+            } else if (*prefix == "&") {
+              style = StyleAllowance::MUTABLE_REFERENCE;
+            } else if (*prefix == "<-") {
+              style = StyleAllowance::MOVE;
+            }
+          }
+
+          return Expression::FunctionCall::Parameter(style, move(exp));
+        });
 
 parser::Parser<TokenParserInput, std::function<Expression(Expression&&)>> suffix = oneOf(
     // Member access
     transform(sequence(keyword("."), identifier),
         [](string&& name) -> std::function<Expression(Expression&&)> {
           return bind(move(name), [](string&& name, Expression&& seed) {
-            return ex::memberAccess(move(seed), move(name));
+            return Expression::fromMemberAccess(move(seed), move(name));
           });
         }),
 
     // Function call
     transform(parenthesizedList(functionCallParameter),
-        [](std::vector<Expression::FunctionCall::Parameter>&& params) ->
+        [](vector<Expression::FunctionCall::Parameter>&& params) ->
             std::function<Expression(Expression&&)> {
           return bind(move(params),
-            [](std::vector<Expression::FunctionCall::Parameter>&& params, Expression&& seed) {
-              return ex::functionCall(move(seed), move(params));
+            [](vector<Expression::FunctionCall::Parameter>&& params, Expression&& seed) {
+              return Expression::fromFunctionCall(move(seed), move(params));
             });
         }),
 
@@ -310,7 +499,7 @@ parser::Parser<TokenParserInput, std::function<Expression(Expression&&)>> suffix
     transform(bracketed(outerExpression),
         [](Expression&& key) -> std::function<Expression(Expression&&)> {
           return bind(move(key), [](Expression&& key, Expression&& seed) {
-            return ex::subscript(move(seed), move(key));
+            return Expression::fromSubscript(move(seed), move(key));
           });
         }),
 
@@ -318,25 +507,28 @@ parser::Parser<TokenParserInput, std::function<Expression(Expression&&)>> suffix
     transform(oneOfKeywords({"++", "--"}),
         [](string&& op) -> std::function<Expression(Expression&&)> {
           return bind(move(op), [](string&& op, Expression&& seed) {
-            return ex::postfixOperator(move(seed), move(op));
+            return Expression::fromPostfixOperator(move(seed), move(op));
           });
         }));
 
 ExpressionParser suffixedExpression = transform(
     sequence(atomicExpression, commit(), repeated(suffix)),
-    [] (Expression&& seed, std::vector<std::function<Expression(Expression&&)>>&& suffixes) {
+    [] (Expression&& seed, vector<std::function<Expression(Expression&&)>>&& suffixes) {
       for (auto& suffix : suffixes) {
         seed = move(suffix(move(seed)));
       }
       return move(seed);
     });
 
-ExpressionParser prefixedExpression = oneOf(
-    transform(sequence(oneOfKeywords({"++", "--", "+", "-", "!", "~"}),
+ExpressionParser prefixedExpression =
+    transform(sequence(repeated(oneOfKeywords({"++", "--", "+", "-", "!", "~"})),
                        commit(), suffixedExpression),
-        [](string&& op, Expression&& seed) { return ex::prefixOperator(move(op), move(seed)); }),
-
-    suffixedExpression);
+        [](vector<string>&& ops, Expression&& seed) {
+          for (string& op : ops) {
+            seed = Expression::fromPrefixOperator(move(op), move(seed));
+          }
+          return move(seed);
+        });
 
 ExpressionParser binaryOpParser(const ExpressionParser& next,
                                 std::initializer_list<string> ops) {
@@ -347,9 +539,9 @@ ExpressionParser binaryOpParser(const ExpressionParser& next,
       });
 
   return transform(sequence(next, commit(), repeated(move(multiplicativeSuffix))),
-      [](Expression&& seed, std::vector<std::pair<string, Expression>>&& ops) {
+      [](Expression&& seed, vector<std::pair<string, Expression>>&& ops) {
         for (auto& op : ops) {
-          seed = ex::binaryOperator(move(op.first), move(seed), move(op.second));
+          seed = Expression::fromBinaryOperator(move(op.first), move(seed), move(op.second));
         }
         return move(seed);
       });
@@ -374,7 +566,8 @@ ExpressionParser outerExpression = transform(
     sequence(orExpression, optional(move(ternarySuffix))),
     [](Expression&& condition, Maybe<std::pair<Expression, Expression>>&& clauses) {
       if (clauses) {
-        return ex::ternaryOperator(move(condition), move(clauses->first), move(clauses->second));
+        return Expression::fromTernaryOperator(
+            move(condition), move(clauses->first), move(clauses->second));
       } else {
         return move(condition);
       }
@@ -384,183 +577,5 @@ void foo(TokenParserInput& input) {
   outerExpression(input);
 }
 
-// =============================================================================
-
-template <typename T>
-void Destroy(T& obj) {
-  obj.~T();
-}
-
-#define FOR_ALL_EXPRESSIONS(HANDLE) \
-  HANDLE(ERROR, error, std::vector<errors::Error>) \
-  HANDLE(LITERAL_INT, literalInt, int) \
-  HANDLE(LITERAL_DOUBLE, literalDouble, double) \
-  HANDLE(LITERAL_STRING, literalString, string) \
-  HANDLE(LITERAL_ARRAY, literalArray, std::vector<Expression>) \
-  HANDLE(BINARY_OPERATOR, binaryOperator, BinaryOperator) \
-  HANDLE(PREFIX_OPERATOR, prefixOperator, PrefixOperator) \
-  HANDLE(POSTFIX_OPERATOR, postfixOperator, PostfixOperator) \
-  HANDLE(TERNARY_OPERATOR, ternaryOperator, TernaryOperator) \
-  HANDLE(FUNCTION_CALL, functionCall, FunctionCall) \
-  HANDLE(SUBSCRIPT, subscript, Subscript) \
-  HANDLE(MEMBER_ACCESS, memberAccess, MemberAccess) \
-  HANDLE(CONDITIONAL, conditional, Conditional) \
-  HANDLE(LAMBDA, lambda, Lambda) \
-  HANDLE(IMPORT, import, string)
-
-Expression::Expression(Expression&& other): type(other.type) {
-  switch (type) {
-    case Type::PLACEHOLDER:
-      break;
-
-#define MOVE_CONSTRUCT(ID, NAME, TYPE) \
-    case Type::ID: \
-      new (&NAME) TYPE(move(other.NAME)); \
-      break;
-    FOR_ALL_EXPRESSIONS(MOVE_CONSTRUCT)
-#undef MOVE_CONSTRUCT
-  }
-}
-
-Expression::Expression(const Expression& other): type(other.type) {
-  switch (type) {
-    case Type::PLACEHOLDER:
-      break;
-
-#define COPY_CONSTRUCT(ID, NAME, TYPE) \
-    case Type::ID: \
-      new (&NAME) TYPE(other.NAME); \
-      break;
-    FOR_ALL_EXPRESSIONS(COPY_CONSTRUCT)
-#undef COPY_CONSTRUCT
-  }
-}
-
-Expression::~Expression() {
-  switch (type) {
-    case Type::PLACEHOLDER:
-      break;
-
-#define DESTRUCT(ID, NAME, TYPE) \
-    case Type::ID: \
-      Destroy(NAME); \
-      break;
-    FOR_ALL_EXPRESSIONS(DESTRUCT)
-#undef DESTRUCT
-  }
-}
-
-Expression& Expression::operator=(Expression&& other) {
-  // Lazy.
-  this->~Expression();
-  new(this) Expression(move(other));
-  return *this;
-}
-
-Expression& Expression::operator=(const Expression& other) {
-  // Lazy.
-  this->~Expression();
-  new(this) Expression(other);
-  return *this;
-}
-
-bool Expression::operator==(const Expression& other) const {
-  if (type == other.type) {
-    switch (type) {
-      case Type::PLACEHOLDER:
-        return true;
-
-#define COMPARE(ID, NAME, TYPE) \
-      case Type::ID: \
-        return NAME == other.NAME;
-      FOR_ALL_EXPRESSIONS(COMPARE)
-#undef MOVE_CONSTRUCT
-    }
-  }
-
-  return false;
-}
-
-// ---------------------------------------------------------------------------------------
-
-#define FOR_ALL_STATEMENTS(HANDLE) \
-  HANDLE(ERROR, error, std::vector<errors::Error>) \
-  HANDLE(EXPRESSION, expression, Expression) \
-  HANDLE(RETURN, return_, Expression) \
-  HANDLE(BREAK, break_, string)
-
-Statement::Statement(Statement&& other): type(other.type) {
-  switch (type) {
-#define MOVE_CONSTRUCT(ID, NAME, TYPE) \
-    case Type::ID: \
-      new (&NAME) TYPE(move(other.NAME)); \
-      break;
-      FOR_ALL_STATEMENTS(MOVE_CONSTRUCT)
-#undef MOVE_CONSTRUCT
-
-    default:  // temporary
-      break;
-  }
-}
-
-Statement::Statement(const Statement& other): type(other.type) {
-  switch (type) {
-#define COPY_CONSTRUCT(ID, NAME, TYPE) \
-    case Type::ID: \
-      new (&NAME) TYPE(other.NAME); \
-      break;
-      FOR_ALL_STATEMENTS(COPY_CONSTRUCT)
-#undef COPY_CONSTRUCT
-
-    default:  // temporary
-      break;
-  }
-}
-
-Statement::~Statement() {
-  switch (type) {
-#define DESTRUCT(ID, NAME, TYPE) \
-    case Type::ID: \
-      Destroy(NAME); \
-      break;
-      FOR_ALL_STATEMENTS(DESTRUCT)
-#undef DESTRUCT
-
-    default:  // temporary
-      break;
-  }
-}
-
-Statement& Statement::operator=(Statement&& other) {
-  // Lazy.
-  this->~Statement();
-  new(this) Statement(move(other));
-  return *this;
-}
-
-Statement& Statement::operator=(const Statement& other) {
-  // Lazy.
-  this->~Statement();
-  new(this) Statement(other);
-  return *this;
-}
-
-bool Statement::operator==(const Statement& other) const {
-  if (type == other.type) {
-    switch (type) {
-#define COMPARE(ID, NAME, TYPE) \
-      case Type::ID: \
-        return NAME == other.NAME;
-        FOR_ALL_STATEMENTS(COMPARE)
-#undef MOVE_CONSTRUCT
-
-      default:  // temporary
-        break;
-    }
-  }
-
-  return false;
-}
-
-}  // namespace ast
+}  // namespace expressions
 }  // namespace modc

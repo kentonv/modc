@@ -31,8 +31,10 @@ namespace parser {
 
 using ekam::OwnedPtr;
 using std::move;
-using std::remove_reference;
 using std::string;
+using std::vector;
+
+#define decay(TYPE) typename std::decay<TYPE>::type
 
 // I don't understand std::tuple.
 template <typename... T>
@@ -202,24 +204,24 @@ class ParseResult {
 public:
   ParseResult(ParseResult&& other): isError_(other.isError_) {
     if (isError_) {
-      new (&errors) std::vector<errors::Error>(move(other.errors));
+      new (&errors) vector<errors::Error>(move(other.errors));
     } else {
       new (&value) T(move(other.value));
     }
   }
   ParseResult(const ParseResult& other): isError_(other.isError_) {
     if (isError_) {
-      new (&errors) std::vector<errors::Error>(other.errors);
+      new (&errors) vector<errors::Error>(other.errors);
     } else {
       new (&value) T(other.value);
     }
   }
   ParseResult(errors::Error&& error): isError_(true) {
-    new (&errors) std::vector<errors::Error>();
+    new (&errors) vector<errors::Error>();
     errors.push_back(move(error));
   }
-  ParseResult(std::vector<errors::Error>&& errors): isError_(true) {
-    new (&this->errors) std::vector<errors::Error>(move(errors));
+  ParseResult(vector<errors::Error>&& errors): isError_(true) {
+    new (&this->errors) vector<errors::Error>(move(errors));
   }
   ParseResult(T&& value): isError_(false) {
     new (&this->value) T(move(value));
@@ -249,7 +251,7 @@ public:
   bool isError() { return isError_; }
 
   union {
-    std::vector<errors::Error> errors;
+    vector<errors::Error> errors;
     T value;
   };
 
@@ -371,7 +373,9 @@ public:
   Parser& operator=(const Parser& other) { wrapper = other.wrapper->clone(); }
   Parser& operator=(Parser&& other) { wrapper = move(other.wrapper); }
 
-  ParseResult<Output> operator()(Input& input) const {
+  // Always inline in the hopes that this allows branch prediction to kick in so the virtual call
+  // doesn't hurt so much.
+  inline ParseResult<Output> operator()(Input& input) const __attribute__((always_inline)) {
     return (*wrapper)(input);
   }
 
@@ -404,13 +408,13 @@ private:
 };
 
 template <typename SubParser>
-ParserRef<typename remove_reference<SubParser>::type> ref(const SubParser& impl) {
-  return ParserRef<SubParser>(impl);
+ParserRef<decay(SubParser)> ref(const SubParser& impl) {
+  return ParserRef<decay(SubParser)>(impl);
 }
 
 template <typename T>
 struct MaybeRef {
-  typedef typename std::remove_reference<T>::type Type;
+  typedef decay(T) Type;
 
   template <typename U>
   static Type from(U&& parser) {
@@ -466,7 +470,7 @@ private:
 
 template <typename Input>
 ExactElementParser<Input> exactElement(typename Input::ElementType&& expected) {
-  return ExactElementParser<typename remove_reference<Input>::type>(move(expected));
+  return ExactElementParser<decay(Input)>(move(expected));
 }
 
 // -------------------------------------------------------------------
@@ -505,7 +509,7 @@ public:
     }
   }
 
-  void parseForErrors(Input& input, std::vector<errors::Error>& errors) const {
+  void parseForErrors(Input& input, vector<errors::Error>& errors) const {
     {
       auto firstResult = first(input);
       if (firstResult.isError()) {
@@ -539,7 +543,7 @@ public:
     return ParseResult<Tuple<Params...>>(Tuple<Params...>(params...));
   }
 
-  void parseForErrors(Input& input, std::vector<errors::Error>& errors) const {
+  void parseForErrors(Input& input, vector<errors::Error>& errors) const {
     // Nothing.
   }
 };
@@ -566,9 +570,9 @@ public:
   explicit RepeatedParser(SubParser&& subParser)
       : subParser(move(subParser)) {}
 
-  ParseResult<std::vector<typename ExtractParserType<SubParser>::OutputType>> operator()(
+  ParseResult<vector<typename ExtractParserType<SubParser>::OutputType>> operator()(
       typename ExtractParserType<SubParser>::InputType& input) const {
-    typedef std::vector<typename ExtractParserType<SubParser>::OutputType> Results;
+    typedef vector<typename ExtractParserType<SubParser>::OutputType> Results;
     Results results;
 
     while (!input.atEnd()) {
@@ -756,11 +760,11 @@ private:
 template <typename SubParser, typename Transform>
 TransformParser<decltype(extractReturnType(&Transform::operator())),
                 typename MaybeRef<SubParser>::Type,
-                typename remove_reference<Transform>::type>
+                decay(Transform)>
 transform(SubParser&& subParser, Transform&& transform) {
   return TransformParser<decltype(extractReturnType(&Transform::operator())),
                          typename MaybeRef<SubParser>::Type,
-                         typename remove_reference<Transform>::type>(
+                         decay(Transform)>(
       MaybeRef<SubParser>::from(subParser), std::forward<Transform>(transform));
 }
 
