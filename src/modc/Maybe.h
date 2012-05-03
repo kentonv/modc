@@ -48,7 +48,8 @@ public:
     }
   }
 
-  ~Maybe() {
+  // TODO:  Should be noexcept(noexcept(T::~T)), but GCC 4.7 doesn't seem to understand that.
+  ~Maybe() noexcept {
     if (isSet) {
       value.~T();
     }

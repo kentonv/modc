@@ -75,7 +75,7 @@ Expression::Expression(const Expression& other): type(other.type) {
   }
 }
 
-Expression::~Expression() {
+Expression::~Expression() noexcept {
   switch (type) {
 #define DESTRUCT(ID, NAME, TYPE) \
     case Type::ID: \

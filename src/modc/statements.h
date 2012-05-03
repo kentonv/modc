@@ -37,14 +37,85 @@ using expressions::Expression;
 using expressions::Style;
 
 using std::string;
+using std::vector;
 using ekam::OwnedPtr;
 using ekam::Indirect;
+
+class Statement;
+struct ParameterDeclaration;
+
+enum class Kind {
+  UNDECLARED,
+
+  VARIABLE,
+  ENVIRONMENT,
+
+  FUNCTION,
+  CONSTRUCTOR,
+  DESTRUCTOR,
+  CONVERSION,
+  DEFAULT_CONVERSION,  // TODO:  Combine with CONVERSION somehow?
+
+  CLASS,
+  INTERFACE,
+  ENUM
+};
+
+struct Declaration {
+  Kind kind;
+
+  string name;  // empty for implicit constructor, destructor, conversion
+  Style style;
+  vector<ParameterDeclaration> parameters;
+
+  Maybe<Expression> type;
+  vector<Expression> supertypes;
+  vector<Expression> subtypes;
+  vector<Expression> annotations;
+  string documentation;
+
+  class Definition {
+  public:
+    Definition();
+    Definition(const Definition& other);
+    Definition(Definition&& other);
+    ~Definition() noexcept;
+
+    enum class Type {
+      NONE,
+      VALUE,
+      BLOCK
+    };
+
+    Type getType() { return type; }
+
+    union {
+      Expression value;
+      vector<Statement> body;
+    };
+
+  private:
+    Type type;
+  };
+};
+
+struct ParameterDeclaration {
+  enum class Type {
+    CONSTANT,
+    VARIABLE
+  };
+
+  union {
+    Declaration variable;
+    Expression constant;
+  };
+};
 
 class Statement {
 public:
   Statement(Statement&& other);
   Statement(const Statement& other);
-  ~Statement();
+  ~Statement() noexcept;
 
   Statement& operator=(Statement&& other);
   Statement& operator=(const Statement& other);
@@ -56,40 +127,79 @@ public:
     ERROR,
 
     EXPRESSION,
-    RETURN,
-    BREAK,
-
-    VARIABLE_DECLARATION,
-    VARIABLE_DEFINITION,
-    VARIABLE_ASSIGNMENT,
-
-    METHOD_DECLARATION,
-    METHOD_DEFINITION,
-
     SUB_BLOCK,
+
+    DECLARATION,
+    ASSIGNMENT,
+
+    UNION,
+
     IF,
     ELSE,
     FOR,
     WHILE,
     LOOP,
-    PARALLEL
+    PARALLEL,
 
-    // TODO:  Type definitions.
+    RETURN,
+    BREAK,
+    CONTINUE,
+
+    BLANK,
+    COMMENT
   };
 
   Type getType();
+
+  struct Assignment {
+    Expression variable;
+    Expression value;
+  };
+
+  struct If {
+    Expression condition;
+    Indirect<Statement> body;
+  };
+
+  struct For {
+    vector<Declaration> range;
+    Indirect<Statement> body;
+  };
+
+  struct While {
+    Expression condition;
+    Indirect<Statement> body;
+  };
+
+  struct Loop {
+    Maybe<string> name;
+    Indirect<Statement> body;
+  };
 
   union {
     std::vector<errors::Error> error;
 
     Expression expression;
-    Expression return_;
+    vector<Statement> subBlock;
+
+    Declaration declaration;
+    Assignment assignment;
+
+    vector<Declaration> union_;
+
+    If if_;
+    Indirect<Statement> else_;
+    For for_;
+    While while_;
+    Loop loop;
+    vector<Statement> parallel;
+
+    Expression return_;  // if not returning a value, expression will be empty tuple.
     string break_;
+    string continue_;
 
-    // TODO
+    string comment;
   };
-
-  Maybe<std::vector<Statement>> block;
 
 private:
   Type type;

@@ -68,7 +68,7 @@ Statement::Statement(const Statement& other): type(other.type) {
   }
 }
 
-Statement::~Statement() {
+Statement::~Statement() noexcept {
   switch (type) {
 #define DESTRUCT(ID, NAME, TYPE) \
     case Type::ID: \

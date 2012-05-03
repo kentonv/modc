@@ -97,7 +97,7 @@ Token::Token(const Token& other): type(other.type) {
   }
 }
 
-Token::~Token() {
+Token::~Token() noexcept {
   switch (type) {
     case Type::ERROR:
       error.~vector<errors::Error>();

@@ -64,7 +64,7 @@ public:
 
   Token(Token&& other);
   Token(const Token& other);
-  ~Token();
+  ~Token() noexcept;
 
   Token& operator=(Token&& other);
   Token& operator=(const Token& other);

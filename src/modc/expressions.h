@@ -56,7 +56,7 @@ public:
   Expression();
   Expression(Expression&& other);
   Expression(const Expression& other);
-  ~Expression();
+  ~Expression() noexcept;
 
   Expression& operator=(Expression&& other);
   Expression& operator=(const Expression& other);
