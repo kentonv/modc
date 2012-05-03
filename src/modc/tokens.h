@@ -158,22 +158,22 @@ public:
 
 std::ostream& operator<<(std::ostream& os, const TokenSequence& sequence);
 
-class Statement {
+class TokenStatement {
 public:
   TokenSequence tokens;
-  Maybe<std::vector<Statement>> block;
+  Maybe<std::vector<TokenStatement>> block;
 
-  bool operator==(const Statement& other) const;
-  bool operator!=(const Statement& other) const { return !(*this == other); }
+  bool operator==(const TokenStatement& other) const;
+  bool operator!=(const TokenStatement& other) const { return !(*this == other); }
 };
 
-std::ostream& operator<<(std::ostream& os, const Statement& statement);
+std::ostream& operator<<(std::ostream& os, const TokenStatement& statement);
 
 class Parser {
 public:
   Parser(std::set<string> keywords);
 
-  std::vector<Statement> parse(const string& text);
+  std::vector<TokenStatement> parse(const string& text);
 
   const std::vector<string>& getErrors() { return errors; }
 
@@ -193,7 +193,7 @@ private:
   Token parseNumber(Reader& reader);
   TokenSequence parseSequence(Reader& reader);
   void skipStatement(Reader& reader);
-  Statement parseStatement(Reader& reader);
+  TokenStatement parseStatement(Reader& reader);
 };
 
 }  // namespace tokens

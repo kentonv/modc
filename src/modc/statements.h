@@ -89,6 +89,8 @@ public:
     // TODO
   };
 
+  Maybe<std::vector<Statement>> block;
+
 private:
   Type type;
 };

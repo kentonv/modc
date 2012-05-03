@@ -24,7 +24,7 @@ namespace {
 
 TEST(Tokens, ParseIdentifiers) {
   Parser parser({});
-  std::vector<Statement> statements = parser.parse("foo bar baz;");
+  std::vector<TokenStatement> statements = parser.parse("foo bar baz;");
 
   for (string error : parser.getErrors()) {
     ADD_FAILURE() << "Unexpected parse error: " << error;
@@ -32,7 +32,7 @@ TEST(Tokens, ParseIdentifiers) {
 
   ASSERT_EQ(1u, statements.size());
 
-  const Statement& statement = statements[0];
+  const TokenStatement& statement = statements[0];
   const std::vector<Token>& tokens = statement.tokens.tokens;
   ASSERT_EQ(3u, tokens.size());
 
@@ -43,7 +43,7 @@ TEST(Tokens, ParseIdentifiers) {
 
 TEST(Tokens, ParseKeywords) {
   Parser parser({"foo", "bar", "+", "-", "=", "+="});
-  std::vector<Statement> statements = parser.parse("foo bar baz + - += -=;");
+  std::vector<TokenStatement> statements = parser.parse("foo bar baz + - += -=;");
 
   for (string error : parser.getErrors()) {
     ADD_FAILURE() << "Unexpected parse error: " << error;
@@ -51,7 +51,7 @@ TEST(Tokens, ParseKeywords) {
 
   ASSERT_EQ(1u, statements.size());
 
-  const Statement& statement = statements[0];
+  const TokenStatement& statement = statements[0];
   const std::vector<Token>& tokens = statement.tokens.tokens;
   ASSERT_EQ(8u, tokens.size());
 
@@ -67,7 +67,7 @@ TEST(Tokens, ParseKeywords) {
 
 TEST(Tokens, ParseIntegers) {
   Parser parser({});
-  std::vector<Statement> statements = parser.parse("1234567890 01234567 0x1234abCD;");
+  std::vector<TokenStatement> statements = parser.parse("1234567890 01234567 0x1234abCD;");
 
   for (string error : parser.getErrors()) {
     ADD_FAILURE() << "Unexpected parse error: " << error;
@@ -75,7 +75,7 @@ TEST(Tokens, ParseIntegers) {
 
   ASSERT_EQ(1u, statements.size());
 
-  const Statement& statement = statements[0];
+  const TokenStatement& statement = statements[0];
   const std::vector<Token>& tokens = statement.tokens.tokens;
   ASSERT_EQ(3u, tokens.size());
 
@@ -86,7 +86,7 @@ TEST(Tokens, ParseIntegers) {
 
 TEST(Tokens, ParseFloats) {
   Parser parser({});
-  std::vector<Statement> statements = parser.parse("1.0 12.25 12e34 12.25e34;");
+  std::vector<TokenStatement> statements = parser.parse("1.0 12.25 12e34 12.25e34;");
 
   for (string error : parser.getErrors()) {
     ADD_FAILURE() << "Unexpected parse error: " << error;
@@ -94,7 +94,7 @@ TEST(Tokens, ParseFloats) {
 
   ASSERT_EQ(1u, statements.size());
 
-  const Statement& statement = statements[0];
+  const TokenStatement& statement = statements[0];
   const std::vector<Token>& tokens = statement.tokens.tokens;
   ASSERT_EQ(4u, tokens.size());
 
@@ -121,7 +121,7 @@ string toHex(const string& data) {
 
 TEST(Tokens, ParseStrings) {
   Parser parser({});
-  std::vector<Statement> statements = parser.parse(
+  std::vector<TokenStatement> statements = parser.parse(
       "\"foo bar \\b\\n\\t\\\"\\\\ baz\" "
       "`foo \\bar \"' baz`\n"
       "\"foo \n"
@@ -138,7 +138,7 @@ TEST(Tokens, ParseStrings) {
 
   ASSERT_EQ(1u, statements.size());
 
-  const Statement& statement = statements[0];
+  const TokenStatement& statement = statements[0];
   const std::vector<Token>& tokens = statement.tokens.tokens;
   ASSERT_EQ(8u, tokens.size());
 

@@ -354,7 +354,7 @@ std::ostream& operator<<(std::ostream& os, const Token& token) {
   return os;
 }
 
-bool Statement::operator==(const Statement& other) const {
+bool TokenStatement::operator==(const TokenStatement& other) const {
   return tokens == other.tokens && block == other.block;
 }
 
@@ -371,7 +371,7 @@ std::ostream& operator<<(std::ostream& os, const TokenSequence& sequence) {
   return os;
 }
 
-static void write(std::ostream& os, const Statement& statement, int indent) {
+static void write(std::ostream& os, const TokenStatement& statement, int indent) {
   if (statement.tokens.tokens.empty()) {
     return;
   }
@@ -382,7 +382,7 @@ static void write(std::ostream& os, const Statement& statement, int indent) {
   os << statement.tokens;
   if (statement.block) {
     os << " {\n";
-    for (const Statement& subStatement : *statement.block) {
+    for (const TokenStatement& subStatement : *statement.block) {
       write(os, subStatement, indent + 1);
     }
     os << "}\n";
@@ -391,7 +391,7 @@ static void write(std::ostream& os, const Statement& statement, int indent) {
   }
 }
 
-std::ostream& operator<<(std::ostream& os, const Statement& statement) {
+std::ostream& operator<<(std::ostream& os, const TokenStatement& statement) {
   write(os, statement, 0);
   return os;
 }
@@ -850,9 +850,9 @@ void Parser::skipStatement(Reader& reader) {
   }
 }
 
-Statement Parser::parseStatement(Reader& reader) {
+TokenStatement Parser::parseStatement(Reader& reader) {
   Reader span(reader);
-  Statement result;
+  TokenStatement result;
   result.tokens = parseSequence(span);
   if (span.lookingAt('{')) {
     Reader blockSpan(span);
@@ -868,7 +868,7 @@ Statement Parser::parseStatement(Reader& reader) {
       if (blockSpan.lookingAt(chars::ANY)) {
         result.block->push_back(parseStatement(blockSpan));
       } else {
-        Statement errorStatement;
+        TokenStatement errorStatement;
         errorStatement.tokens.tokens.push_back(
             blockSpan.errorTokenAtEnd(0, "Block missing closing brace."));
         result.block->push_back(errorStatement);
@@ -882,9 +882,9 @@ Statement Parser::parseStatement(Reader& reader) {
   return result;
 }
 
-std::vector<Statement> Parser::parse(const string& text) {
+std::vector<TokenStatement> Parser::parse(const string& text) {
   Reader reader(text, errors);
-  std::vector<Statement> result;
+  std::vector<TokenStatement> result;
   while (reader.lookingAt(chars::ANY)) {
     result.push_back(parseStatement(reader));
   }
