@@ -16,19 +16,26 @@
 
 #include "tokens.h"
 
+#include "errors.h"
 #include "gtest.h"
 
 namespace modc {
 namespace tokens {
 namespace {
 
+void expectNoErrors(const std::vector<TokenStatement>& statements) {
+  for (auto& statement: statements) {
+    for (auto& error: statement.getErrors()) {
+      ADD_FAILURE() << "Unexpected parse error: " << error;
+    }
+  }
+}
+
 TEST(Tokens, ParseIdentifiers) {
   Parser parser({});
   std::vector<TokenStatement> statements = parser.parse("foo bar baz;");
 
-  for (string error : parser.getErrors()) {
-    ADD_FAILURE() << "Unexpected parse error: " << error;
-  }
+  expectNoErrors(statements);
 
   ASSERT_EQ(1u, statements.size());
 
@@ -45,9 +52,7 @@ TEST(Tokens, ParseKeywords) {
   Parser parser({"foo", "bar", "+", "-", "=", "+="});
   std::vector<TokenStatement> statements = parser.parse("foo bar baz + - += -=;");
 
-  for (string error : parser.getErrors()) {
-    ADD_FAILURE() << "Unexpected parse error: " << error;
-  }
+  expectNoErrors(statements);
 
   ASSERT_EQ(1u, statements.size());
 
@@ -69,9 +74,7 @@ TEST(Tokens, ParseIntegers) {
   Parser parser({});
   std::vector<TokenStatement> statements = parser.parse("1234567890 01234567 0x1234abCD;");
 
-  for (string error : parser.getErrors()) {
-    ADD_FAILURE() << "Unexpected parse error: " << error;
-  }
+  expectNoErrors(statements);
 
   ASSERT_EQ(1u, statements.size());
 
@@ -88,9 +91,7 @@ TEST(Tokens, ParseFloats) {
   Parser parser({});
   std::vector<TokenStatement> statements = parser.parse("1.0 12.25 12e34 12.25e34;");
 
-  for (string error : parser.getErrors()) {
-    ADD_FAILURE() << "Unexpected parse error: " << error;
-  }
+  expectNoErrors(statements);
 
   ASSERT_EQ(1u, statements.size());
 
@@ -132,9 +133,7 @@ TEST(Tokens, ParseStrings) {
       "\"\\U0000000a \\U000000a1 \\U00000a12 \\U0000a123 \\U000a1234 \\U00a12345 \\U0a123456 "
         "\\U1a123456\";");
 
-  for (string error : parser.getErrors()) {
-    ADD_FAILURE() << "Unexpected parse error: " << error;
-  }
+  expectNoErrors(statements);
 
   ASSERT_EQ(1u, statements.size());
 

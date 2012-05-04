@@ -34,17 +34,6 @@ TEST(Tuple, Flatten) {
   EXPECT_EQ(321, t.apply<int>([](int i, int j, int k) { return i + j + k; }));
 }
 
-TEST(Parsers, ParseResult) {
-  ParseResult<int> result1(123);
-  EXPECT_EQ(123, result1.value);
-
-  ParseResult<int> result2(result1);
-  EXPECT_EQ(123, result2.value);
-
-  ParseResult<int> result3(move(result1));
-  EXPECT_EQ(123, result3.value);
-}
-
 typedef IteratorInput<char, string::iterator> Input;
 ExactElementParser<Input> exactChar(char c) {
   return exactElement<Input>(move(c));
@@ -54,26 +43,20 @@ TEST(Parsers, ExactElementParser) {
   string text = "foo";
   Input input(text.begin(), text.end());
 
-  ParseResult<Void> result = exactChar('f')(input);
-  EXPECT_FALSE(result.isError());
-  EXPECT_FALSE(input.isBroken());
+  Maybe<Void> result = exactChar('f')(input);
+  EXPECT_TRUE(result);
   EXPECT_FALSE(input.atEnd());
 
   result = exactChar('o')(input);
-  EXPECT_FALSE(result.isError());
-  EXPECT_FALSE(input.isBroken());
+  EXPECT_TRUE(result);
   EXPECT_FALSE(input.atEnd());
 
   result = exactChar('x')(input);
-  EXPECT_TRUE(result.isError());
-  EXPECT_TRUE(input.isBroken());
+  EXPECT_FALSE(result);
   EXPECT_FALSE(input.atEnd());
 
-  input.setBroken(false);
-
   result = exactChar('o')(input);
-  EXPECT_FALSE(result.isError());
-  EXPECT_FALSE(input.isBroken());
+  EXPECT_TRUE(result);
   EXPECT_TRUE(input.atEnd());
 }
 
@@ -82,28 +65,25 @@ TEST(Parsers, SequenceParser) {
 
   {
     Input input(text.begin(), text.end());
-    ParseResult<Tuple<Void, Void, Void> > result =
+    Maybe<Tuple<Void, Void, Void> > result =
         sequence(exactChar('f'), exactChar('o'), exactChar('o'))(input);
-    EXPECT_FALSE(result.isError());
-    EXPECT_FALSE(input.isBroken());
+    EXPECT_TRUE(result);
     EXPECT_TRUE(input.atEnd());
   }
 
   {
     Input input(text.begin(), text.end());
-    ParseResult<Tuple<Void, Void> > result =
+    Maybe<Tuple<Void, Void> > result =
         sequence(exactChar('f'), exactChar('o'))(input);
-    EXPECT_FALSE(result.isError());
-    EXPECT_FALSE(input.isBroken());
+    EXPECT_TRUE(result);
     EXPECT_FALSE(input.atEnd());
   }
 
   {
     Input input(text.begin(), text.end());
-    ParseResult<Tuple<Void, Void, Void> > result =
+    Maybe<Tuple<Void, Void, Void> > result =
         sequence(exactChar('x'), exactChar('o'), exactChar('o'))(input);
-    EXPECT_TRUE(result.isError());
-    EXPECT_TRUE(input.isBroken());
+    EXPECT_FALSE(result);
     EXPECT_FALSE(input.atEnd());
   }
 }
@@ -117,10 +97,9 @@ TEST(Parsers, TransformParser) {
 
   {
     Input input(text.begin(), text.end());
-    ParseResult<int> result = parser(input);
-    ASSERT_FALSE(result.isError());
-    EXPECT_EQ(123, result.value);
-    EXPECT_FALSE(input.isBroken());
+    Maybe<int> result = parser(input);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(123, *result);
     EXPECT_TRUE(input.atEnd());
   }
 }
@@ -156,10 +135,9 @@ TEST(Parsers, TransformParser_MaybeRef) {
 
   {
     Input input(text.begin(), text.end());
-    ParseResult<int> result = parser(input);
-    ASSERT_FALSE(result.isError());
-    EXPECT_EQ(12 + 34 + 56, result.value);
-    EXPECT_FALSE(input.isBroken());
+    Maybe<int> result = parser(input);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(12 + 34 + 56, *result);
     EXPECT_TRUE(input.atEnd());
   }
 }
@@ -173,56 +151,51 @@ TEST(Parsers, RepeatedParser) {
 
   {
     Input input(text.begin(), text.begin() + 3);
-    ParseResult<int> result = parser(input);
-    ASSERT_FALSE(result.isError());
-    EXPECT_EQ(2, result.value);
-    EXPECT_FALSE(input.isBroken());
+    Maybe<int> result = parser(input);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(2, *result);
     EXPECT_TRUE(input.atEnd());
   }
 
   {
     Input input(text.begin(), text.begin() + 5);
-    ParseResult<int> result = parser(input);
-    ASSERT_FALSE(result.isError());
-    EXPECT_EQ(4, result.value);
-    EXPECT_FALSE(input.isBroken());
+    Maybe<int> result = parser(input);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(4, *result);
     EXPECT_TRUE(input.atEnd());
   }
 
   {
     Input input(text.begin(), text.end());
-    ParseResult<int> result = parser(input);
-    EXPECT_FALSE(result.isError());
-    EXPECT_EQ(4, result.value);
-    EXPECT_FALSE(input.isBroken());
+    Maybe<int> result = parser(input);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(4, *result);
     EXPECT_FALSE(input.atEnd());
   }
 }
 
 TEST(Parsers, OneOfParser) {
   auto parser = oneOf(
-      transform(sequence(exactChar('f'), commit(), exactChar('o'), exactChar('o')),
+      transform(sequence(exactChar('f'), exactChar('o'), exactChar('o')),
                 []() -> string { return "foo"; }),
-      transform(sequence(exactChar('b'), exactChar('a'), commit(), exactChar('r')),
+      transform(sequence(exactChar('b'), exactChar('a'), exactChar('r')),
                 []() -> string { return "bar"; }));
 
   {
     string text = "foo";
     Input input(text.begin(), text.end());
-    ParseResult<string> result = parser(input);
-    ASSERT_FALSE(result.isError());
-    EXPECT_EQ("foo", result.value);
-    EXPECT_FALSE(input.isBroken());
+    Maybe<string> result = parser(input);
+    ASSERT_TRUE(result);
+    EXPECT_EQ("foo", *result);
     EXPECT_TRUE(input.atEnd());
   }
 
   {
     string text = "bar";
     Input input(text.begin(), text.end());
-    ParseResult<string> result = parser(input);
-    ASSERT_FALSE(result.isError());
-    EXPECT_EQ("bar", result.value);
-    EXPECT_FALSE(input.isBroken());
+    Maybe<string> result = parser(input);
+    ASSERT_TRUE(result);
+    EXPECT_EQ("bar", *result);
     EXPECT_TRUE(input.atEnd());
   }
 }

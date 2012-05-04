@@ -44,7 +44,8 @@ using parser::sequence;
 using parser::transform;
 using parser::repeated;
 using parser::optional;
-using parser::commit;
+
+using namespace std::placeholders;
 
 // =======================================================================================
 // Parsers for simple tokens
@@ -55,6 +56,20 @@ struct TokenParserInput : public parser::IteratorInput<Token, vector<Token>::con
           sequence.tokens.begin(), sequence.tokens.end()) {}
 };
 
+template <typename Parser>
+typename parser::ExtractParserType<Parser>::OutputType
+ParseTokenSequence(const TokenSequence& sequence, const Parser& subParser) {
+  TokenParserInput input(sequence);
+  typedef typename parser::ExtractParserType<Parser>::OutputType Result;
+  Maybe<Result> parseResult = subParser(input);
+
+  if (parseResult && input.atEnd()) {
+    return *parseResult;
+  } else {
+    return Result::fromError(sequence.getErrors());
+  }
+}
+
 parser::ExactElementParser<TokenParserInput> keyword(string&& name) {
   return parser::exactElement<TokenParserInput>(tokens::keyword(move(name)));
 }
@@ -64,13 +79,12 @@ public:
   OneOfKeywordsParser(std::initializer_list<string> names)
       : keywords(names) {}
 
-  parser::ParseResult<string> operator()(TokenParserInput& input) const {
+  Maybe<string> operator()(TokenParserInput& input) const {
     if (input.atEnd() || input.current().getType() != Token::Type::KEYWORD ||
         keywords.count(input.current().keyword) == 0) {
-      input.setBroken(true);
-      return parser::ParseResult<string>(input.error("TODO"));
+      return nullptr;
     } else {
-      parser::ParseResult<string> result(input.current().keyword);
+      string result = input.current().keyword;
       input.next();
       return move(result);
     }
@@ -84,62 +98,43 @@ OneOfKeywordsParser oneOfKeywords(std::initializer_list<string> names) {
   return OneOfKeywordsParser(names);
 }
 
-auto errorTokens = [](TokenParserInput& input) -> parser::ParseResult<parser::Void> {
-  if (input.atEnd() || input.current().getType() != Token::Type::ERROR) {
-    input.setBroken(true);
-    return parser::ParseResult<parser::Void>(vector<errors::Error>());
-  } else {
-    vector<errors::Error> result = input.current().error;
-    input.next();
-    while (!input.atEnd() && input.current().getType() == Token::Type::ERROR) {
-      result.insert(result.end(), input.current().error.begin(), input.current().error.end());
-      input.next();
-    }
-    return parser::ParseResult<parser::Void>(move(result));
-  }
-};
-
-auto identifier = [](TokenParserInput& input) -> parser::ParseResult<string> {
+auto identifier = [](TokenParserInput& input) -> Maybe<string> {
   if (input.atEnd() || input.current().getType() != Token::Type::IDENTIFIER) {
-    input.setBroken(true);
-    return parser::ParseResult<string>(input.error("Expected identifier."));
+    return nullptr;
   } else {
     string result = input.current().identifier;
     input.next();
-    return parser::ParseResult<string>(move(result));
+    return move(result);
   }
 };
 
-auto literalInt = [](TokenParserInput& input) -> parser::ParseResult<int> {
+auto literalInt = [](TokenParserInput& input) -> Maybe<int> {
   if (input.atEnd() || input.current().getType() != Token::Type::LITERAL_INT) {
-    input.setBroken(true);
-    return parser::ParseResult<int>(input.error("Expected integer."));
+    return nullptr;
   } else {
     int result = input.current().literalInt;
     input.next();
-    return parser::ParseResult<int>(result);
+    return result;
   }
 };
 
-auto literalDouble = [](TokenParserInput& input) -> parser::ParseResult<double> {
+auto literalDouble = [](TokenParserInput& input) -> Maybe<double> {
   if (input.atEnd() || input.current().getType() != Token::Type::LITERAL_DOUBLE) {
-    input.setBroken(true);
-    return parser::ParseResult<double>(input.error("Expected double."));
+    return nullptr;
   } else {
     double result = input.current().literalDouble;
     input.next();
-    return parser::ParseResult<double>(result);
+    return result;
   }
 };
 
-auto literalString = [](TokenParserInput& input) -> parser::ParseResult<string> {
+auto literalString = [](TokenParserInput& input) -> Maybe<string> {
   if (input.atEnd() || input.current().getType() != Token::Type::LITERAL_STRING) {
-    input.setBroken(true);
-    return parser::ParseResult<string>(input.error("Expected string."));
+    return nullptr;
   } else {
     string result = input.current().literalString;
     input.next();
-    return parser::ParseResult<string>(move(result));
+    return move(result);
   }
 };
 
@@ -151,22 +146,19 @@ struct BracketedParserTemplate {
 
     typedef typename parser::ExtractParserType<SubParser>::OutputType SubResult;
 
-    parser::ParseResult<SubResult>
-    operator()(TokenParserInput& input) const {
+    Maybe<SubResult> operator()(TokenParserInput& input) const {
       if (!input.atEnd() && input.current().getType() == type) {
         if ((input.current().*member).size() == 1) {
-          TokenParserInput subInput((input.current().*member)[0]);
-          input.next();
-          return subParser(subInput);
+          return ParseTokenSequence((input.consume().*member)[0], subParser);
         } else {
-          auto result = parser::ParseResult<SubResult>(
-              input.error("Must have exactly one element."));
-          input.next();
-          return move(result);
+          vector<errors::Error> errors;
+          errors.push_back(errors::error(input.current().startOffset, input.current().endOffset,
+                           "Must have exactly one element."));
+          input.consume().getErrors(errors);
+          return SubResult::fromError(move(errors));
         }
       } else {
-        input.setBroken(true);
-        return parser::ParseResult<SubResult>(input.error("Expected list."));
+        return nullptr;
       }
     }
 
@@ -180,36 +172,21 @@ struct ListParserTemplate {
   struct Parser {
     Parser(SubParser&& subParser): subParser(move(subParser)) {}
 
-    typedef vector<typename parser::ExtractParserType<SubParser>::OutputType> SubResults;
+    typedef typename parser::ExtractParserType<SubParser>::OutputType SubResult;
 
-    parser::ParseResult<SubResults>
-    operator()(TokenParserInput& input) const {
+    Maybe<vector<SubResult>> operator()(TokenParserInput& input) const {
       if (!input.atEnd() && input.current().getType() == type) {
-        SubResults subResults;
-        vector<errors::Error> errors;
+        vector<SubResult> subResults;
 
         for (const TokenSequence& element: input.current().*member) {
-          TokenParserInput subInput(element);
-          auto subResult = subParser(subInput);
-          if (subResult.isError()) {
-            for (auto& error : subResult.errors) {
-              errors.push_back(move(error));
-            }
-          } else {
-            subResults.push_back(move(subResult.value));
-          }
+          subResults.push_back(ParseTokenSequence(element, subParser));
         }
 
         input.next();
 
-        if (errors.empty()) {
-          return parser::ParseResult<SubResults>(move(subResults));
-        } else {
-          return parser::ParseResult<SubResults>(move(errors));
-        }
+        return move(subResults);
       } else {
-        input.setBroken(true);
-        return parser::ParseResult<SubResults>(input.error("Expected list."));
+        return nullptr;
       }
     }
 
@@ -226,29 +203,6 @@ parser::WrapperParserConstructor<BracketedParserTemplate<
     Token::Type::PARENTHESIZED, &Token::bracketed>::Parser> parenthesized;
 parser::WrapperParserConstructor<ListParserTemplate<
     Token::Type::PARENTHESIZED, &Token::bracketed>::Parser> parenthesizedList;
-
-// =======================================================================================
-// A generic helper.  TODO:  Move elsewhere?
-
-template <typename Func, typename Param>
-struct Binding {
-  Func func;
-  Param param;
-
-  Binding(Func&& func, Param&& param): func(move(func)), param(move(param)) {}
-
-  template <typename... MoreParams>
-  auto operator()(MoreParams&&... moreParams) ->
-      decltype(func(move(param), std::forward<MoreParams>(moreParams)...)) {
-    return func(move(param), std::forward<MoreParams>(moreParams)...);
-  }
-};
-
-template <typename Func, typename Param>
-Binding<decay(Func), decay(Param)>
-bind(Param&& param, Func&& func) {
-  return Binding<decay(Func), decay(Param)>(move(func), move(param));
-}
 
 // =======================================================================================
 // Expression parser!
@@ -309,39 +263,39 @@ parser::Parser<TokenParserInput, std::function<Expression(Expression&&)>> suffix
     // Member access
     transform(sequence(keyword("."), identifier),
         [](string&& name) -> std::function<Expression(Expression&&)> {
-          return bind(move(name), [](string&& name, Expression&& seed) {
+          return std::bind([](string& name, Expression&& seed) {
             return Expression::fromMemberAccess(move(seed), move(name));
-          });
+          }, move(name), _1);
         }),
 
     // Function call
     transform(parenthesizedList(functionCallParameter),
         [](vector<Expression::FunctionCall::Parameter>&& params) ->
             std::function<Expression(Expression&&)> {
-          return bind(move(params),
-            [](vector<Expression::FunctionCall::Parameter>&& params, Expression&& seed) {
+          return std::bind(
+            [](vector<Expression::FunctionCall::Parameter>& params, Expression&& seed) {
               return Expression::fromFunctionCall(move(seed), move(params));
-            });
+            }, move(params), _1);
         }),
 
     // Subscript
     transform(bracketed(outerExpression),
         [](Expression&& key) -> std::function<Expression(Expression&&)> {
-          return bind(move(key), [](Expression&& key, Expression&& seed) {
+          return std::bind([](Expression& key, Expression&& seed) {
             return Expression::fromSubscript(move(seed), move(key));
-          });
+          }, move(key), _1);
         }),
 
     // postincrement / postdecrement
     transform(oneOfKeywords({"++", "--"}),
         [](string&& op) -> std::function<Expression(Expression&&)> {
-          return bind(move(op), [](string&& op, Expression&& seed) {
+          return std::bind([](string& op, Expression&& seed) {
             return Expression::fromPostfixOperator(move(seed), move(op));
-          });
+          }, move(op), _1);
         }));
 
 ExpressionParser suffixedExpression = transform(
-    sequence(atomicExpression, commit(), repeated(suffix)),
+    sequence(atomicExpression, repeated(suffix)),
     [] (Expression&& seed, vector<std::function<Expression(Expression&&)>>&& suffixes) {
       for (auto& suffix : suffixes) {
         seed = move(suffix(move(seed)));
@@ -351,7 +305,7 @@ ExpressionParser suffixedExpression = transform(
 
 ExpressionParser prefixedExpression =
     transform(sequence(repeated(oneOfKeywords({"++", "--", "+", "-", "!", "~"})),
-                       commit(), suffixedExpression),
+                       suffixedExpression),
         [](vector<string>&& ops, Expression&& seed) {
           for (string& op : ops) {
             seed = Expression::fromPrefixOperator(move(op), move(seed));
@@ -362,12 +316,12 @@ ExpressionParser prefixedExpression =
 ExpressionParser binaryOpParser(const ExpressionParser& next,
                                 std::initializer_list<string> ops) {
   auto multiplicativeSuffix = transform(
-      sequence(oneOfKeywords(ops), commit(), next),
+      sequence(oneOfKeywords(ops), next),
       [](string&& op, Expression&& operand) {
         return std::make_pair(move(op), move(operand));
       });
 
-  return transform(sequence(next, commit(), repeated(move(multiplicativeSuffix))),
+  return transform(sequence(next, repeated(move(multiplicativeSuffix))),
       [](Expression&& seed, vector<std::pair<string, Expression>>&& ops) {
         for (auto& op : ops) {
           seed = Expression::fromBinaryOperator(move(op.first), move(seed), move(op.second));
@@ -386,7 +340,7 @@ ExpressionParser andExpression      = binaryOpParser(bitorExpression   , {"&&"})
 ExpressionParser orExpression       = binaryOpParser(andExpression     , {"||"});
 
 auto ternarySuffix = transform(
-    sequence(keyword("?"), commit(), outerExpression, keyword(":"), outerExpression),
+    sequence(keyword("?"), outerExpression, keyword(":"), outerExpression),
     [](Expression&& trueClause, Expression&& falseClause) {
       return std::make_pair(move(trueClause), move(falseClause));
     });

@@ -96,9 +96,12 @@ public:
     string literalString;
   };
 
-  int startLine;
-  int startColumn;
-  int length;
+  // TODO:  Actually initialize these!
+  int startOffset;
+  int endOffset;
+
+  void getErrors(std::vector<errors::Error>& errors) const;
+  std::vector<errors::Error> getErrors() const;
 
 private:
   Type type;
@@ -154,6 +157,9 @@ public:
 
   bool operator==(const TokenSequence& other) const { return tokens == other.tokens; }
   bool operator!=(const TokenSequence& other) const { return tokens != other.tokens; }
+
+  void getErrors(std::vector<errors::Error>& errors) const;
+  std::vector<errors::Error> getErrors() const;
 };
 
 std::ostream& operator<<(std::ostream& os, const TokenSequence& sequence);
@@ -165,6 +171,9 @@ public:
 
   bool operator==(const TokenStatement& other) const;
   bool operator!=(const TokenStatement& other) const { return !(*this == other); }
+
+  void getErrors(std::vector<errors::Error>& errors) const;
+  std::vector<errors::Error> getErrors() const;
 };
 
 std::ostream& operator<<(std::ostream& os, const TokenStatement& statement);
@@ -175,11 +184,8 @@ public:
 
   std::vector<TokenStatement> parse(const string& text);
 
-  const std::vector<string>& getErrors() { return errors; }
-
 private:
   std::set<string> keywords;
-  std::vector<string> errors;
 
   class Reader;
 

@@ -261,6 +261,66 @@ Token literal(const string& value) {
   return result;
 }
 
+void Token::getErrors(std::vector<errors::Error>& errors) const {
+  switch (type) {
+    case Token::Type::KEYWORD:
+    case Token::Type::IDENTIFIER:
+    case Token::Type::LITERAL_INT:
+    case Token::Type::LITERAL_DOUBLE:
+    case Token::Type::LITERAL_STRING:
+      break;
+
+    case Token::Type::ERROR:
+      errors.insert(errors.end(), error.begin(), error.end());
+      break;
+
+    case Token::Type::BRACKETED:
+      for (auto& sequence: bracketed) {
+        sequence.getErrors(errors);
+      }
+      break;
+
+    case Token::Type::PARENTHESIZED:
+      for (auto& sequence: parenthesized) {
+        sequence.getErrors(errors);
+      }
+      break;
+  }
+}
+
+void TokenSequence::getErrors(std::vector<errors::Error>& errors) const {
+  for (auto& token: tokens) {
+    token.getErrors(errors);
+  }
+}
+
+void TokenStatement::getErrors(std::vector<errors::Error>& errors) const {
+  tokens.getErrors(errors);
+  if (block) {
+    for (auto& statement: *block) {
+      statement.getErrors(errors);
+    }
+  }
+}
+
+std::vector<errors::Error> Token::getErrors() const {
+  std::vector<errors::Error> result;
+  getErrors(result);
+  return result;
+}
+
+std::vector<errors::Error> TokenSequence::getErrors() const {
+  std::vector<errors::Error> result;
+  getErrors(result);
+  return result;
+}
+
+std::vector<errors::Error> TokenStatement::getErrors() const {
+  std::vector<errors::Error> result;
+  getErrors(result);
+  return result;
+}
+
 std::ostream& operator<<(std::ostream& os, const Token& token) {
   switch (token.getType()) {
     case Token::Type::ERROR: {
@@ -402,11 +462,11 @@ Parser::Parser(std::set<string> keywords): keywords(move(keywords)) {}
 
 class Parser::Reader {
 public:
-  Reader(const string& text, std::vector<string>& errors)
-      : parent(NULL), errors(errors), fileStart(&text.front()), start(fileStart), end(start),
+  Reader(const string& text)
+      : parent(NULL), fileStart(&text.front()), start(fileStart), end(start),
         limit(&text.back() + 1) {}
   Reader(Reader& parent)
-      : parent(&parent), errors(parent.errors), fileStart(parent.fileStart), start(parent.end),
+      : parent(&parent), fileStart(parent.fileStart), start(parent.end),
         end(start), limit(parent.limit) {
     parent.end = NULL;
   }
@@ -470,7 +530,6 @@ public:
 
 private:
   Reader* const parent;
-  std::vector<string>& errors;
   const char* const fileStart;
   const char* const start;
   const char* end;
@@ -883,7 +942,7 @@ TokenStatement Parser::parseStatement(Reader& reader) {
 }
 
 std::vector<TokenStatement> Parser::parse(const string& text) {
-  Reader reader(text, errors);
+  Reader reader(text);
   std::vector<TokenStatement> result;
   while (reader.lookingAt(chars::ANY)) {
     result.push_back(parseStatement(reader));

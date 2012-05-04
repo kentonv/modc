@@ -17,6 +17,7 @@
 #include <iostream>
 #include <string>
 #include "tokens.h"
+#include "errors.h"
 
 int main(int argc, char* argv[]) {
   std::string text, line;
@@ -30,8 +31,10 @@ int main(int argc, char* argv[]) {
     "if", "else", "+", "+=", "=", "<", "<<", "<<<", "<<=", "<<<=", "=="});
   auto statements = parser.parse(text);
 
-  for (auto& error : parser.getErrors()) {
-    std::cerr << "ERROR: " << error << std::endl;
+  for (auto& statement: statements) {
+    for (auto& error: statement.getErrors()) {
+      std::cerr << "ERROR: " << error << std::endl;
+    }
   }
 
   for (auto& statement : statements) {

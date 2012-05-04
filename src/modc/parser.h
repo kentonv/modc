@@ -199,118 +199,65 @@ Return extractReturnType(Return (T::*func)(Params...));
 
 // =======================================================================================
 
-template <typename T>
-class ParseResult {
-public:
-  ParseResult(ParseResult&& other): isError_(other.isError_) {
-    if (isError_) {
-      new (&errors) vector<errors::Error>(move(other.errors));
-    } else {
-      new (&value) T(move(other.value));
-    }
-  }
-  ParseResult(const ParseResult& other): isError_(other.isError_) {
-    if (isError_) {
-      new (&errors) vector<errors::Error>(other.errors);
-    } else {
-      new (&value) T(other.value);
-    }
-  }
-  ParseResult(errors::Error&& error): isError_(true) {
-    new (&errors) vector<errors::Error>();
-    errors.push_back(move(error));
-  }
-  ParseResult(vector<errors::Error>&& errors): isError_(true) {
-    new (&this->errors) vector<errors::Error>(move(errors));
-  }
-  ParseResult(T&& value): isError_(false) {
-    new (&this->value) T(move(value));
-  }
-  ParseResult(const T& value): isError_(false) {
-    new (&this->value) T(value);
-  }
-  ~ParseResult() {
-    if (isError_) {
-      errors.~vector();
-    } else {
-      value.~T();
-    }
-  }
-
-  ParseResult& operator=(ParseResult&& other) {
-    this->~ParseResult();
-    new (this) ParseResult(move(other));
-    return *this;
-  }
-  ParseResult& operator=(const ParseResult& other) {
-    this->~ParseResult();
-    new (this) ParseResult(other);
-    return *this;
-  }
-
-  bool isError() { return isError_; }
-
-  union {
-    vector<errors::Error> errors;
-    T value;
-  };
-
-private:
-  bool isError_;
-};
-
 template <typename Element, typename Iterator>
 class IteratorInput {
 public:
   typedef Element ElementType;
 
   IteratorInput(Iterator begin, Iterator end)
-      : pos(begin), end(end), broken(false), committed(false) {}
+      : parent(nullptr), pos(begin), end(end), best(begin) {}
+  IteratorInput(IteratorInput& parent)
+      : parent(&parent), pos(parent.pos), end(parent.end), best(parent.pos) {}
+  ~IteratorInput() {
+    if (parent != nullptr) {
+      parent->best = std::max(std::max(pos, best), parent->best);
+    }
+  }
+
+  void advanceParent() {
+    parent->pos = pos;
+  }
 
   bool atEnd() { return pos == end; }
   const Element& current() { return *pos; }
+  const Element& consume() { return *pos++; }
   void next() { ++pos; }
 
-  errors::Error error(const string& message) {
-    // TODO: Location.
-    return errors::error(-1, -1, message);
-  }
+//  errors::Error error(const string& message) {
+//    // TODO: Location.
+//    return errors::error(-1, -1, message);
+//  }
 
-  // Indicates that we have lost context due to a syntax error, and therefore subsequent tokens
-  // are meaningless unless we can skip forward to some sort of marker that lets us figure out
-  // where we are.  (E.g., if a syntax error occurs in a parenthesized sub-expression, we cannot
-  // parse the rest of the inner expression, but we can continue parsing the outer expression after
-  // the closing parenthesis.)
-  void setBroken(bool broken) { this->broken = broken; }
-
-  // Returns true after error() has been called.
-  bool isBroken() { return broken; }
-
-  // Indicates that we've parsed enough input to be sure that we have chosen the correct branch of
-  // the enclosing "oneOf".  If a parse error occurs before committing, then OneOfParser
-  // will discard the error and choose the next branch instead.
-  void setCommitted(bool committed) { this->committed = committed; }
-  bool isCommitted() { return committed; }
+  bool operator==(const IteratorInput& other) const { return pos == other.pos; }
+  bool operator!=(const IteratorInput& other) const { return pos != other.pos; }
+  bool operator<=(const IteratorInput& other) const { return pos <= other.pos; }
+  bool operator>=(const IteratorInput& other) const { return pos >= other.pos; }
+  bool operator< (const IteratorInput& other) const { return pos <  other.pos; }
+  bool operator> (const IteratorInput& other) const { return pos >  other.pos; }
 
 private:
+  IteratorInput* parent;
   Iterator pos;
   Iterator end;
-  bool broken;
-  bool committed;
+  Iterator best;  // furthest we got with any sub-input
+
+  IteratorInput(IteratorInput&&) = delete;
+  IteratorInput& operator=(const IteratorInput&) = delete;
+  IteratorInput& operator=(IteratorInput&&) = delete;
 };
 
 template <typename T>
 struct ExtractParseFuncType;
 
 template <typename I, typename O, typename Object>
-struct ExtractParseFuncType<ParseResult<O> (Object::*)(I&) const> {
+struct ExtractParseFuncType<Maybe<O> (Object::*)(I&) const> {
   typedef I InputType;
   typedef typename I::ElementType ElementType;
   typedef O OutputType;
 };
 
 template <typename I, typename O, typename Object>
-struct ExtractParseFuncType<ParseResult<O> (Object::*)(I&)> {
+struct ExtractParseFuncType<Maybe<O> (Object::*)(I&)> {
   typedef I InputType;
   typedef typename I::ElementType ElementType;
   typedef O OutputType;
@@ -340,7 +287,7 @@ public:
   typedef typename Input::ElementType ElementType;
   typedef Output OutputType;
 
-  virtual ParseResult<Output> operator()(Input& input) const = 0;
+  virtual Maybe<Output> operator()(Input& input) const = 0;
   virtual OwnedPtr<ParserWrapper> clone() = 0;
 };
 
@@ -356,7 +303,7 @@ public:
     struct WrapperImpl: public ParserWrapper<Input, Output> {
       WrapperImpl(Other&& impl): impl(move(impl)) {};
 
-      ParseResult<Output> operator()(Input& input) const {
+      Maybe<Output> operator()(Input& input) const {
         return impl(input);
       }
 
@@ -375,7 +322,7 @@ public:
 
   // Always inline in the hopes that this allows branch prediction to kick in so the virtual call
   // doesn't hurt so much.
-  inline ParseResult<Output> operator()(Input& input) const __attribute__((always_inline)) {
+  inline Maybe<Output> operator()(Input& input) const __attribute__((always_inline)) {
     return (*wrapper)(input);
   }
 
@@ -398,7 +345,7 @@ class ParserRef {
 public:
   explicit ParserRef(const SubParser& parser): parser(&parser) {}
 
-  ParseResult<typename ExtractParserType<SubParser>::OutputType> operator()(
+  Maybe<typename ExtractParserType<SubParser>::OutputType> operator()(
       typename ExtractParserType<SubParser>::InputType& input) const {
     return (*parser)(input);
   }
@@ -454,13 +401,12 @@ class ExactElementParser {
 public:
   explicit ExactElementParser(typename Input::ElementType&& expected): expected(expected) {}
 
-  virtual ParseResult<Void> operator()(Input& input) const {
+  virtual Maybe<Void> operator()(Input& input) const {
     if (input.atEnd() || input.current() != expected) {
-      input.setBroken(true);
-      return ParseResult<Void>(input.error("Expected [TODO: complete error message]"));
+      return nullptr;
     } else {
       input.next();
-      return ParseResult<Void>(Void());
+      return Void();
     }
   }
 
@@ -486,43 +432,24 @@ public:
   explicit SequenceParser(T&& firstSubParser, U&&... rest)
       : first(std::forward<T>(firstSubParser)), rest(std::forward<U>(rest)...) {}
 
-  ParseResult<Tuple<typename ExtractParserType<FirstSubParser>::OutputType,
-                    typename ExtractParserType<SubParsers>::OutputType...>>
+  Maybe<Tuple<typename ExtractParserType<FirstSubParser>::OutputType,
+              typename ExtractParserType<SubParsers>::OutputType...>>
   operator()(Input& input) const {
     return parseNext(input);
   }
 
   template <typename... InitialParams>
-  ParseResult<Tuple<InitialParams...,
+  Maybe<Tuple<InitialParams...,
       typename ExtractParserType<FirstSubParser>::OutputType,
       typename ExtractParserType<SubParsers>::OutputType...>>
   parseNext(Input& input, InitialParams&&... initialParams) const {
     auto firstResult = first(input);
-    if (firstResult.isError()) {
-      if (!input.isBroken()) {
-        rest.parseForErrors(input, firstResult.errors);
-      }
-      return move(firstResult.errors);
-    } else {
+    if (firstResult) {
       return rest.parseNext(input, std::forward<InitialParams>(initialParams)...,
-                            move(firstResult.value));
+                            move(*firstResult));
+    } else {
+      return nullptr;
     }
-  }
-
-  void parseForErrors(Input& input, vector<errors::Error>& errors) const {
-    {
-      auto firstResult = first(input);
-      if (firstResult.isError()) {
-        for (auto& error : firstResult.errors) {
-          errors.push_back(move(error));
-        }
-        if (input.isBroken()) {
-          return;
-        }
-      }
-    }
-
-    rest.parseForErrors(input, errors);
   }
 
 private:
@@ -533,18 +460,14 @@ private:
 template <typename Input>
 class SequenceParser<Input> {
 public:
-  ParseResult<Tuple<>> operator()(Input& input) const {
+  Maybe<Void> operator()(Input& input) const {
     return parseNext(input);
   }
 
   template <typename... Params>
-  ParseResult<Tuple<Params...>>
+  Maybe<Tuple<Params...>>
   parseNext(Input& input, Params&&... params) const {
-    return ParseResult<Tuple<Params...>>(Tuple<Params...>(params...));
-  }
-
-  void parseForErrors(Input& input, vector<errors::Error>& errors) const {
-    // Nothing.
+    return Tuple<Params...>(std::forward<Params>(params)...);
   }
 };
 
@@ -570,32 +493,24 @@ public:
   explicit RepeatedParser(SubParser&& subParser)
       : subParser(move(subParser)) {}
 
-  ParseResult<vector<typename ExtractParserType<SubParser>::OutputType>> operator()(
+  Maybe<vector<typename ExtractParserType<SubParser>::OutputType>> operator()(
       typename ExtractParserType<SubParser>::InputType& input) const {
     typedef vector<typename ExtractParserType<SubParser>::OutputType> Results;
     Results results;
 
     while (!input.atEnd()) {
       typename ExtractParserType<SubParser>::InputType subInput(input);
-      subInput.setCommitted(false);
       auto subResult = subParser(subInput);
 
-      if (subResult.isError()) {
-        if (subInput.isCommitted()) {
-          // Note that we intentionally don't swallow the committed bit.
-          input = subInput;
-          return ParseResult<Results>(move(subResult.errors));
-        } else {
-          break;
-        }
+      if (subResult) {
+        subInput.advanceParent();
+        results.push_back(move(*subResult));
       } else {
-        // Note that we intentionally don't swallow the committed bit.
-        input = subInput;
-        results.push_back(move(subResult.value));
+        break;
       }
     }
 
-    return ParseResult<Results>(move(results));
+    return move(results);
   }
 
 private:
@@ -619,26 +534,18 @@ public:
   explicit OptionalParser(SubParser&& subParser)
       : subParser(move(subParser)) {}
 
-  ParseResult<Maybe<typename ExtractParserType<SubParser>::OutputType>> operator()(
+  Maybe<Maybe<typename ExtractParserType<SubParser>::OutputType>> operator()(
       typename ExtractParserType<SubParser>::InputType& input) const {
     typedef Maybe<typename ExtractParserType<SubParser>::OutputType> Result;
 
     typename ExtractParserType<SubParser>::InputType subInput(input);
-    subInput.setCommitted(false);
     auto subResult = subParser(subInput);
 
-    if (subResult.isError()) {
-      if (subInput.isCommitted()) {
-        // Note that we intentionally don't swallow the committed bit.
-        input = subInput;
-        return ParseResult<Result>(move(subResult.errors));
-      } else {
-        return ParseResult<Result>(Result());
-      }
+    if (subResult) {
+      subInput.advanceParent();
+      return Result(move(*subResult));
     } else {
-      // Note that we intentionally don't swallow the committed bit.
-      input = subInput;
-      return ParseResult<Result>(Result(move(subResult.value)));
+      return nullptr;
     }
   }
 
@@ -668,16 +575,14 @@ public:
   explicit OneOfParser(T&& firstSubParser, U&&... rest)
       : first(std::forward<T>(firstSubParser)), rest(std::forward<U>(rest)...) {}
 
-  ParseResult<Output> operator()(Input& input) const {
+  Maybe<Output> operator()(Input& input) const {
     {
       Input subInput(input);
-      subInput.setCommitted(false);
-      ParseResult<Output> firstResult = first(subInput);
+      Maybe<Output> firstResult = first(subInput);
 
-      if (!firstResult.isError() || subInput.isCommitted()) {
+      if (firstResult) {
         // MAYBE: Should we try parsing with "rest" in order to check for ambiguities?
-        subInput.setCommitted(input.isCommitted());
-        input = subInput;
+        subInput.advanceParent();
         return move(firstResult);
       }
     }
@@ -694,9 +599,8 @@ private:
 template <typename Input, typename Output>
 class OneOfParser<Input, Output> {
 public:
-  ParseResult<Output> operator()(Input& input) const {
-    input.setBroken(true);
-    return ParseResult<Output>(input.error("Syntax error."));
+  Maybe<Output> operator()(Input& input) const {
+    return nullptr;
   }
 };
 
@@ -713,24 +617,6 @@ oneOf(FirstSubParser&& first, MoreSubParsers&&... rest) {
       MaybeRef<FirstSubParser>::from(first), MaybeRef<MoreSubParsers>::from(rest)...);
 }
 
-class CommitParser {
-public:
-  template <typename Input>
-  ParseResult<Void> operator()(Input& input) const {
-    input.setCommitted(true);
-    return ParseResult<Void>(Void());
-  }
-};
-
-template <>
-struct ExtractParserType<CommitParser> {
-  typedef Void OutputType;
-};
-
-CommitParser commit() {
-  return CommitParser();
-}
-
 // -------------------------------------------------------------------
 // TransformParser
 // Output = Result of applying transform functor to input value.  If input is a tuple, it is
@@ -742,13 +628,13 @@ public:
   explicit TransformParser(SubParser&& subParser, Transform&& transform)
       : subParser(move(subParser)), transform(move(transform)) {}
 
-  ParseResult<Output> operator()(typename ExtractParserType<SubParser>::InputType& input) const {
-    ParseResult<typename ExtractParserType<SubParser>::OutputType> subResult =
+  Maybe<Output> operator()(typename ExtractParserType<SubParser>::InputType& input) const {
+    Maybe<typename ExtractParserType<SubParser>::OutputType> subResult =
         subParser(input);
-    if (subResult.isError()) {
-      return ParseResult<Output>(move(subResult.errors));
+    if (subResult) {
+      return applyMaybeTuple<Output>(transform, move(*subResult));
     } else {
-      return ParseResult<Output>(applyMaybeTuple<Output>(transform, move(subResult.value)));
+      return nullptr;
     }
   }
 

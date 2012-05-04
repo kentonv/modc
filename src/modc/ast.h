@@ -155,6 +155,10 @@ public:
       Indirect<Expression> expression;
 
       VALUE_TYPE2(Parameter, StyleAllowance, styleAllowance, Expression&&, expression);
+
+      static Parameter fromError(vector<errors::Error> errors) {
+        return Parameter(StyleAllowance::VALUE, Expression::fromError(move(errors)));
+      }
     };
     vector<Parameter> parameters;
 
