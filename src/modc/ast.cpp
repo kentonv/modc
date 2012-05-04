@@ -29,12 +29,13 @@ namespace ast {
 
 using std::move;
 
-// =============================================================================
-
 template <typename T>
 void Destroy(T& obj) {
   obj.~T();
 }
+
+// =======================================================================================
+// Expression
 
 #define FOR_ALL_EXPRESSIONS(HANDLE) \
   HANDLE(ERROR, error, vector<errors::Error>) \
@@ -51,7 +52,8 @@ void Destroy(T& obj) {
   HANDLE(FUNCTION_CALL, functionCall, FunctionCall) \
   HANDLE(SUBSCRIPT, subscript, Subscript) \
   HANDLE(MEMBER_ACCESS, memberAccess, MemberAccess) \
-  HANDLE(IMPORT, import, string)
+  HANDLE(IMPORT, import, string) \
+  HANDLE(LAMBDA, lambda, Lambda)
 
 Expression::Expression(Expression&& other): type(other.type) {
   switch (type) {
@@ -114,7 +116,7 @@ bool Expression::operator==(const Expression& other) const {
   return false;
 }
 
-// ---------------------------------------------------------------------------------------
+// -------------------------------------------------------------------
 
 Expression Expression::fromError(errors::Error&& error) {
   Expression result(Type::ERROR);
@@ -161,29 +163,6 @@ Expression Expression::fromLiteralArray(vector<Expression>&& elements) {
   return result;
 }
 
-Expression Expression::fromImport(string&& moduleName) {
-  Expression result(Type::IMPORT);
-  new (&result.import) string(moduleName);
-  return result;
-}
-
-Expression Expression::fromSubscript(Expression&& container, Expression&& key) {
-  Expression result(Type::SUBSCRIPT);
-  new (&result.subscript) Subscript(move(container), move(key));
-  return result;
-}
-Expression Expression::fromMemberAccess(Expression&& object, string&& member) {
-  Expression result(Type::MEMBER_ACCESS);
-  new (&result.memberAccess) MemberAccess(move(object), move(member));
-  return result;
-}
-Expression Expression::fromFunctionCall(Expression&& function,
-                                        vector<FunctionCall::Parameter>&& parameters) {
-  Expression result(Type::FUNCTION_CALL);
-  new (&result.functionCall) FunctionCall(move(function), move(parameters));
-  return result;
-}
-
 Expression Expression::fromBinaryOperator(string&& op, Expression&& left, Expression&& right) {
   Expression result(Type::BINARY_OPERATOR);
   new (&result.binaryOperator) BinaryOperator(move(op), move(left), move(right));
@@ -207,13 +186,136 @@ Expression Expression::fromTernaryOperator(Expression&& condition, Expression&& 
   return result;
 }
 
-// =============================================================================
+Expression Expression::fromFunctionCall(Expression&& function,
+                                        vector<FunctionCall::Parameter>&& parameters) {
+  Expression result(Type::FUNCTION_CALL);
+  new (&result.functionCall) FunctionCall(move(function), move(parameters));
+  return result;
+}
+Expression Expression::fromSubscript(Expression&& container, Expression&& key) {
+  Expression result(Type::SUBSCRIPT);
+  new (&result.subscript) Subscript(move(container), move(key));
+  return result;
+}
+Expression Expression::fromMemberAccess(Expression&& object, string&& member) {
+  Expression result(Type::MEMBER_ACCESS);
+  new (&result.memberAccess) MemberAccess(move(object), move(member));
+  return result;
+}
+
+Expression Expression::fromImport(string&& moduleName) {
+  Expression result(Type::IMPORT);
+  new (&result.import) string(move(moduleName));
+  return result;
+}
+
+Expression Expression::fromLambda(Style style, vector<ParameterDeclaration>&& parameters,
+                                  Expression&& body) {
+  Expression result(Type::LAMBDA);
+  new (&result.lambda) Lambda(style, move(parameters), move(body));
+  return result;
+}
+
+// =======================================================================================
+// Declaration
+
+Declaration::Declaration() {}
+Declaration::~Declaration() {}
+
+bool Declaration::operator==(const Declaration& other) const {
+  static_assert(sizeof(Declaration) == 248, "Please update Declaration::operator==.");
+  return kind == other.kind &&
+         name == other.name &&
+         style == other.style &&
+         parameters == other.parameters &&
+         type == other.type &&
+         supertypes == other.supertypes &&
+         subtypes == other.subtypes &&
+         annotations == other.annotations &&
+         documentation == other.documentation &&
+         definition == other.definition;
+}
+
+Declaration::Definition::Definition(Definition&& other): type(other.type) {
+  switch (type) {
+    case Type::VALUE:
+      new (&value) Expression(move(other.value));
+      break;
+    case Type::BLOCK:
+      new (&block) vector<Statement>(move(other.block));
+      break;
+  }
+}
+
+Declaration::Definition::Definition(const Definition& other): type(other.type) {
+  switch (type) {
+    case Type::VALUE:
+      new (&value) Expression(other.value);
+      break;
+    case Type::BLOCK:
+      new (&block) vector<Statement>(other.block);
+      break;
+  }
+}
+
+Declaration::Definition::~Definition() noexcept {
+  switch (type) {
+    case Type::VALUE:
+      Destroy(value);
+      break;
+    case Type::BLOCK:
+      Destroy(block);
+      break;
+  }
+}
+
+Declaration::Definition& Declaration::Definition::operator=(Definition&& other) {
+  // Lazy.
+  this->~Definition();
+  new(this) Definition(move(other));
+  return *this;
+}
+
+Declaration::Definition& Declaration::Definition::operator=(const Definition& other) {
+  // Lazy.
+  this->~Definition();
+  new(this) Definition(other);
+  return *this;
+}
+
+bool Declaration::Definition::operator==(const Definition& other) const {
+  if (type == other.type) {
+    switch (type) {
+      case Type::VALUE:
+        return value == other.value;
+      case Type::BLOCK:
+        return block == other.block;
+    }
+  }
+
+  return false;
+}
+
+// =======================================================================================
+// Statement
 
 #define FOR_ALL_STATEMENTS(HANDLE) \
   HANDLE(ERROR, error, std::vector<errors::Error>) \
   HANDLE(EXPRESSION, expression, Expression) \
+  HANDLE(BLOCK, block, vector<Statement>) \
+  HANDLE(DECLARATION, declaration, Declaration) \
+  HANDLE(ASSIGNMENT, assignment, Assignment) \
+  HANDLE(UNION, union_, vector<Declaration>) \
+  HANDLE(IF, if_, If) \
+  HANDLE(ELSE, else_, Indirect<Statement>) \
+  HANDLE(FOR, for_, For) \
+  HANDLE(WHILE, while_, While) \
+  HANDLE(LOOP, loop, Loop) \
+  HANDLE(PARALLEL, parallel, vector<Statement>) \
   HANDLE(RETURN, return_, Expression) \
-  HANDLE(BREAK, break_, string)
+  HANDLE(BREAK, break_, Maybe<string>) \
+  HANDLE(CONTINUE, continue_, Maybe<string>) \
+  HANDLE(COMMENT, comment, string)
 
 Statement::Statement(Statement&& other): type(other.type) {
   switch (type) {
@@ -224,7 +326,7 @@ Statement::Statement(Statement&& other): type(other.type) {
       FOR_ALL_STATEMENTS(MOVE_CONSTRUCT)
 #undef MOVE_CONSTRUCT
 
-    default:  // temporary
+    case Type::BLANK:
       break;
   }
 }
@@ -238,7 +340,7 @@ Statement::Statement(const Statement& other): type(other.type) {
       FOR_ALL_STATEMENTS(COPY_CONSTRUCT)
 #undef COPY_CONSTRUCT
 
-    default:  // temporary
+    case Type::BLANK:
       break;
   }
 }
@@ -252,7 +354,7 @@ Statement::~Statement() noexcept {
       FOR_ALL_STATEMENTS(DESTRUCT)
 #undef DESTRUCT
 
-    default:  // temporary
+    case Type::BLANK:
       break;
   }
 }
@@ -280,12 +382,105 @@ bool Statement::operator==(const Statement& other) const {
         FOR_ALL_STATEMENTS(COMPARE)
 #undef MOVE_CONSTRUCT
 
-      default:  // temporary
-        break;
+      case Type::BLANK:
+        return true;
     }
   }
 
   return false;
+}
+
+// -------------------------------------------------------------------
+
+Statement Statement::fromError(errors::Error&& error) {
+  Statement result(Type::ERROR);
+  new (&result.error) vector<errors::Error>;
+  result.error.push_back(move(error));
+  return result;
+}
+Statement Statement::fromError(vector<errors::Error>&& errors) {
+  Statement result(Type::ERROR);
+  new (&result.error) vector<errors::Error>(move(errors));
+  return result;
+}
+
+Statement Statement::fromExpression(Expression&& expression) {
+  Statement result(Type::EXPRESSION);
+  new (&result.expression) Expression(move(expression));
+  return result;
+}
+Statement Statement::fromBlock(vector<Statement>&& block) {
+  Statement result(Type::BLOCK);
+  new (&result.block) vector<Statement>(move(block));
+  return result;
+}
+
+Statement Statement::fromDeclaration(Declaration&& declaration) {
+  Statement result(Type::DECLARATION);
+  new (&result.declaration) Declaration(move(declaration));
+  return result;
+}
+Statement Statement::fromAssignment(Expression&& variable, Expression&& value) {
+  Statement result(Type::ASSIGNMENT);
+  new (&result.assignment) Assignment(move(variable), move(value));
+  return result;
+}
+
+Statement Statement::fromUnion(vector<Declaration>&& declarations) {
+  Statement result(Type::UNION);
+  new (&result.union_) vector<Declaration>(move(declarations));
+  return result;
+}
+
+Statement Statement::fromIf(Expression&& condition, Statement&& body) {
+  Statement result(Type::IF);
+  new (&result.if_) If(move(condition), move(body));
+  return result;
+}
+Statement Statement::fromFor(vector<Declaration>&& range, Statement&& body) {
+  Statement result(Type::FOR);
+  new (&result.for_) For(move(range), move(body));
+  return result;
+}
+Statement Statement::fromWhile(Expression&& condition, Statement&& body) {
+  Statement result(Type::WHILE);
+  new (&result.while_) While(move(condition), move(body));
+  return result;
+}
+Statement Statement::fromLoop(string&& name, Statement&& body) {
+  Statement result(Type::LOOP);
+  new (&result.loop) Loop(move(name), move(body));
+  return result;
+}
+Statement Statement::fromParallel(vector<Statement>&& statements) {
+  Statement result(Type::PARALLEL);
+  new (&result.parallel) vector<Statement>(move(statements));
+  return result;
+}
+
+Statement Statement::fromReturn(Expression&& value) {
+  Statement result(Type::RETURN);
+  new (&result.return_) Expression(move(value));
+  return result;
+}
+Statement Statement::fromBreak(Maybe<string>&& loopName) {
+  Statement result(Type::BREAK);
+  new (&result.break_) Maybe<string>(move(loopName));
+  return result;
+}
+Statement Statement::fromContinue(Maybe<string>&& loopName) {
+  Statement result(Type::CONTINUE);
+  new (&result.continue_) Maybe<string>(move(loopName));
+  return result;
+}
+
+Statement Statement::fromBlank() {
+  return Statement(Type::BLANK);
+}
+Statement Statement::fromComment(string&& text) {
+  Statement result(Type::COMMENT);
+  new (&result.comment) string(move(text));
+  return result;
 }
 
 }  // namespace ast

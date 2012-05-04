@@ -51,18 +51,44 @@ enum class StyleAllowance {
   MOVE
 };
 
+class Statement;
+struct ParameterDeclaration;
+
+#define VALUE_TYPE_PROTOTYPES(TYPENAME) \
+  TYPENAME(TYPENAME&& other); \
+  TYPENAME(const TYPENAME& other); \
+  ~TYPENAME() noexcept; \
+  TYPENAME& operator=(TYPENAME&& other); \
+  TYPENAME& operator=(const TYPENAME& other); \
+  bool operator==(const TYPENAME& other) const; \
+  bool operator!=(const TYPENAME& other) const { return !(*this == other); }
+
+#define VALUE_TYPE1(TYPENAME, TYPE1, VAR1) \
+  TYPENAME(TYPE1 VAR1): VAR1(move(VAR1)) {} \
+  bool operator==(const TYPENAME& other) const { \
+    return VAR1 == other.VAR1; \
+  } \
+  bool operator!=(const TYPENAME& other) const { return !(*this == other); }
+
+#define VALUE_TYPE2(TYPENAME, TYPE1, VAR1, TYPE2, VAR2) \
+  TYPENAME(TYPE1 VAR1, TYPE2 VAR2) \
+      : VAR1(move(VAR1)), VAR2(move(VAR2)) {} \
+  bool operator==(const TYPENAME& other) const { \
+    return VAR1 == other.VAR1 && VAR2 == other.VAR2; \
+  } \
+  bool operator!=(const TYPENAME& other) const { return !(*this == other); }
+
+#define VALUE_TYPE3(TYPENAME, TYPE1, VAR1, TYPE2, VAR2, TYPE3, VAR3) \
+  TYPENAME(TYPE1 VAR1, TYPE2 VAR2, TYPE3 VAR3) \
+      : VAR1(move(VAR1)), VAR2(move(VAR2)), VAR3(move(VAR3)) {} \
+  bool operator==(const TYPENAME& other) const { \
+    return VAR1 == other.VAR1 && VAR2 == other.VAR2 && VAR3 == other.VAR3; \
+  } \
+  bool operator!=(const TYPENAME& other) const { return !(*this == other); }
+
 class Expression {
 public:
-  Expression();
-  Expression(Expression&& other);
-  Expression(const Expression& other);
-  ~Expression() noexcept;
-
-  Expression& operator=(Expression&& other);
-  Expression& operator=(const Expression& other);
-
-  bool operator==(const Expression& other) const;
-  bool operator!=(const Expression& other) const { return !(*this == other); }
+  VALUE_TYPE_PROTOTYPES(Expression);
 
   enum class Type {
     ERROR,
@@ -84,7 +110,9 @@ public:
     SUBSCRIPT,
     MEMBER_ACCESS,
 
-    IMPORT
+    IMPORT,
+
+    LAMBDA
   };
 
   Type getType();
@@ -94,36 +122,21 @@ public:
     Indirect<Expression> left;
     Indirect<Expression> right;
 
-    BinaryOperator(string&& op, Expression&& left, Expression&& right)
-        : op(move(op)), left(move(left)), right(move(right)) {}
-
-    bool operator==(const BinaryOperator& other) const {
-      return op == other.op && left == other.left && right == other.right;
-    }
+    VALUE_TYPE3(BinaryOperator, string&&, op, Expression&&, left, Expression&&, right);
   };
 
   struct PrefixOperator {
     string op;
     Indirect<Expression> operand;
 
-    PrefixOperator(string&& op, Expression&& operand)
-        : op(move(op)), operand(move(operand)) {}
-
-    bool operator==(const PrefixOperator& other) const {
-      return op == other.op && operand == other.operand;
-    }
+    VALUE_TYPE2(PrefixOperator, string&&, op, Expression&&, operand);
   };
 
   struct PostfixOperator {
     Indirect<Expression> operand;
     string op;
 
-    PostfixOperator(Expression&& operand, string&& op)
-        : operand(move(operand)), op(move(op)) {}
-
-    bool operator==(const PostfixOperator& other) const {
-      return operand == other.operand && op == other.op;
-    }
+    VALUE_TYPE2(PostfixOperator, Expression&&, operand, string&&, op);
   };
 
   struct TernaryOperator {
@@ -131,14 +144,8 @@ public:
     Indirect<Expression> trueClause;
     Indirect<Expression> falseClause;
 
-    TernaryOperator(Expression&& condition, Expression&& trueClause, Expression&& falseClause)
-        : condition(move(condition)), trueClause(move(trueClause)),
-          falseClause(move(falseClause)) {}
-
-    bool operator==(const TernaryOperator& other) const {
-      return condition == other.condition && trueClause == other.trueClause &&
-          falseClause == other.falseClause;
-    }
+    VALUE_TYPE3(TernaryOperator, Expression&&, condition, Expression&&, trueClause,
+                Expression&&, falseClause);
   };
 
   struct FunctionCall {
@@ -147,45 +154,34 @@ public:
       StyleAllowance styleAllowance;
       Indirect<Expression> expression;
 
-      Parameter(StyleAllowance styleAllowance, Expression&& expression)
-          : styleAllowance(styleAllowance), expression(move(expression)) {}
-
-      bool operator==(const Parameter& other) const {
-        return expression == other.expression && styleAllowance == other.styleAllowance;
-      }
+      VALUE_TYPE2(Parameter, StyleAllowance, styleAllowance, Expression&&, expression);
     };
     vector<Parameter> parameters;
 
-    FunctionCall(Expression&& function, vector<Parameter>&& parameters)
-        : function(function), parameters(parameters) {}
-
-    bool operator==(const FunctionCall& other) const {
-      return function == other.function && parameters == other.parameters;
-    }
+    VALUE_TYPE2(FunctionCall, Expression&&, function, vector<Parameter>&&, parameters);
   };
 
   struct Subscript {
     Indirect<Expression> container;
     Indirect<Expression> subscript;
 
-    Subscript(Expression&& container, Expression&& subscript)
-        : container(move(container)), subscript(move(subscript)) {}
-
-    bool operator==(const Subscript& other) const {
-      return container == other.container && subscript == other.subscript;
-    }
+    VALUE_TYPE2(Subscript, Expression&&, container, Expression&&, subscript);
   };
 
   struct MemberAccess {
     Indirect<Expression> object;
     string member;
 
-    MemberAccess(Expression&& object, string&& member)
-        : object(move(object)), member(move(member)) {}
+    VALUE_TYPE2(MemberAccess, Expression&&, object, string&&, member);
+  };
 
-    bool operator==(const MemberAccess& other) const {
-      return object == other.object && member == other.member;
-    }
+  struct Lambda {
+    Style style;
+    vector<ParameterDeclaration> parameters;
+    Indirect<Expression> body;
+
+    VALUE_TYPE3(Lambda, Style, style, vector<ParameterDeclaration>&&, parameters,
+                Expression&&, body);
   };
 
   union {
@@ -209,6 +205,8 @@ public:
     MemberAccess memberAccess;
 
     string import;
+
+    Lambda lambda;
   };
 
   static Expression fromError(errors::Error&& error);
@@ -223,18 +221,21 @@ public:
   static Expression fromLiteralString(string&& value);
   static Expression fromLiteralArray(vector<Expression>&& elements);
 
-  static Expression fromImport(string&& moduleName);
-
-  static Expression fromSubscript(Expression&& container, Expression&& key);
-  static Expression fromMemberAccess(Expression&& object, string&& member);
-  static Expression fromFunctionCall(Expression&& function,
-                                     vector<FunctionCall::Parameter>&& parameters);
-
   static Expression fromBinaryOperator(string&& op, Expression&& left, Expression&& right);
   static Expression fromPrefixOperator(string&& op, Expression&& exp);
   static Expression fromPostfixOperator(Expression&& exp, string&& op);
   static Expression fromTernaryOperator(Expression&& condition, Expression&& trueClause,
                                         Expression&& falseClause);
+
+  static Expression fromFunctionCall(Expression&& function,
+                                     vector<FunctionCall::Parameter>&& parameters);
+  static Expression fromSubscript(Expression&& container, Expression&& key);
+  static Expression fromMemberAccess(Expression&& object, string&& member);
+
+  static Expression fromImport(string&& moduleName);
+
+  static Expression fromLambda(Style style, vector<ParameterDeclaration>&& parameters,
+                               Expression&& body);
 
 private:
   Type type;
@@ -242,10 +243,12 @@ private:
   Expression(Type type): type(type) {}
 };
 
-class Statement;
-struct ParameterDeclaration;
+// =======================================================================================
 
 struct Declaration {
+  Declaration();
+  ~Declaration();
+
   enum class Kind {
     UNDECLARED,
 
@@ -277,13 +280,9 @@ struct Declaration {
 
   class Definition {
   public:
-    Definition();
-    Definition(const Definition& other);
-    Definition(Definition&& other);
-    ~Definition() noexcept;
+    VALUE_TYPE_PROTOTYPES(Definition);
 
     enum class Type {
-      NONE,
       VALUE,
       BLOCK
     };
@@ -292,15 +291,22 @@ struct Declaration {
 
     union {
       Expression value;
-      vector<Statement> body;
+      vector<Statement> block;
     };
 
   private:
     Type type;
   };
+
+  Maybe<Definition> definition;
+
+  bool operator==(const Declaration& other) const;
+  bool operator!=(const Declaration& other) const { return !(*this == other); }
 };
 
 struct ParameterDeclaration {
+  VALUE_TYPE_PROTOTYPES(ParameterDeclaration);
+
   enum class Type {
     CONSTANT,
     VARIABLE
@@ -312,23 +318,17 @@ struct ParameterDeclaration {
   };
 };
 
+// =======================================================================================
+
 class Statement {
 public:
-  Statement(Statement&& other);
-  Statement(const Statement& other);
-  ~Statement() noexcept;
-
-  Statement& operator=(Statement&& other);
-  Statement& operator=(const Statement& other);
-
-  bool operator==(const Statement& other) const;
-  bool operator!=(const Statement& other) const { return !(*this == other); }
+  VALUE_TYPE_PROTOTYPES(Statement);
 
   enum class Type {
     ERROR,
 
     EXPRESSION,
-    SUB_BLOCK,
+    BLOCK,
 
     DECLARATION,
     ASSIGNMENT,
@@ -355,33 +355,43 @@ public:
   struct Assignment {
     Expression variable;
     Expression value;
+
+    VALUE_TYPE2(Assignment, Expression&&, variable, Expression&&, value);
   };
 
   struct If {
     Expression condition;
     Indirect<Statement> body;
+
+    VALUE_TYPE2(If, Expression&&, condition, Statement&&, body);
   };
 
   struct For {
     vector<Declaration> range;
     Indirect<Statement> body;
+
+    VALUE_TYPE2(For, vector<Declaration>&&, range, Statement&&, body);
   };
 
   struct While {
     Expression condition;
     Indirect<Statement> body;
+
+    VALUE_TYPE2(While, Expression&&, condition, Statement&&, body);
   };
 
   struct Loop {
     Maybe<string> name;
     Indirect<Statement> body;
+
+    VALUE_TYPE2(Loop, Maybe<string>&&, name, Statement&&, body);
   };
 
   union {
     std::vector<errors::Error> error;
 
     Expression expression;
-    vector<Statement> subBlock;
+    vector<Statement> block;
 
     Declaration declaration;
     Assignment assignment;
@@ -396,14 +406,40 @@ public:
     vector<Statement> parallel;
 
     Expression return_;  // if not returning a value, expression will be empty tuple.
-    string break_;
-    string continue_;
+    Maybe<string> break_;
+    Maybe<string> continue_;
 
     string comment;
   };
 
+  static Statement fromError(errors::Error&& error);
+  static Statement fromError(vector<errors::Error>&& errors);
+
+  static Statement fromExpression(Expression&& expression);
+  static Statement fromBlock(vector<Statement>&& block);
+
+  static Statement fromDeclaration(Declaration&& declaration);
+  static Statement fromAssignment(Expression&& variable, Expression&& value);
+
+  static Statement fromUnion(vector<Declaration>&& declarations);
+
+  static Statement fromIf(Expression&& condition, Statement&& body);
+  static Statement fromFor(vector<Declaration>&& range, Statement&& body);
+  static Statement fromWhile(Expression&& condition, Statement&& body);
+  static Statement fromLoop(string&& name, Statement&& body);
+  static Statement fromParallel(vector<Statement>&& statements);
+
+  static Statement fromReturn(Expression&& value);
+  static Statement fromBreak(Maybe<string>&& loopName);
+  static Statement fromContinue(Maybe<string>&& loopName);
+
+  static Statement fromBlank();
+  static Statement fromComment(string&& text);
+
 private:
   Type type;
+
+  Statement(Type type): type(type) {}
 };
 
 }  // namespace ast
