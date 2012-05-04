@@ -223,10 +223,7 @@ public:
   const Element& consume() { return *pos++; }
   void next() { ++pos; }
 
-//  errors::Error error(const string& message) {
-//    // TODO: Location.
-//    return errors::error(-1, -1, message);
-//  }
+  Iterator getBest() { return std::max(pos, best); }
 
   bool operator==(const IteratorInput& other) const { return pos == other.pos; }
   bool operator!=(const IteratorInput& other) const { return pos != other.pos; }
@@ -487,7 +484,7 @@ sequence(FirstSubParser&& first, MoreSubParsers&&... rest) {
 // RepeatedParser
 // Output = Vector of output of sub-parser.
 
-template <typename SubParser>
+template <typename SubParser, bool atLeastOne>
 class RepeatedParser {
 public:
   explicit RepeatedParser(SubParser&& subParser)
@@ -510,6 +507,10 @@ public:
       }
     }
 
+    if (atLeastOne && results.empty()) {
+      return nullptr;
+    }
+
     return move(results);
   }
 
@@ -518,9 +519,16 @@ private:
 };
 
 template <typename SubParser>
-RepeatedParser<typename MaybeRef<SubParser>::Type>
+RepeatedParser<typename MaybeRef<SubParser>::Type, false>
 repeated(SubParser&& subParser) {
-  return RepeatedParser<typename MaybeRef<SubParser>::Type>(
+  return RepeatedParser<typename MaybeRef<SubParser>::Type, false>(
+      MaybeRef<SubParser>::from(subParser));
+}
+
+template <typename SubParser>
+RepeatedParser<typename MaybeRef<SubParser>::Type, true>
+oneOrMore(SubParser&& subParser) {
+  return RepeatedParser<typename MaybeRef<SubParser>::Type, true>(
       MaybeRef<SubParser>::from(subParser));
 }
 
@@ -652,6 +660,57 @@ transform(SubParser&& subParser, Transform&& transform) {
                          typename MaybeRef<SubParser>::Type,
                          decay(Transform)>(
       MaybeRef<SubParser>::from(subParser), std::forward<Transform>(transform));
+}
+
+// -------------------------------------------------------------------
+// AcceptIfParser
+// Output = Same as SubParser
+
+template <typename SubParser, typename Condition>
+class AcceptIfParser {
+public:
+  explicit AcceptIfParser(SubParser&& subParser, Condition&& condition)
+      : subParser(move(subParser)), condition(move(condition)) {}
+
+  Maybe<typename ExtractParserType<SubParser>::OutputType>
+  operator()(typename ExtractParserType<SubParser>::InputType& input) const {
+    Maybe<typename ExtractParserType<SubParser>::OutputType> subResult = subParser(input);
+    if (subResult && !condition(*subResult)) {
+      subResult = nullptr;
+    }
+    return subResult;
+  }
+
+private:
+  SubParser subParser;
+  Condition condition;
+};
+
+template <typename SubParser, typename Condition>
+AcceptIfParser<typename MaybeRef<SubParser>::Type, decay(Condition)>
+acceptIf(SubParser&& subParser, Condition&& condition) {
+  return AcceptIfParser<typename MaybeRef<SubParser>::Type, decay(Condition)>(
+      MaybeRef<SubParser>::from(subParser), std::forward<Condition>(condition));
+}
+
+// -------------------------------------------------------------------
+// EndOfInputParser
+// Output = Void, only succeeds if at end-of-input
+
+class EndOfInputParser {
+public:
+  template <typename Input>
+  Maybe<Void> operator()(Input& input) const {
+    if (input.atEnd()) {
+      return Void();
+    } else {
+      return nullptr;
+    }
+  }
+};
+
+EndOfInputParser endOfInput() {
+  return EndOfInputParser();
 }
 
 }  // namespace ast

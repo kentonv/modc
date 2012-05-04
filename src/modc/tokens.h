@@ -155,6 +155,10 @@ class TokenSequence {
 public:
   std::vector<Token> tokens;
 
+  // TODO:  Fill these in.
+  int startOffset;
+  int endOffset;
+
   bool operator==(const TokenSequence& other) const { return tokens == other.tokens; }
   bool operator!=(const TokenSequence& other) const { return tokens != other.tokens; }
 

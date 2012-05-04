@@ -219,18 +219,16 @@ Expression Expression::fromLambda(Style style, vector<ParameterDeclaration>&& pa
 // =======================================================================================
 // Declaration
 
-Declaration::Declaration() {}
+Declaration::Declaration(Kind kind): kind(kind), thisStyle(Style::VALUE), style(Style::VALUE) {}
 Declaration::~Declaration() {}
 
 bool Declaration::operator==(const Declaration& other) const {
-  static_assert(sizeof(Declaration) == 248, "Please update Declaration::operator==.");
+  static_assert(sizeof(Declaration) == 152, "Please update Declaration::operator==.");
   return kind == other.kind &&
-         name == other.name &&
+         thisStyle == other.thisStyle &&
          style == other.style &&
+         name == other.name &&
          parameters == other.parameters &&
-         type == other.type &&
-         supertypes == other.supertypes &&
-         subtypes == other.subtypes &&
          annotations == other.annotations &&
          documentation == other.documentation &&
          definition == other.definition;
@@ -238,8 +236,8 @@ bool Declaration::operator==(const Declaration& other) const {
 
 Declaration::Definition::Definition(Definition&& other): type(other.type) {
   switch (type) {
-    case Type::VALUE:
-      new (&value) Expression(move(other.value));
+    case Type::EXPRESSION:
+      new (&expression) Expression(move(other.expression));
       break;
     case Type::BLOCK:
       new (&block) vector<Statement>(move(other.block));
@@ -249,8 +247,8 @@ Declaration::Definition::Definition(Definition&& other): type(other.type) {
 
 Declaration::Definition::Definition(const Definition& other): type(other.type) {
   switch (type) {
-    case Type::VALUE:
-      new (&value) Expression(other.value);
+    case Type::EXPRESSION:
+      new (&expression) Expression(other.expression);
       break;
     case Type::BLOCK:
       new (&block) vector<Statement>(other.block);
@@ -260,8 +258,8 @@ Declaration::Definition::Definition(const Definition& other): type(other.type) {
 
 Declaration::Definition::~Definition() noexcept {
   switch (type) {
-    case Type::VALUE:
-      Destroy(value);
+    case Type::EXPRESSION:
+      Destroy(expression);
       break;
     case Type::BLOCK:
       Destroy(block);
@@ -286,14 +284,102 @@ Declaration::Definition& Declaration::Definition::operator=(const Definition& ot
 bool Declaration::Definition::operator==(const Definition& other) const {
   if (type == other.type) {
     switch (type) {
-      case Type::VALUE:
-        return value == other.value;
+      case Type::EXPRESSION:
+        return expression == other.expression;
       case Type::BLOCK:
         return block == other.block;
     }
   }
 
   return false;
+}
+
+Declaration::Definition Declaration::Definition::fromExpression(Expression&& expression) {
+  Definition result(Type::EXPRESSION);
+  new (&result.expression) Expression(move(expression));
+  return result;
+}
+Declaration::Definition Declaration::Definition::fromBlock(vector<Statement>&& statements) {
+  Definition result(Type::BLOCK);
+  new (&result.block) vector<Statement>(move(statements));
+  return result;
+}
+
+// -------------------------------------------------------------------
+// ParameterDeclaration
+
+ParameterDeclaration::ParameterDeclaration(ParameterDeclaration&& other): type(other.type) {
+  switch (type) {
+    case Type::CONSTANT:
+      new (&constant) Expression(move(other.constant));
+      break;
+    case Type::VARIABLE:
+      new (&variable) Declaration(move(other.variable));
+      break;
+  }
+}
+
+ParameterDeclaration::ParameterDeclaration(const ParameterDeclaration& other): type(other.type) {
+  switch (type) {
+    case Type::CONSTANT:
+      new (&constant) Expression(other.constant);
+      break;
+    case Type::VARIABLE:
+      new (&variable) Declaration(other.variable);
+      break;
+  }
+}
+
+ParameterDeclaration::~ParameterDeclaration() noexcept {
+  switch (type) {
+    case Type::CONSTANT:
+      Destroy(constant);
+      break;
+    case Type::VARIABLE:
+      Destroy(variable);
+      break;
+  }
+}
+
+ParameterDeclaration& ParameterDeclaration::operator=(ParameterDeclaration&& other) {
+  // Lazy.
+  this->~ParameterDeclaration();
+  new(this) ParameterDeclaration(move(other));
+  return *this;
+}
+
+ParameterDeclaration& ParameterDeclaration::operator=(const ParameterDeclaration& other) {
+  // Lazy.
+  this->~ParameterDeclaration();
+  new(this) ParameterDeclaration(other);
+  return *this;
+}
+
+bool ParameterDeclaration::operator==(const ParameterDeclaration& other) const {
+  if (type == other.type) {
+    switch (type) {
+      case Type::CONSTANT:
+        return constant == other.constant;
+      case Type::VARIABLE:
+        return variable == other.variable;
+    }
+  }
+
+  return false;
+}
+
+ParameterDeclaration ParameterDeclaration::fromError(vector<errors::Error>&& errors) {
+  return fromConstant(Expression::fromError(move(errors)));
+}
+ParameterDeclaration ParameterDeclaration::fromConstant(Expression&& expression) {
+  ParameterDeclaration result(Type::CONSTANT);
+  new (&result.constant) Expression(move(expression));
+  return result;
+}
+ParameterDeclaration ParameterDeclaration::fromVariable(Declaration&& declaration) {
+  ParameterDeclaration result(Type::VARIABLE);
+  new (&result.variable) Declaration(move(declaration));
+  return result;
 }
 
 // =======================================================================================

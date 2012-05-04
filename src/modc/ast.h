@@ -41,7 +41,9 @@ enum class Style {
   VALUE,
   IMMUTABLE_REFERENCE,
   MUTABLE_REFERENCE,
-  ENTANGLED_REFERENCE
+  ENTANGLED_REFERENCE,
+  HEAP_VALUE,
+  CONSTANT
 };
 
 enum class StyleAllowance {
@@ -249,13 +251,22 @@ private:
 
 // =======================================================================================
 
+struct Annotation {
+  enum Relationship {
+    IS_A,
+    SUBCLASS_OF,
+    SUPERCLASS_OF,
+    ANNOTATION
+  };
+
+  Relationship relationship;
+  Maybe<Expression> param;
+
+  VALUE_TYPE2(Annotation, Relationship, relationship, Maybe<Expression>&&, param);
+};
+
 struct Declaration {
-  Declaration();
-  ~Declaration();
-
   enum class Kind {
-    UNDECLARED,
-
     VARIABLE,
     ENVIRONMENT,
 
@@ -270,16 +281,16 @@ struct Declaration {
     ENUM
   };
 
+  Declaration(Kind kind);
+  ~Declaration();
+
   Kind kind;
-
-  string name;  // empty for implicit constructor, destructor, conversion
+  Style thisStyle;
   Style style;
-  vector<ParameterDeclaration> parameters;
 
-  Maybe<Expression> type;
-  vector<Expression> supertypes;
-  vector<Expression> subtypes;
-  vector<Expression> annotations;
+  string name;  // empty for implicit constructor, destructor, conversion.
+  Maybe<vector<ParameterDeclaration>> parameters;
+  vector<Annotation> annotations;
   string documentation;
 
   class Definition {
@@ -287,19 +298,24 @@ struct Declaration {
     VALUE_TYPE_PROTOTYPES(Definition);
 
     enum class Type {
-      VALUE,
+      EXPRESSION,
       BLOCK
     };
 
-    Type getType() { return type; }
+    Type getType() const { return type; }
 
     union {
-      Expression value;
+      Expression expression;
       vector<Statement> block;
     };
 
+    static Definition fromExpression(Expression&& expression);
+    static Definition fromBlock(vector<Statement>&& statements);
+
   private:
     Type type;
+
+    Definition(Type type): type(type) {}
   };
 
   Maybe<Definition> definition;
@@ -308,7 +324,8 @@ struct Declaration {
   bool operator!=(const Declaration& other) const { return !(*this == other); }
 };
 
-struct ParameterDeclaration {
+class ParameterDeclaration {
+public:
   VALUE_TYPE_PROTOTYPES(ParameterDeclaration);
 
   enum class Type {
@@ -316,10 +333,21 @@ struct ParameterDeclaration {
     VARIABLE
   };
 
+  Type getType() const { return type; }
+
   union {
-    Declaration variable;
     Expression constant;
+    Declaration variable;
   };
+
+  static ParameterDeclaration fromError(vector<errors::Error>&& errors);
+  static ParameterDeclaration fromConstant(Expression&& expression);
+  static ParameterDeclaration fromVariable(Declaration&& declaration);
+
+private:
+  Type type;
+
+  ParameterDeclaration(Type type): type(type) {}
 };
 
 // =======================================================================================
