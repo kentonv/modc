@@ -43,6 +43,8 @@ ExactElementParser<Input> exactChar(char c) {
   return exactElement<Input>(move(c));
 }
 
+typedef std::pair<string::iterator, string::iterator> TestLocation;
+
 TEST(Parsers, ExactElementParser) {
   string text = "foo";
   Input input(text.begin(), text.end());
@@ -105,7 +107,7 @@ TEST(Parsers, SequenceParser) {
 
   {
     Input input(text.begin(), text.end());
-    Maybe<int> result = sequence(transform(exactChar('f'), [](){return 123;}),
+    Maybe<int> result = sequence(transform(exactChar('f'), [](TestLocation){return 123;}),
                                  exactChar('o'), exactChar('o'))(input);
     ASSERT_TRUE(result);
     EXPECT_EQ(123, *result);
@@ -118,7 +120,10 @@ TEST(Parsers, TransformParser) {
 
   auto parser = transform(
       sequence(exactChar('f'), exactChar('o'), exactChar('o')),
-      []() -> int { return 123; });
+      [](TestLocation location) -> int {
+        EXPECT_EQ("foo", string(location.first, location.second));
+        return 123;
+      });
 
   {
     Input input(text.begin(), text.end());
@@ -135,7 +140,7 @@ TEST(Parsers, TransformParser_MaybeRef) {
 
     Transform(int value): value(value) {}
 
-    int operator()() const { return value; }
+    int operator()(TestLocation) const { return value; }
   };
 
   // Don't use auto for the TransformParsers here because we're trying to make sure that MaybeRef
@@ -156,7 +161,7 @@ TEST(Parsers, TransformParser_MaybeRef) {
   string text = "foob";
   auto parser = transform(
       sequence(parser1, parser2, exactChar('o'), parser3),
-      [](int i, int j, int k) { return i + j + k; });
+      [](TestLocation, int i, int j, int k) { return i + j + k; });
 
   {
     Input input(text.begin(), text.end());
@@ -172,7 +177,7 @@ TEST(Parsers, RepeatedParser) {
 
   auto parser = transform(
       sequence(exactChar('f'), repeated(exactChar('o'))),
-      [](std::vector<Void>&& values) -> int { return values.size(); });
+      [](TestLocation, std::vector<Void>&& values) -> int { return values.size(); });
 
   {
     Input input(text.begin(), text.begin() + 3);
@@ -202,9 +207,9 @@ TEST(Parsers, RepeatedParser) {
 TEST(Parsers, OneOfParser) {
   auto parser = oneOf(
       transform(sequence(exactChar('f'), exactChar('o'), exactChar('o')),
-                []() -> string { return "foo"; }),
+                [](TestLocation) -> string { return "foo"; }),
       transform(sequence(exactChar('b'), exactChar('a'), exactChar('r')),
-                []() -> string { return "bar"; }));
+                [](TestLocation) -> string { return "bar"; }));
 
   {
     string text = "foo";

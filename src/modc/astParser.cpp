@@ -55,6 +55,7 @@ using parser::oneOrMore;
 using parser::optional;
 
 using errors::Location;
+using errors::Located;
 
 using namespace std::placeholders;
 
@@ -62,6 +63,12 @@ struct TokenParserInput : public parser::IteratorInput<Token, vector<Token>::con
   explicit TokenParserInput(const TokenSequence& sequence)
       : parser::IteratorInput<Token, vector<Token>::const_iterator>(
           sequence.tokens.begin(), sequence.tokens.end()) {}
+};
+
+// Proxy type that converts token iterator range to location.
+struct Loc: public Location {
+  Loc(const std::pair<vector<Token>::const_iterator, vector<Token>::const_iterator>& range)
+      : Location(range.first->location.to(range.second->location)) {}
 };
 
 auto endOfInput = parser::endOfInput<TokenParserInput>();
@@ -77,6 +84,31 @@ extern const StatementParser generalStatement;
 
 // =======================================================================================
 // Parsers for simple tokens
+
+template <typename SubParser>
+class LocatedParser {
+public:
+  explicit LocatedParser(SubParser&& subParser)
+      : subParser(move(subParser)) {}
+
+  typedef typename parser::ExtractParserType<SubParser>::OutputType SubOutput;
+
+  Maybe<Located<SubOutput>> operator()(TokenParserInput& input) const {
+    auto start = input.getPosition();
+    Maybe<SubOutput> subResult = subParser(input);
+    if (subResult) {
+      return errors::Located<SubOutput>(start->location.to(input.getPosition()->location),
+                                        *subResult);
+    } else {
+      return nullptr;
+    }
+  }
+
+private:
+  SubParser subParser;
+};
+
+parser::WrapperParserConstructor<LocatedParser> located;
 
 // Hack:  This set is automatically initialized as the parsers are constructed.
 std::set<string> keywords;
@@ -103,7 +135,7 @@ parseTokenSequence(const TokenSequence& sequence, const Parser& subParser) {
     } else {
       errors.push_back(errors::error(sequence.location.last(0), "Syntax error."));
     }
-    return Result::fromError(move(errors));
+    return Result::fromError(sequence.location, move(errors));
   }
 }
 
@@ -225,7 +257,7 @@ struct BracketedParserTemplate {
           errors.push_back(errors::error(input.current().location,
                            "Must have exactly one element."));
           input.consume().getErrors(errors);
-          return SubResult::fromError(move(errors));
+          return SubResult::fromError(input.current().location, move(errors));
         }
       } else {
         return nullptr;
@@ -280,33 +312,39 @@ parser::WrapperParserConstructor<ListParserTemplate<
 const ExpressionParser atomicExpression = oneOf(
     // Identifier.
     transform(identifier,
-        [](string&& name) { return Expression::fromVariable(move(name)); }),
+        [](Loc l, string&& name) { return Expression::fromVariable(l, move(name)); }),
 
     // Parenthesized expression or tuple.
     transform(parenthesizedList(generalExpression),
-        [](vector<Expression>&& expressions) {
+        [](Loc l, vector<Expression>&& expressions) {
           if (expressions.size() == 1) {
             return expressions[0];
           } else {
-            return Expression::fromTuple(move(expressions));
+            return Expression::fromTuple(l, move(expressions));
           }
         }),
 
     // Array literal
     transform(bracketedList(generalExpression),
-        [](vector<Expression>&& expressions) {
-          return Expression::fromLiteralArray(move(expressions));
+        [](Loc l, vector<Expression>&& expressions) {
+          return Expression::fromLiteralArray(l, move(expressions));
         }),
 
     // Import
     transform(sequence(keyword("import"), literalString),
-        [](string&& moduleName) { return Expression::fromImport(move(moduleName)); }),
+        [](Loc l, string&& moduleName) {
+          return Expression::fromImport(l, move(moduleName));
+        }),
 
     // Primitive literals
-    transform(literalInt, [](int value) { return Expression::fromLiteralInt(value); }),
-    transform(literalDouble, [](double value) { return Expression::fromLiteralDouble(value); }),
+    transform(literalInt,
+        [](Loc l, int value) { return Expression::fromLiteralInt(l, value); }),
+    transform(literalDouble,
+        [](Loc l, double value) { return Expression::fromLiteralDouble(l, value); }),
     transform(literalString,
-        [](string&& value) { return Expression::fromLiteralString(move(value)); }));
+        [](Loc l, string&& value) {
+          return Expression::fromLiteralString(l, move(value));
+        }));
 
 auto styleAllowance = oneOfKeywordsTo<StyleAllowance>({
     std::make_pair("@", StyleAllowance::IMMUTABLE_REFERENCE),
@@ -315,7 +353,7 @@ auto styleAllowance = oneOfKeywordsTo<StyleAllowance>({
 
 parser::Parser<TokenParserInput, Expression::FunctionCall::Parameter> functionCallParameter =
     transform(sequence(optional(styleAllowance), generalExpression),
-        [](Maybe<StyleAllowance>&& prefix, Expression&& exp) {
+        [](Loc l, Maybe<StyleAllowance>&& prefix, Expression&& exp) {
           StyleAllowance style = prefix ? *prefix : StyleAllowance::VALUE;
           return Expression::FunctionCall::Parameter(style, move(exp));
         });
@@ -323,69 +361,72 @@ parser::Parser<TokenParserInput, Expression::FunctionCall::Parameter> functionCa
 parser::Parser<TokenParserInput, std::function<Expression(Expression&&)>> suffix = oneOf(
     // Member access
     transform(sequence(keyword("."), identifier),
-        [](string&& name) -> std::function<Expression(Expression&&)> {
-          return std::bind([](string& name, Expression&& seed) {
-            return Expression::fromMemberAccess(move(seed), move(name));
+        [](Loc l, string&& name) -> std::function<Expression(Expression&&)> {
+          return std::bind([l](string& name, Expression&& seed) {
+            return Expression::fromMemberAccess(l, move(seed), move(name));
           }, move(name), _1);
         }),
 
     // Function call
     transform(parenthesizedList(functionCallParameter),
-        [](vector<Expression::FunctionCall::Parameter>&& params) ->
+        [](Loc l, vector<Expression::FunctionCall::Parameter>&& params) ->
             std::function<Expression(Expression&&)> {
           return std::bind(
-            [](vector<Expression::FunctionCall::Parameter>& params, Expression&& seed) {
-              return Expression::fromFunctionCall(move(seed), move(params));
+            [l](vector<Expression::FunctionCall::Parameter>& params, Expression&& seed) {
+              return Expression::fromFunctionCall(l, move(seed), move(params));
             }, move(params), _1);
         }),
 
     // Subscript
     transform(bracketed(generalExpression),
-        [](Expression&& key) -> std::function<Expression(Expression&&)> {
-          return std::bind([](Expression& key, Expression&& seed) {
-            return Expression::fromSubscript(move(seed), move(key));
+        [](Loc l, Expression&& key) -> std::function<Expression(Expression&&)> {
+          return std::bind([l](Expression& key, Expression&& seed) {
+            return Expression::fromSubscript(l, move(seed), move(key));
           }, move(key), _1);
         }),
 
     // postincrement / postdecrement
     transform(oneOfKeywords({"++", "--"}),
-        [](string&& op) -> std::function<Expression(Expression&&)> {
-          return std::bind([](string& op, Expression&& seed) {
-            return Expression::fromPostfixOperator(move(seed), move(op));
+        [](Loc l, string&& op) -> std::function<Expression(Expression&&)> {
+          return std::bind([l](string& op, Expression&& seed) {
+            return Expression::fromPostfixOperator(l, move(seed), move(op));
           }, move(op), _1);
         }));
 
 const ExpressionParser suffixedExpression = transform(
     sequence(atomicExpression, repeated(suffix)),
-    [] (Expression&& seed, vector<std::function<Expression(Expression&&)>>&& suffixes) {
+    [] (Loc l, Expression&& seed, vector<std::function<Expression(Expression&&)>>&& suffixes) {
       for (auto& suffix : suffixes) {
-        seed = move(suffix(move(seed)));
+        seed = suffix(move(seed));
+        // Need to fix location to cover the whole expression and not just the suffix.
+        seed.location = l.to(seed.location);
       }
       return move(seed);
     });
 
 const ExpressionParser prefixedExpression =
-    transform(sequence(repeated(oneOfKeywords({"++", "--", "+", "-", "!", "~"})),
+    transform(sequence(repeated(located(oneOfKeywords({"++", "--", "+", "-", "!", "~"}))),
                        suffixedExpression),
-        [](vector<string>&& ops, Expression&& seed) {
-          for (string& op : ops) {
-            seed = Expression::fromPrefixOperator(move(op), move(seed));
+        [](Loc l, vector<Located<string>>&& ops, Expression&& seed) {
+          for (auto& op : ops) {
+            seed = Expression::fromPrefixOperator(op.location.to(l), move(op.value), move(seed));
           }
           return move(seed);
         });
 
 const ExpressionParser binaryOpParser(const ExpressionParser& next,
                                       std::initializer_list<string> ops) {
-  auto multiplicativeSuffix = transform(
+  auto suffix = transform(
       sequence(oneOfKeywords(ops), next),
-      [](string&& op, Expression&& operand) {
+      [](Loc l, string&& op, Expression&& operand) {
         return std::make_pair(move(op), move(operand));
       });
 
-  return transform(sequence(next, repeated(move(multiplicativeSuffix))),
-      [](Expression&& seed, vector<std::pair<string, Expression>>&& ops) {
+  return transform(sequence(next, repeated(move(suffix))),
+      [](Loc l, Expression&& seed, vector<std::pair<string, Expression>>&& ops) {
         for (auto& op : ops) {
-          seed = Expression::fromBinaryOperator(move(op.first), move(seed), move(op.second));
+          seed = Expression::fromBinaryOperator(l.to(op.second.location),
+                                                move(op.first), move(seed), move(op.second));
         }
         return move(seed);
       });
@@ -402,16 +443,16 @@ const ExpressionParser orExpression       = binaryOpParser(andExpression     , {
 
 auto ternarySuffix = transform(
     sequence(keyword("?"), generalExpression, keyword(":"), generalExpression),
-    [](Expression&& trueClause, Expression&& falseClause) {
+    [](Loc l, Expression&& trueClause, Expression&& falseClause) {
       return std::make_pair(move(trueClause), move(falseClause));
     });
 
 const ExpressionParser generalExpression = transform(
     sequence(orExpression, optional(move(ternarySuffix))),
-    [](Expression&& condition, Maybe<std::pair<Expression, Expression>>&& clauses) {
+    [](Loc l, Expression&& condition, Maybe<std::pair<Expression, Expression>>&& clauses) {
       if (clauses) {
         return Expression::fromTernaryOperator(
-            move(condition), move(clauses->first), move(clauses->second));
+            l, move(condition), move(clauses->first), move(clauses->second));
       } else {
         return move(condition);
       }
@@ -445,14 +486,14 @@ auto relationship = oneOfKeywordsTo<Annotation::Relationship>({
     std::make_pair("::", Annotation::Relationship::ANNOTATION)});
 
 auto annotation = transform(sequence(relationship, optional(generalExpression)),
-    [](Annotation::Relationship relationship, Maybe<Expression>&& param) {
+    [](Loc l, Annotation::Relationship relationship, Maybe<Expression>&& param) {
       return Annotation(relationship, move(param));
     });
 
 const DeclarationParser variableDeclaration = transform(
-    sequence(identifier, optional(aliasQualifier), repeated(annotation)),
-    [](string&& name, Maybe<Style>&& style, vector<Annotation>&& annotations) {
-      Declaration result(Declaration::Kind::VARIABLE);
+    sequence(located(identifier), optional(aliasQualifier), repeated(annotation)),
+    [](Loc l, Located<string>&& name, Maybe<Style>&& style, vector<Annotation>&& annotations) {
+      Declaration result(l, Declaration::Kind::VARIABLE);
       result.name = move(name);
       result.style = style ? *style : Style::VALUE;
       result.annotations = move(annotations);
@@ -460,9 +501,9 @@ const DeclarationParser variableDeclaration = transform(
     });
 
 const DeclarationParser annotatedVariableDeclaration = transform(
-    sequence(identifier, optional(aliasQualifier), oneOrMore(annotation)),
-    [](string&& name, Maybe<Style>&& style, vector<Annotation>&& annotations) {
-      Declaration result(Declaration::Kind::VARIABLE);
+    sequence(located(identifier), optional(aliasQualifier), oneOrMore(annotation)),
+    [](Loc l, Located<string>&& name, Maybe<Style>&& style, vector<Annotation>&& annotations) {
+      Declaration result(l, Declaration::Kind::VARIABLE);
       result.name = move(name);
       result.style = style ? *style : Style::VALUE;
       result.annotations = move(annotations);
@@ -470,15 +511,16 @@ const DeclarationParser annotatedVariableDeclaration = transform(
     });
 
 const DeclarationParser complexlyNamedVariableDeclaration = transform(
-    sequence(identifier,
+    sequence(located(identifier),
              parenthesizedList(generalExpression),
              optional(aliasQualifier),
              oneOrMore(annotation)),
-    [] (string&& name,
+    [] (Loc l,
+        Located<string>&& name,
         vector<Expression>&& parameters,
         Maybe<Style>&& style,
         vector<Annotation>&& annotations) {
-      Declaration result(Declaration::Kind::VARIABLE);
+      Declaration result(l, Declaration::Kind::VARIABLE);
       result.name = move(name);
       result.style = style ? *style : Style::VALUE;
       result.annotations = move(annotations);
@@ -487,15 +529,16 @@ const DeclarationParser complexlyNamedVariableDeclaration = transform(
 
 const DeclarationParser functionDeclaration = transform(
     sequence(optional(aliasQualifier),
-             identifier,
+             located(identifier),
              parenthesizedList(parameterDeclaration),
              optional(aliasQualifier),
              repeated(annotation)),
-    [] (Maybe<Style> thisStyle,
-        string&& name,
+    [] (Loc l,
+        Maybe<Style> thisStyle,
+        Located<string>&& name,
         vector<ParameterDeclaration> parameters,
         Maybe<Style> style, vector<Annotation>&& annotations) {
-      Declaration result(Declaration::Kind::FUNCTION);
+      Declaration result(l, Declaration::Kind::FUNCTION);
       result.thisStyle = thisStyle ? *thisStyle : Style::VALUE;
       result.name = move(name);
       result.parameters = move(parameters);
@@ -507,22 +550,21 @@ const DeclarationParser functionDeclaration = transform(
 const DeclarationParser explicitDeclaration = transform(
     sequence(kind,
              optional(aliasQualifier),
-             optional(identifier),
+             optional(located(identifier)),
              optional(parenthesizedList(parameterDeclaration)),
              optional(aliasQualifier),
              repeated(annotation)),
-    [] (Declaration::Kind kind,
+    [] (Loc l,
+        Declaration::Kind kind,
         Maybe<Style>&& thisStyle,
-        Maybe<string>&& name,
+        Maybe<Located<string>>&& name,
         Maybe<vector<ParameterDeclaration>>&& parameters,
         Maybe<Style>&& style,
         vector<Annotation>&& annotations) {
-      Declaration result(kind);
+      Declaration result(l, kind);
       result.thisStyle = thisStyle ? *thisStyle : Style::VALUE;
       result.style = style ? *style : Style::VALUE;
-      if (name) {
-        result.name = move(*name);
-      }
+      result.name = move(name);
       result.parameters = move(parameters);
       result.annotations = move(annotations);
       return move(result);
@@ -581,20 +623,20 @@ const DeclarationParser declarationForParameter = oneOf(
 const ParameterDeclarationParser parameterDeclaration = oneOf(
     transform(sequence(declarationForParameter,
           optional(sequence(keyword("="), generalExpression))),
-      [](Declaration&& declaration, Maybe<Expression>&& definition){
+      [](Loc l, Declaration&& declaration, Maybe<Expression>&& definition){
       if (definition) {
         declaration.definition = Declaration::Definition::fromExpression(move(*definition));
       }
-      return ParameterDeclaration::fromVariable(move(declaration));
+      return ParameterDeclaration::fromVariable(l, move(declaration));
     }),
-    transform(generalExpression, [](Expression&& expression){
-      return ParameterDeclaration::fromConstant(move(expression));
+    transform(generalExpression, [](Loc l, Expression&& expression){
+      return ParameterDeclaration::fromConstant(l, move(expression));
     }));
 
 // A complete assignment statement.
 const DeclarationParser definitionByAssignment = transform(
     sequence(declarationForAssignment, keyword("="), generalExpression),
-    [](Declaration&& declaration, Expression&& expression) {
+    [](Loc l, Declaration&& declaration, Expression&& expression) {
       declaration.definition = Declaration::Definition::fromExpression(move(expression));
       return move(declaration);
     });
@@ -603,70 +645,70 @@ const DeclarationParser definitionByAssignment = transform(
 // Statement parser!
 
 StatementParser expressionStatement = transform(generalExpression,
-    [](Expression&& expression) { return Statement::fromExpression(move(expression)); });
+    [](Loc l, Expression&& expression) { return Statement::fromExpression(l, move(expression)); });
 
 StatementParser blockStatement = transform(endOfInput,
     // Block will be filled in later.
-    []() { return Statement::fromBlock(vector<Statement>()); });
+    [](Loc l) { return Statement::fromBlock(l, vector<Statement>()); });
 
 // Convert a declaration parser into a statement parser.
 StatementParser declarationStatement(const DeclarationParser& parser) {
-  return transform(parser, [](Declaration&& declaration) {
-    return Statement::fromDeclaration(move(declaration));
+  return transform(parser, [](Loc l, Declaration&& declaration) {
+    return Statement::fromDeclaration(l, move(declaration));
   });
 }
 
 StatementParser assignmentStatement = transform(
     sequence(generalExpression, keyword("="), generalExpression),
-    [](Expression&& variable, Expression&& value) {
-      return Statement::fromAssignment(move(variable), move(value));
+    [](Loc l, Expression&& variable, Expression&& value) {
+      return Statement::fromAssignment(l, move(variable), move(value));
     });
 
 StatementParser unionStatement = transform(keyword("union"),
     // Block will be filled in later.
-    []() { return Statement::fromUnion(vector<Declaration>()); });
+    [](Loc l) { return Statement::fromUnion(l, vector<Declaration>()); });
 
 StatementParser ifStatement(const StatementParser& generalStatement) {
   return transform(sequence(keyword("if"), parenthesized(generalExpression), generalStatement),
-      [](Expression&& condition, Statement&& body) {
-        return Statement::fromIf(move(condition), move(body));
+      [](Loc l, Expression&& condition, Statement&& body) {
+        return Statement::fromIf(l, move(condition), move(body));
       });
 }
 
 StatementParser forStatement(const StatementParser& generalStatement) {
   return transform(sequence(keyword("for"), parenthesizedList(declarationForParameter),
                             generalStatement),
-      [](vector<Declaration>&& declarations, Statement&& body) {
-        return Statement::fromFor(move(declarations), move(body));
+      [](Loc l, vector<Declaration>&& declarations, Statement&& body) {
+        return Statement::fromFor(l, move(declarations), move(body));
       });
 }
 
 StatementParser whileStatement(const StatementParser& generalStatement) {
   return transform(sequence(keyword("while"), parenthesized(generalExpression),
                             generalStatement),
-      [](Expression&& condition, Statement&& body) {
-        return Statement::fromWhile(move(condition), move(body));
+      [](Loc l, Expression&& condition, Statement&& body) {
+        return Statement::fromWhile(l, move(condition), move(body));
       });
 }
 
 StatementParser loopStatement(const StatementParser& generalStatement) {
   return transform(sequence(keyword("loop"), optional(identifier), generalStatement),
-      [](Maybe<string>&& name, Statement&& body) {
-        return Statement::fromLoop(move(name), move(body));
+      [](Loc l, Maybe<string>&& name, Statement&& body) {
+        return Statement::fromLoop(l, move(name), move(body));
       });
 }
 
 StatementParser parallelStatement = transform(keyword("parallel"),
     // Block will be filled in later.
-    []() { return Statement::fromParallel(vector<Statement>()); });
+    [](Loc l) { return Statement::fromParallel(l, vector<Statement>()); });
 
 StatementParser returnStatement = transform(
     sequence(keyword("return"), optional(generalExpression)),
-    [](Maybe<Expression>&& expression) {
+    [](Loc l, Maybe<Expression>&& expression) {
       if (expression) {
-        return Statement::fromReturn(move(*expression));
+        return Statement::fromReturn(l, move(*expression));
       } else {
-        return Statement::fromReturn(Expression::fromTuple(vector<Expression>()));
+        return Statement::fromReturn(l, Expression::fromTuple(l.last(0), vector<Expression>()));
       }
     });
 
@@ -678,12 +720,14 @@ auto breakOrContinue = oneOfKeywordsTo<bool>({
 StatementParser breakContinueStatement = transform(
     sequence(breakOrContinue, optional(identifier),
              optional(sequence(keyword("if"), parenthesized(generalExpression)))),
-    [](bool isBreak, Maybe<string>&& loopName, Maybe<Expression>&& condition) {
+    [](Loc l, bool isBreak, Maybe<string>&& loopName, Maybe<Expression>&& condition) {
+      // TODO:  How should location work when an "if" is present?  Should the if statement contain
+      //   the break, or the break contain the if?  Currently they just end up with equal spans.
       Statement result = isBreak ?
-          Statement::fromBreak(move(loopName)) :
-          Statement::fromContinue(move(loopName));
+          Statement::fromBreak(l, move(loopName)) :
+          Statement::fromContinue(l, move(loopName));
       if (condition) {
-        result = Statement::fromIf(move(*condition), move(result));
+        result = Statement::fromIf(l, move(*condition), move(result));
       }
       return result;
     });

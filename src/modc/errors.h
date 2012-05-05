@@ -71,6 +71,21 @@ struct Location {
   }
 };
 
+template <typename T>
+struct Located {
+  Location location;
+  T value;
+
+  Located() {}
+  Located(Location location, T&& value)
+      : location(location), value(move(value)) {}
+  Located(Location location, const T& value)
+      : location(location), value(value) {}
+
+  inline bool operator==(const Located& other) const { return value == other.value; }
+  inline bool operator!=(const Located& other) const { return value != other.value; }
+};
+
 std::ostream& operator<<(std::ostream& os, const Location& location);
 
 class Error {

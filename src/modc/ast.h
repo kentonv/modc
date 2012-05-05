@@ -22,6 +22,7 @@
 
 #include "base/OwnedPtr.h"
 #include "Maybe.h"
+#include "errors.h"
 
 namespace modc {
   namespace errors {
@@ -36,6 +37,8 @@ using std::string;
 using std::vector;
 using ekam::OwnedPtr;
 using ekam::Indirect;
+using errors::Location;
+using errors::Located;
 
 enum class Style {
   VALUE,
@@ -162,8 +165,8 @@ public:
 
       VALUE_TYPE2(Parameter, StyleAllowance, styleAllowance, Expression&&, expression);
 
-      static Parameter fromError(vector<errors::Error> errors) {
-        return Parameter(StyleAllowance::VALUE, Expression::fromError(move(errors)));
+      static Parameter fromError(Location location, vector<errors::Error> errors) {
+        return Parameter(StyleAllowance::VALUE, Expression::fromError(location, move(errors)));
       }
     };
     vector<Parameter> parameters;
@@ -219,38 +222,41 @@ public:
     Lambda lambda;
   };
 
-  static Expression fromError(errors::Error&& error);
-  static Expression fromError(vector<errors::Error>&& errors);
+  Location location;
 
-  static Expression fromVariable(string&& name);
+  static Expression fromError(Location location, errors::Error&& error);
+  static Expression fromError(Location location, vector<errors::Error>&& errors);
 
-  static Expression fromTuple(vector<Expression>&& elements);
+  static Expression fromVariable(Location location, string&& name);
 
-  static Expression fromLiteralInt(int value);
-  static Expression fromLiteralDouble(double value);
-  static Expression fromLiteralString(string&& value);
-  static Expression fromLiteralArray(vector<Expression>&& elements);
+  static Expression fromTuple(Location location, vector<Expression>&& elements);
 
-  static Expression fromBinaryOperator(string&& op, Expression&& left, Expression&& right);
-  static Expression fromPrefixOperator(string&& op, Expression&& exp);
-  static Expression fromPostfixOperator(Expression&& exp, string&& op);
-  static Expression fromTernaryOperator(Expression&& condition, Expression&& trueClause,
-                                        Expression&& falseClause);
+  static Expression fromLiteralInt(Location location, int value);
+  static Expression fromLiteralDouble(Location location, double value);
+  static Expression fromLiteralString(Location location, string&& value);
+  static Expression fromLiteralArray(Location location, vector<Expression>&& elements);
 
-  static Expression fromFunctionCall(Expression&& function,
+  static Expression fromBinaryOperator(Location location, string&& op,
+                                       Expression&& left, Expression&& right);
+  static Expression fromPrefixOperator(Location location, string&& op, Expression&& exp);
+  static Expression fromPostfixOperator(Location location, Expression&& exp, string&& op);
+  static Expression fromTernaryOperator(Location location, Expression&& condition,
+                                        Expression&& trueClause, Expression&& falseClause);
+
+  static Expression fromFunctionCall(Location location, Expression&& function,
                                      vector<FunctionCall::Parameter>&& parameters);
-  static Expression fromSubscript(Expression&& container, Expression&& key);
-  static Expression fromMemberAccess(Expression&& object, string&& member);
+  static Expression fromSubscript(Location location, Expression&& container, Expression&& key);
+  static Expression fromMemberAccess(Location location, Expression&& object, string&& member);
 
-  static Expression fromImport(string&& moduleName);
+  static Expression fromImport(Location location, string&& moduleName);
 
-  static Expression fromLambda(Style style, vector<ParameterDeclaration>&& parameters,
-                               Expression&& body);
+  static Expression fromLambda(Location location, Style style,
+                               vector<ParameterDeclaration>&& parameters, Expression&& body);
 
 private:
   Type type;
 
-  Expression(Type type): type(type) {}
+  Expression(Location location, Type type): location(location), type(type) {}
 };
 
 std::ostream& operator<<(std::ostream& os, const Expression& expression);
@@ -289,17 +295,17 @@ struct Declaration {
     ENUM
   };
 
-  Declaration(Kind kind);
+  Declaration(Location location, Kind kind);
   ~Declaration();
 
   Kind kind;
   Style thisStyle;
   Style style;
 
-  string name;  // empty for implicit constructor, destructor, conversion.
+  Maybe<Located<string>> name;  // omitted for implicit constructor, destructor, conversion.
   Maybe<vector<ParameterDeclaration>> parameters;
   vector<Annotation> annotations;
-  string documentation;
+  Maybe<Located<string>> documentation;
 
   class Definition {
   public:
@@ -328,10 +334,12 @@ struct Declaration {
 
   Maybe<Definition> definition;
 
+  Location location;
+
   bool operator==(const Declaration& other) const;
   bool operator!=(const Declaration& other) const { return !(*this == other); }
 
-  static Declaration fromError(vector<errors::Error>&& errors);
+  static Declaration fromError(Location location, vector<errors::Error>&& errors);
 
   // indent = -1 for non-statement
   void print(std::ostream& os, int indent) const;
@@ -358,9 +366,9 @@ public:
     Declaration variable;
   };
 
-  static ParameterDeclaration fromError(vector<errors::Error>&& errors);
-  static ParameterDeclaration fromConstant(Expression&& expression);
-  static ParameterDeclaration fromVariable(Declaration&& declaration);
+  static ParameterDeclaration fromError(Location location, vector<errors::Error>&& errors);
+  static ParameterDeclaration fromConstant(Location location, Expression&& expression);
+  static ParameterDeclaration fromVariable(Location location, Declaration&& declaration);
 
 private:
   Type type;
@@ -464,36 +472,38 @@ public:
     string comment;
   };
 
-  static Statement fromError(errors::Error&& error);
-  static Statement fromError(vector<errors::Error>&& errors);
+  Location location;
 
-  static Statement fromExpression(Expression&& expression);
-  static Statement fromBlock(vector<Statement>&& block);
+  static Statement fromError(Location location, errors::Error&& error);
+  static Statement fromError(Location location, vector<errors::Error>&& errors);
 
-  static Statement fromDeclaration(Declaration&& declaration);
-  static Statement fromAssignment(Expression&& variable, Expression&& value);
+  static Statement fromExpression(Location location, Expression&& expression);
+  static Statement fromBlock(Location location, vector<Statement>&& block);
 
-  static Statement fromUnion(vector<Declaration>&& declarations);
+  static Statement fromDeclaration(Location location, Declaration&& declaration);
+  static Statement fromAssignment(Location location, Expression&& variable, Expression&& value);
 
-  static Statement fromIf(Expression&& condition, Statement&& body);
-  static Statement fromFor(vector<Declaration>&& range, Statement&& body);
-  static Statement fromWhile(Expression&& condition, Statement&& body);
-  static Statement fromLoop(Maybe<string>&& name, Statement&& body);
-  static Statement fromParallel(vector<Statement>&& statements);
+  static Statement fromUnion(Location location, vector<Declaration>&& declarations);
 
-  static Statement fromReturn(Expression&& value);
-  static Statement fromBreak(Maybe<string>&& loopName);
-  static Statement fromContinue(Maybe<string>&& loopName);
+  static Statement fromIf(Location location, Expression&& condition, Statement&& body);
+  static Statement fromFor(Location location, vector<Declaration>&& range, Statement&& body);
+  static Statement fromWhile(Location location, Expression&& condition, Statement&& body);
+  static Statement fromLoop(Location location, Maybe<string>&& name, Statement&& body);
+  static Statement fromParallel(Location location, vector<Statement>&& statements);
 
-  static Statement fromBlank();
-  static Statement fromComment(string&& text);
+  static Statement fromReturn(Location location, Expression&& value);
+  static Statement fromBreak(Location location, Maybe<string>&& loopName);
+  static Statement fromContinue(Location location, Maybe<string>&& loopName);
+
+  static Statement fromBlank(Location location);
+  static Statement fromComment(Location location, string&& text);
 
   void print(std::ostream& os, int indent) const;
 
 private:
   Type type;
 
-  Statement(Type type): type(type) {}
+  Statement(Location location, Type type): location(location), type(type) {}
 
   void printInner(std::ostream& os, int indent) const;
 };

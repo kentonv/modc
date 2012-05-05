@@ -176,9 +176,10 @@ inline tuple(const Tuple<T, U...>& first, V&& second, W&&... rest) {
 template <typename T>
 T any();
 
-template <typename Func, typename T>
-inline auto applyTuple(Func&& func, T&& t) -> decltype(func(std::forward<T>(t))) {
-  return func(std::forward<T>(t));
+template <typename Func, typename T, typename... Params>
+inline auto applyTuple(Func&& func, T&& t, Params&&... params) ->
+decltype(func(std::forward<Params>(params)..., std::forward<T>(t))) {
+  return func(std::forward<Params>(params)..., std::forward<T>(t));
 }
 
 template <typename Func, typename... Params>
@@ -229,6 +230,8 @@ public:
 
   Iterator getBest() { return std::max(pos, best); }
 
+  Iterator getPosition() { return pos; }
+
 private:
   IteratorInput* parent;
   Iterator pos;
@@ -239,6 +242,7 @@ private:
   IteratorInput& operator=(const IteratorInput&) = delete;
   IteratorInput& operator=(IteratorInput&&) = delete;
 };
+
 
 template <typename T>
 struct ExtractParseFuncType;
@@ -639,13 +643,17 @@ public:
   explicit TransformParser(SubParser&& subParser, Transform&& transform)
       : subParser(move(subParser)), transform(move(transform)) {}
 
+  typedef typename ExtractParserType<SubParser>::InputType InputType;
+  typedef decltype(any<InputType>().getPosition()) Position;
   typedef typename ExtractParserType<SubParser>::OutputType SubOutput;
-  typedef decltype(applyTuple(any<Transform&>(), any<SubOutput&&>())) Output;
+  typedef decltype(applyTuple(any<Transform&>(), any<SubOutput&&>(),
+                              any<std::pair<Position, Position>>())) Output;
 
-  Maybe<Output> operator()(typename ExtractParserType<SubParser>::InputType& input) const {
+  Maybe<Output> operator()(InputType& input) const {
+    auto start = input.getPosition();
     Maybe<SubOutput> subResult = subParser(input);
     if (subResult) {
-      return applyTuple(transform, move(*subResult));
+      return applyTuple(transform, move(*subResult), std::make_pair(start, input.getPosition()));
     } else {
       return nullptr;
     }

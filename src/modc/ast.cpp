@@ -120,100 +120,101 @@ bool Expression::operator==(const Expression& other) const {
 
 // -------------------------------------------------------------------
 
-Expression Expression::fromError(errors::Error&& error) {
-  Expression result(Type::ERROR);
+Expression Expression::fromError(Location location, errors::Error&& error) {
+  Expression result(location, Type::ERROR);
   new (&result.error) vector<errors::Error>;
   result.error.push_back(move(error));
   return result;
 }
-Expression Expression::fromError(vector<errors::Error>&& errors) {
-  Expression result(Type::ERROR);
+Expression Expression::fromError(Location location, vector<errors::Error>&& errors) {
+  Expression result(location, Type::ERROR);
   new (&result.error) vector<errors::Error>(move(errors));
   return result;
 }
 
-Expression Expression::fromVariable(string&& name) {
-  Expression result(Type::VARIABLE);
+Expression Expression::fromVariable(Location location, string&& name) {
+  Expression result(location, Type::VARIABLE);
   new (&result.variable) string(move(name));
   return result;
 }
 
-Expression Expression::fromTuple(vector<Expression>&& elements) {
-  Expression result(Type::TUPLE);
+Expression Expression::fromTuple(Location location, vector<Expression>&& elements) {
+  Expression result(location, Type::TUPLE);
   new (&result.tuple) vector<Expression>(move(elements));
   return result;
 }
 
-Expression Expression::fromLiteralInt(int value) {
-  Expression result(Type::LITERAL_INT);
+Expression Expression::fromLiteralInt(Location location, int value) {
+  Expression result(location, Type::LITERAL_INT);
   new (&result.literalInt) int(value);
   return result;
 }
-Expression Expression::fromLiteralDouble(double value) {
-  Expression result(Type::LITERAL_DOUBLE);
+Expression Expression::fromLiteralDouble(Location location, double value) {
+  Expression result(location, Type::LITERAL_DOUBLE);
   new (&result.literalDouble) double(value);
   return result;
 }
-Expression Expression::fromLiteralString(string&& value) {
-  Expression result(Type::LITERAL_STRING);
+Expression Expression::fromLiteralString(Location location, string&& value) {
+  Expression result(location, Type::LITERAL_STRING);
   new (&result.literalString) string(move(value));
   return result;
 }
-Expression Expression::fromLiteralArray(vector<Expression>&& elements) {
-  Expression result(Type::LITERAL_ARRAY);
+Expression Expression::fromLiteralArray(Location location, vector<Expression>&& elements) {
+  Expression result(location, Type::LITERAL_ARRAY);
   new (&result.literalArray) vector<Expression>(move(elements));
   return result;
 }
 
-Expression Expression::fromBinaryOperator(string&& op, Expression&& left, Expression&& right) {
-  Expression result(Type::BINARY_OPERATOR);
+Expression Expression::fromBinaryOperator(Location location, string&& op,
+                                          Expression&& left, Expression&& right) {
+  Expression result(location, Type::BINARY_OPERATOR);
   new (&result.binaryOperator) BinaryOperator(move(op), move(left), move(right));
   return result;
 }
-Expression Expression::fromPrefixOperator(string&& op, Expression&& exp) {
-  Expression result(Type::PREFIX_OPERATOR);
+Expression Expression::fromPrefixOperator(Location location, string&& op, Expression&& exp) {
+  Expression result(location, Type::PREFIX_OPERATOR);
   new (&result.prefixOperator) PrefixOperator(move(op), move(exp));
   return result;
 }
-Expression Expression::fromPostfixOperator(Expression&& exp, string&& op) {
-  Expression result(Type::POSTFIX_OPERATOR);
+Expression Expression::fromPostfixOperator(Location location, Expression&& exp, string&& op) {
+  Expression result(location, Type::POSTFIX_OPERATOR);
   new (&result.postfixOperator) PostfixOperator(move(exp), move(op));
   return result;
 }
-Expression Expression::fromTernaryOperator(Expression&& condition, Expression&& trueClause,
-                                           Expression&& falseClause) {
-  Expression result(Type::TERNARY_OPERATOR);
+Expression Expression::fromTernaryOperator(Location location, Expression&& condition,
+                                           Expression&& trueClause, Expression&& falseClause) {
+  Expression result(location, Type::TERNARY_OPERATOR);
   new (&result.ternaryOperator) TernaryOperator(
       move(condition), move(trueClause), move(falseClause));
   return result;
 }
 
-Expression Expression::fromFunctionCall(Expression&& function,
+Expression Expression::fromFunctionCall(Location location, Expression&& function,
                                         vector<FunctionCall::Parameter>&& parameters) {
-  Expression result(Type::FUNCTION_CALL);
+  Expression result(location, Type::FUNCTION_CALL);
   new (&result.functionCall) FunctionCall(move(function), move(parameters));
   return result;
 }
-Expression Expression::fromSubscript(Expression&& container, Expression&& key) {
-  Expression result(Type::SUBSCRIPT);
+Expression Expression::fromSubscript(Location location, Expression&& container, Expression&& key) {
+  Expression result(location, Type::SUBSCRIPT);
   new (&result.subscript) Subscript(move(container), move(key));
   return result;
 }
-Expression Expression::fromMemberAccess(Expression&& object, string&& member) {
-  Expression result(Type::MEMBER_ACCESS);
+Expression Expression::fromMemberAccess(Location location, Expression&& object, string&& member) {
+  Expression result(location, Type::MEMBER_ACCESS);
   new (&result.memberAccess) MemberAccess(move(object), move(member));
   return result;
 }
 
-Expression Expression::fromImport(string&& moduleName) {
-  Expression result(Type::IMPORT);
+Expression Expression::fromImport(Location location, string&& moduleName) {
+  Expression result(location, Type::IMPORT);
   new (&result.import) string(move(moduleName));
   return result;
 }
 
-Expression Expression::fromLambda(Style style, vector<ParameterDeclaration>&& parameters,
-                                  Expression&& body) {
-  Expression result(Type::LAMBDA);
+Expression Expression::fromLambda(Location location, Style style,
+                                  vector<ParameterDeclaration>&& parameters, Expression&& body) {
+  Expression result(location, Type::LAMBDA);
   new (&result.lambda) Lambda(style, move(parameters), move(body));
   return result;
 }
@@ -221,11 +222,12 @@ Expression Expression::fromLambda(Style style, vector<ParameterDeclaration>&& pa
 // =======================================================================================
 // Declaration
 
-Declaration::Declaration(Kind kind): kind(kind), thisStyle(Style::VALUE), style(Style::VALUE) {}
+Declaration::Declaration(Location location, Kind kind)
+    : kind(kind), thisStyle(Style::VALUE), style(Style::VALUE), location(location) {}
 Declaration::~Declaration() {}
 
 bool Declaration::operator==(const Declaration& other) const {
-  static_assert(sizeof(Declaration) == 152, "Please update Declaration::operator==.");
+  static_assert(sizeof(Declaration) == 200, "Please update Declaration::operator==.");
   return kind == other.kind &&
          thisStyle == other.thisStyle &&
          style == other.style &&
@@ -236,9 +238,9 @@ bool Declaration::operator==(const Declaration& other) const {
          definition == other.definition;
 }
 
-Declaration Declaration::fromError(vector<errors::Error>&& errors) {
-  Declaration result(Kind::ERROR);
-  result.definition = Definition::fromExpression(Expression::fromError(move(errors)));
+Declaration Declaration::fromError(Location location, vector<errors::Error>&& errors) {
+  Declaration result(location, Kind::ERROR);
+  result.definition = Definition::fromExpression(Expression::fromError(location, move(errors)));
   return result;
 }
 
@@ -376,16 +378,19 @@ bool ParameterDeclaration::operator==(const ParameterDeclaration& other) const {
   return false;
 }
 
-ParameterDeclaration ParameterDeclaration::fromError(vector<errors::Error>&& errors) {
+ParameterDeclaration ParameterDeclaration::fromError(Location location,
+                                                     vector<errors::Error>&& errors) {
   // TODO:  Maybe there should be an ERROR Type.
-  return fromConstant(Expression::fromError(move(errors)));
+  return fromConstant(location, Expression::fromError(location, move(errors)));
 }
-ParameterDeclaration ParameterDeclaration::fromConstant(Expression&& expression) {
+ParameterDeclaration ParameterDeclaration::fromConstant(Location location,
+                                                        Expression&& expression) {
   ParameterDeclaration result(Type::CONSTANT);
   new (&result.constant) Expression(move(expression));
   return result;
 }
-ParameterDeclaration ParameterDeclaration::fromVariable(Declaration&& declaration) {
+ParameterDeclaration ParameterDeclaration::fromVariable(Location location,
+                                                        Declaration&& declaration) {
   ParameterDeclaration result(Type::VARIABLE);
   new (&result.variable) Declaration(move(declaration));
   return result;
@@ -487,93 +492,93 @@ bool Statement::operator==(const Statement& other) const {
 
 // -------------------------------------------------------------------
 
-Statement Statement::fromError(errors::Error&& error) {
-  Statement result(Type::ERROR);
+Statement Statement::fromError(Location location, errors::Error&& error) {
+  Statement result(location, Type::ERROR);
   new (&result.error) vector<errors::Error>;
   result.error.push_back(move(error));
   return result;
 }
-Statement Statement::fromError(vector<errors::Error>&& errors) {
-  Statement result(Type::ERROR);
+Statement Statement::fromError(Location location, vector<errors::Error>&& errors) {
+  Statement result(location, Type::ERROR);
   new (&result.error) vector<errors::Error>(move(errors));
   return result;
 }
 
-Statement Statement::fromExpression(Expression&& expression) {
-  Statement result(Type::EXPRESSION);
+Statement Statement::fromExpression(Location location, Expression&& expression) {
+  Statement result(location, Type::EXPRESSION);
   new (&result.expression) Expression(move(expression));
   return result;
 }
-Statement Statement::fromBlock(vector<Statement>&& block) {
-  Statement result(Type::BLOCK);
+Statement Statement::fromBlock(Location location, vector<Statement>&& block) {
+  Statement result(location, Type::BLOCK);
   new (&result.block) vector<Statement>(move(block));
   return result;
 }
 
-Statement Statement::fromDeclaration(Declaration&& declaration) {
-  Statement result(Type::DECLARATION);
+Statement Statement::fromDeclaration(Location location, Declaration&& declaration) {
+  Statement result(location, Type::DECLARATION);
   new (&result.declaration) Declaration(move(declaration));
   return result;
 }
-Statement Statement::fromAssignment(Expression&& variable, Expression&& value) {
-  Statement result(Type::ASSIGNMENT);
+Statement Statement::fromAssignment(Location location, Expression&& variable, Expression&& value) {
+  Statement result(location, Type::ASSIGNMENT);
   new (&result.assignment) Assignment(move(variable), move(value));
   return result;
 }
 
-Statement Statement::fromUnion(vector<Declaration>&& declarations) {
-  Statement result(Type::UNION);
+Statement Statement::fromUnion(Location location, vector<Declaration>&& declarations) {
+  Statement result(location, Type::UNION);
   new (&result.union_) vector<Declaration>(move(declarations));
   return result;
 }
 
-Statement Statement::fromIf(Expression&& condition, Statement&& body) {
-  Statement result(Type::IF);
+Statement Statement::fromIf(Location location, Expression&& condition, Statement&& body) {
+  Statement result(location, Type::IF);
   new (&result.if_) If(move(condition), move(body));
   return result;
 }
-Statement Statement::fromFor(vector<Declaration>&& range, Statement&& body) {
-  Statement result(Type::FOR);
+Statement Statement::fromFor(Location location, vector<Declaration>&& range, Statement&& body) {
+  Statement result(location, Type::FOR);
   new (&result.for_) For(move(range), move(body));
   return result;
 }
-Statement Statement::fromWhile(Expression&& condition, Statement&& body) {
-  Statement result(Type::WHILE);
+Statement Statement::fromWhile(Location location, Expression&& condition, Statement&& body) {
+  Statement result(location, Type::WHILE);
   new (&result.while_) While(move(condition), move(body));
   return result;
 }
-Statement Statement::fromLoop(Maybe<string>&& name, Statement&& body) {
-  Statement result(Type::LOOP);
+Statement Statement::fromLoop(Location location, Maybe<string>&& name, Statement&& body) {
+  Statement result(location, Type::LOOP);
   new (&result.loop) Loop(move(name), move(body));
   return result;
 }
-Statement Statement::fromParallel(vector<Statement>&& statements) {
-  Statement result(Type::PARALLEL);
+Statement Statement::fromParallel(Location location, vector<Statement>&& statements) {
+  Statement result(location, Type::PARALLEL);
   new (&result.parallel) vector<Statement>(move(statements));
   return result;
 }
 
-Statement Statement::fromReturn(Expression&& value) {
-  Statement result(Type::RETURN);
+Statement Statement::fromReturn(Location location, Expression&& value) {
+  Statement result(location, Type::RETURN);
   new (&result.return_) Expression(move(value));
   return result;
 }
-Statement Statement::fromBreak(Maybe<string>&& loopName) {
-  Statement result(Type::BREAK);
+Statement Statement::fromBreak(Location location, Maybe<string>&& loopName) {
+  Statement result(location, Type::BREAK);
   new (&result.break_) Maybe<string>(move(loopName));
   return result;
 }
-Statement Statement::fromContinue(Maybe<string>&& loopName) {
-  Statement result(Type::CONTINUE);
+Statement Statement::fromContinue(Location location, Maybe<string>&& loopName) {
+  Statement result(location, Type::CONTINUE);
   new (&result.continue_) Maybe<string>(move(loopName));
   return result;
 }
 
-Statement Statement::fromBlank() {
-  return Statement(Type::BLANK);
+Statement Statement::fromBlank(Location location) {
+  return Statement(location, Type::BLANK);
 }
-Statement Statement::fromComment(string&& text) {
-  Statement result(Type::COMMENT);
+Statement Statement::fromComment(Location location, string&& text) {
+  Statement result(location, Type::COMMENT);
   new (&result.comment) string(move(text));
   return result;
 }
@@ -734,7 +739,10 @@ void Declaration::print(std::ostream& os, int indent) const {
     case Kind::ENUM:        os << "enum "; break;
   }
 
-  os << thisStyle << name;
+  os << thisStyle;
+  if (name) {
+    os << name->value;
+  }
   if (parameters) {
     os << "(" << *parameters << ")";
   }
