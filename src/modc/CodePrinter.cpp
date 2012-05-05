@@ -37,6 +37,7 @@ CodePrinter::CodePrinter(string::size_type lineWidth)
 CodePrinter::~CodePrinter() {}
 
 void CodePrinter::startNewLine(int leadingSpaceCount) {
+  flushUnbreakable();
   buffer.erase(buffer.find_last_not_of(' ') + 1);
   buffer += '\n';
   buffer.append(leadingSpaceCount, ' ');
@@ -59,12 +60,12 @@ void CodePrinter::enterBlock() {
 
 void CodePrinter::leaveBlock() {
   --indentLevel;
-  nextStatement();
-}
-
-void CodePrinter::requireSpace() {
-  if (buffer.size() > lineStart && buffer.back() != ' ') {
-    buffer.push_back(' ');
+  if (buffer.size() == lineStart) {
+    if (indentLevel >= 0) {
+      buffer.erase(buffer.size() - INDENT_WIDTH);
+    }
+  } else {
+    nextStatement();
   }
 }
 
@@ -89,34 +90,51 @@ void CodePrinter::flushUnbreakable() {
 
   buffer += unbreakableText;
   column += length;
+  unbreakableText.clear();
 }
 
-void CodePrinter::write(const string& text) {
+CodePrinter& CodePrinter::operator<<(const string& text) {
   if (nextWriteCanBreak) flushUnbreakable();
 
   unbreakableText += text;
 
   nextWriteCanBreak = true;
+
+  return *this;
 }
 
-void CodePrinter::writePrefix(const string& text) {
-  if (nextWriteCanBreak) flushUnbreakable();
+namespace {
 
-  unbreakableText += text;
-
-  nextWriteCanBreak = false;
+inline void ensureTrailingSpace(string& str) {
+  if (str.back() != ' ') {
+    str.push_back(' ');
+  }
 }
 
-void CodePrinter::writeSuffix(const string& text) {
-  unbreakableText += text;
-
-  nextWriteCanBreak = true;
+inline void ensureNoTrailingSpace(string& str) {
+  if (str.back() == ' ') {
+    str.pop_back();
+  }
 }
 
-void CodePrinter::writeInfix(const string& text) {
-  unbreakableText += text;
+}
 
-  nextWriteCanBreak = false;
+CodePrinter& CodePrinter::operator<<(Space) {
+  if (!unbreakableText.empty()) {
+    ensureTrailingSpace(unbreakableText);
+  } else if (buffer.size() > lineStart) {
+    ensureTrailingSpace(buffer);
+  }
+  return *this;
+}
+
+CodePrinter& CodePrinter::operator<<(NoSpace) {
+  if (!unbreakableText.empty()) {
+    ensureNoTrailingSpace(unbreakableText);
+  } else if (buffer.size() > lineStart) {
+    ensureNoTrailingSpace(buffer);
+  }
+  return *this;
 }
 
 }  // namespace modc

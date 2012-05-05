@@ -23,24 +23,44 @@ namespace modc {
 
 using std::string;
 
+class Glue {};
+static Glue glue __attribute__((unused));
+class EndStatement {};
+static EndStatement endStatement __attribute__((unused));
+class StartBlock {};
+static StartBlock startBlock __attribute__((unused));
+class EndBlock {};
+static EndBlock endBlock __attribute__((unused));
+class Space {};
+static Space space __attribute__((unused));
+class NoSpace {};
+static NoSpace noSpace __attribute__((unused));
+
 class CodePrinter {
 public:
   CodePrinter(string::size_type lineWidth);
   ~CodePrinter();
 
-  const string& getText() { return buffer; }
+  const string& getText() { flushUnbreakable(); return buffer; }
 
+  // Begin new statement.
   void nextStatement();
+
+  // Begin new line of current statement (usually automatic).
   void wrapLine();
+
+  // Modify indent level and call nextStatement().
   void enterBlock();
   void leaveBlock();
 
-  void requireSpace();
+  CodePrinter& operator<<(const string& text);
+  CodePrinter& operator<<(Glue) { nextWriteCanBreak = false; return *this; }
+  CodePrinter& operator<<(Space);
+  CodePrinter& operator<<(NoSpace);
 
-  void write(const string& text);
-  void writePrefix(const string& text);
-  void writeSuffix(const string& text);
-  void writeInfix(const string& text);
+  CodePrinter& operator<<(EndStatement) { nextStatement(); return *this; }
+  CodePrinter& operator<<(StartBlock) { enterBlock(); return *this; }
+  CodePrinter& operator<<(EndBlock) { leaveBlock(); return *this; }
 
 private:
   const string::size_type lineWidth;

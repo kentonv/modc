@@ -20,6 +20,7 @@
 #include "astParser.h"
 #include "ast.h"
 #include "errors.h"
+#include "CodePrinter.h"
 
 using std::cout;
 using std::cerr;
@@ -51,9 +52,13 @@ int main(int argc, char* argv[]) {
 
   cout << "=================================== AST ===================================" << endl;
 
+  modc::CodePrinter printer(100);
+
   for (auto& tokenStatement: tokenStatements) {
-    std::cout << modc::astParser::parseImperative(tokenStatement);
+    printer << modc::astParser::parseImperative(tokenStatement);
   }
+
+  std::cout << printer.getText() << endl;
 
   return 0;
 }

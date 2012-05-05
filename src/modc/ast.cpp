@@ -25,6 +25,7 @@
 #include "errors.h"
 #include "parser.h"
 #include "base/Debug.h"
+#include "CodePrinter.h"
 
 namespace modc {
 namespace ast {
@@ -590,341 +591,328 @@ namespace {
 
 // TODO:  Put this somewhere more general?
 template <typename T>
-std::ostream& operator<<(std::ostream& os, const Indirect<T>& value) {
-  return os << *value;
-}
-
-struct Indent {
-  int size;
-
-  Indent(int size): size(size) {}
-};
-
-std::ostream& operator<<(std::ostream& os, Indent indent) {
-  for (int i = 0; i < indent.size; i++) {
-    os << "  ";
-  }
-  return os;
-}
-
-}  // namespace
-
-std::ostream& operator<<(std::ostream& os, Style style) {
-  switch (style) {
-    case Style::VALUE: break;
-    case Style::IMMUTABLE_REFERENCE: os << "@"; break;
-    case Style::MUTABLE_REFERENCE:   os << "&"; break;
-    case Style::ENTANGLED_REFERENCE: os << "@&"; break;
-    case Style::HEAP_VALUE:          os << "*"; break;
-    case Style::CONSTANT:            os << "^"; break;
-  }
-  return os;
-}
-
-std::ostream& operator<<(std::ostream& os, StyleAllowance allowance) {
-  switch (allowance) {
-    case StyleAllowance::VALUE: break;
-    case StyleAllowance::IMMUTABLE_REFERENCE: os << "@"; break;
-    case StyleAllowance::MUTABLE_REFERENCE:   os << "&"; break;
-    case StyleAllowance::MOVE:                os << "<-"; break;
-  }
-  return os;
+CodePrinter& operator<<(CodePrinter& printer, const Indirect<T>& value) {
+  return printer << *value;
 }
 
 template <typename T>
-std::ostream& operator<<(std::ostream& os, const vector<T>& vec) {
+CodePrinter& operator<<(CodePrinter& printer, const vector<T>& vec) {
   bool first = true;
   for (auto& element: vec) {
     if (first) {
       first = false;
     } else {
-      os << ", ";
+      printer << glue << ", ";
     }
-    os << element;
+    printer << element;
   }
-  return os;
+  return printer;
 }
 
-std::ostream& operator<<(std::ostream& os, const Expression::FunctionCall::Parameter& parameter) {
-  return os << parameter.styleAllowance << parameter.expression;
+CodePrinter& operator<<(CodePrinter& printer, const errors::Error& error) {
+  return printer << "(" << glue << error.message << glue << ")";
 }
 
-std::ostream& operator<<(std::ostream& os, const Expression& expression) {
-  switch (expression.getType()) {
+}  // namespace
+
+CodePrinter& operator<<(CodePrinter& printer, Style style) {
+  switch (style) {
+    case Style::VALUE:               printer << ""; break;
+    case Style::IMMUTABLE_REFERENCE: printer << "@"; break;
+    case Style::MUTABLE_REFERENCE:   printer << "&"; break;
+    case Style::ENTANGLED_REFERENCE: printer << "@&"; break;
+    case Style::HEAP_VALUE:          printer << "*"; break;
+    case Style::CONSTANT:            printer << "^"; break;
+  }
+  return printer;
+}
+
+CodePrinter& operator<<(CodePrinter& printer, StyleAllowance allowance) {
+  switch (allowance) {
+    case StyleAllowance::VALUE:               printer << ""; break;
+    case StyleAllowance::IMMUTABLE_REFERENCE: printer << "@"; break;
+    case StyleAllowance::MUTABLE_REFERENCE:   printer << "&"; break;
+    case StyleAllowance::MOVE:                printer << "<-"; break;
+  }
+  return printer;
+}
+
+CodePrinter& operator<<(CodePrinter& printer,
+                        const Expression::FunctionCall::Parameter& parameter) {
+  return printer << parameter.styleAllowance << parameter.expression;
+}
+
+CodePrinter& operator<<(CodePrinter& printer, const Expression& exp) {
+  switch (exp.getType()) {
     case Expression::Type::ERROR:
-      os << "{{EXPRESSION ERROR: " << expression.error << "}}";
+      printer << "{{EXPRESSION ERROR: " << exp.error << glue << "}}";
       break;
 
     case Expression::Type::VARIABLE:
-      os << expression.variable;
+      printer << exp.variable;
       break;
     case Expression::Type::TUPLE:
-      os << "(" << expression.tuple << ")";
+      printer << "(" << glue << exp.tuple << glue << ")";
       break;
 
     case Expression::Type::LITERAL_INT:
-      os << expression.literalInt;
+      printer << google::protobuf::SimpleItoa(exp.literalInt);
       break;
     case Expression::Type::LITERAL_DOUBLE: {
-      string result = google::protobuf::SimpleDtoa(expression.literalDouble);
+      string result = google::protobuf::SimpleDtoa(exp.literalDouble);
       if (result.find_first_of(".eE") == string::npos) {
         result += ".0";
       }
-      os << result;
+      printer << result;
       break;
     }
     case Expression::Type::LITERAL_STRING:
-      os << '\"' << google::protobuf::CEscape(expression.literalString) << '\"';
+      // TODO:  Split on line breaks.
+      printer << "\"" << glue << google::protobuf::CEscape(exp.literalString) << glue << "\"";
       break;
     case Expression::Type::LITERAL_ARRAY:
-      os << "[" << expression.literalArray << "]";
+      printer << "[" << glue << exp.literalArray << glue << "]";
       break;
 
     case Expression::Type::BINARY_OPERATOR:
-      os << "(" << expression.binaryOperator.left
-         << " " << expression.binaryOperator.op
-         << " " << expression.binaryOperator.right
-         << ")";
+      printer << "(" << glue << exp.binaryOperator.left
+              << " " << exp.binaryOperator.op
+              << " " << exp.binaryOperator.right
+              << glue << ")";
       break;
     case Expression::Type::PREFIX_OPERATOR:
-      os << "(" << expression.prefixOperator.op
-         << " " << expression.prefixOperator.operand
-         << ")";
+      printer << "(" << glue << exp.prefixOperator.op
+              << glue << exp.prefixOperator.operand
+              << glue << ")";
       break;
     case Expression::Type::POSTFIX_OPERATOR:
-      os << "(" << expression.postfixOperator.operand
-         << " " << expression.postfixOperator.op
-         << ")";
+      printer << "(" << glue << exp.postfixOperator.operand
+              << glue << exp.postfixOperator.op
+              << ")";
       break;
     case Expression::Type::TERNARY_OPERATOR:
-      os << "(" << expression.ternaryOperator.condition
-         << " ? " << expression.ternaryOperator.trueClause
-         << " : " << expression.ternaryOperator.falseClause
-         << ")";
+      printer << "(" << glue << exp.ternaryOperator.condition
+              << " ? " << exp.ternaryOperator.trueClause
+              << " : " << exp.ternaryOperator.falseClause
+              << glue << ")";
       break;
 
     case Expression::Type::FUNCTION_CALL: {
-      os << expression.functionCall.function
-         << "(" << expression.functionCall.parameters << ")";
+      printer << exp.functionCall.function << glue
+              << "(" << exp.functionCall.parameters << glue << ")";
       break;
     }
     case Expression::Type::SUBSCRIPT:
-      os << expression.subscript.container
-         << "[" << expression.subscript.subscript << "]";
+      printer << exp.subscript.container << glue
+              << "[" << exp.subscript.subscript << glue << "]";
       break;
     case Expression::Type::MEMBER_ACCESS:
-      os << expression.memberAccess.object << "." << expression.memberAccess.member;
+      printer << exp.memberAccess.object << "." << glue << exp.memberAccess.member;
       break;
 
     case Expression::Type::IMPORT:
-      os << "import \"" << google::protobuf::CEscape(expression.import) << '\"';
+      printer << "import \"" << glue << google::protobuf::CEscape(exp.import) << glue << "\"";
       break;
 
     case Expression::Type::LAMBDA:
-      os << "((" << expression.lambda.parameters << ")"
-         << expression.lambda.style << " => " << expression.lambda.body << ")";
+      printer << "((" << glue << exp.lambda.parameters << glue << ")" << glue
+              << exp.lambda.style << glue << " => " << exp.lambda.body << glue << ")";
       break;
   }
 
-  return os;
+  return printer;
 }
 
-void Declaration::print(std::ostream& os, int indent) const {
+void Declaration::print(CodePrinter& printer, bool asStatement) const {
   switch (kind) {
     case Kind::ERROR:
-      os << "{{DECLARATION ERROR: " << definition->expression << "}}";
-      if (indent != -1) {
-        os << ";\n";
+      printer << "{{DECLARATION ERROR: " << definition->expression.error << glue << "}}";
+      if (asStatement) {
+        printer << glue << ";" << endStatement;
       }
       return;
 
-    case Kind::VARIABLE: if (indent != -1) { os << "var "; } break;
-    case Kind::ENVIRONMENT: os << "env "; break;
+    case Kind::VARIABLE: if (asStatement) { printer << "var "; } break;
+    case Kind::ENVIRONMENT: printer << "env "; break;
 
-    case Kind::FUNCTION:    os << "func "; break;
-    case Kind::CONSTRUCTOR: os << "constructor "; break;
-    case Kind::DESTRUCTOR:  os << "destructor "; break;
-    case Kind::CONVERSION:  os << "conversion"; break;
-    case Kind::DEFAULT_CONVERSION: os << "default conversion "; break;
+    case Kind::FUNCTION:    printer << "func "; break;
+    case Kind::CONSTRUCTOR: printer << "constructor "; break;
+    case Kind::DESTRUCTOR:  printer << "destructor "; break;
+    case Kind::CONVERSION:  printer << "conversion"; break;
+    case Kind::DEFAULT_CONVERSION: printer << "default conversion "; break;
 
-    case Kind::CLASS:       os << "class "; break;
-    case Kind::INTERFACE:   os << "interface "; break;
-    case Kind::ENUM:        os << "enum "; break;
+    case Kind::CLASS:       printer << "class "; break;
+    case Kind::INTERFACE:   printer << "interface "; break;
+    case Kind::ENUM:        printer << "enum "; break;
   }
 
-  os << thisStyle;
+  printer << thisStyle << glue;
   if (name) {
-    os << name->value;
+    printer << name->value;
   }
   if (parameters) {
-    os << "(" << *parameters << ")";
+    printer << glue << "(" << *parameters << glue << ")";
   }
-  os << style;
+  printer << glue << style;
 
   for (auto& ann: annotations) {
     switch (ann.relationship) {
-      case Annotation::Relationship::IS_A: os << ":"; break;
-      case Annotation::Relationship::SUBCLASS_OF: os << " <:"; break;
-      case Annotation::Relationship::SUPERCLASS_OF: os << " :>"; break;
-      case Annotation::Relationship::ANNOTATION: os << " ::"; break;
+      case Annotation::Relationship::IS_A: printer << ": "; break;
+      case Annotation::Relationship::SUBCLASS_OF: printer << space << "<: "; break;
+      case Annotation::Relationship::SUPERCLASS_OF: printer << space << ":> "; break;
+      case Annotation::Relationship::ANNOTATION: printer << space << ":: "; break;
     }
 
     if (ann.param) {
-      os << " " << *ann.param;
+      printer << glue << *ann.param;
     }
   }
 
   if (definition) {
     switch (definition->getType()) {
       case Declaration::Definition::Type::EXPRESSION:
-        os << " = " << definition->expression;
-        if (indent != -1) {
-          os << ";\n";
+        printer << space << glue << "= " << definition->expression;
+        if (asStatement) {
+          printer << ";" << endStatement;
         }
         break;
       case Declaration::Definition::Type::BLOCK:
-        if (indent == -1) {
-          os << "{ ... }";
-        } else {
-          os << " {\n";
+        if (asStatement) {
+          printer << " {" << startBlock;
           for (auto& statement: definition->block) {
-            statement.print(os, indent + 1);
+            printer << statement;
           }
-          os << Indent(indent) << "}\n";
+          printer << endBlock << "}" << endStatement;
+        } else {
+          DEBUG_ERROR << "Printing block declaration as non-statement.";
+          printer << "{ ... }";
         }
         break;
     }
   } else {
-    if (indent != -1) {
-      os << ";\n";
+    if (asStatement) {
+      printer << ";" << endStatement;
     }
   }
 }
 
-std::ostream& operator<<(std::ostream& os, const ParameterDeclaration& param) {
+CodePrinter& operator<<(CodePrinter& printer, const ParameterDeclaration& param) {
   switch (param.getType()) {
     case ParameterDeclaration::Type::CONSTANT:
-      os << param.constant;
+      printer << param.constant;
       break;
     case ParameterDeclaration::Type::VARIABLE:
-      param.variable.print(os, -1);
+      param.variable.print(printer, false);
       break;
   }
 
-  return os;
+  return printer;
 }
 
-void Statement::print(std::ostream& os, int indent) const {
-  os << Indent(indent);
-  printInner(os, indent);
-}
-
-void Statement::printInner(std::ostream& os, int indent) const {
-  switch (getType()) {
-    case Type::ERROR:
-      os << "{{STATEMENT ERROR: " << error << "}};\n";
+CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
+  switch (stmt.getType()) {
+    case Statement::Type::ERROR:
+      printer << "{{STATEMENT ERROR: " << stmt.error << glue << "}};" << endStatement;
       break;
 
-    case Type::EXPRESSION:
-      os << expression << ";\n";
+    case Statement::Type::EXPRESSION:
+      printer << stmt.expression << glue << ";" << endStatement;
       break;
-    case Type::BLOCK:
-      os << "{\n";
-      for (auto& statement: block) {
-        statement.print(os, indent + 1);
+    case Statement::Type::BLOCK:
+      printer << "{" << startBlock;
+      for (auto& statement: stmt.block) {
+        printer << statement;
       }
-      os << Indent(indent) << "}\n";
+      printer << endBlock << "}" << endStatement;
       break;
 
-    case Type::DECLARATION:
-      declaration.print(os, indent);
+    case Statement::Type::DECLARATION:
+      stmt.declaration.print(printer, true);
       break;
-    case Type::ASSIGNMENT:
-      os << assignment.variable << " = " << assignment.value << ";\n";
-      break;
-
-    case Type::UNION:
-      os << "union {\n";
-      for (auto& decl: union_) {
-        decl.print(os, indent + 1);
-      }
-      os << Indent(indent) << "}\n";
+    case Statement::Type::ASSIGNMENT:
+      printer << stmt.assignment.variable << glue << " = " << stmt.assignment.value << glue << ";"
+              << endStatement;
       break;
 
-    case Type::IF:
-      os << "if (" << if_.condition << ") ";
-      if_.body->printInner(os, indent);
-      break;
-    case Type::ELSE:
-      os << "else ";
-      else_->printInner(os, indent);
-      break;
-    case Type::FOR:
-      os << "for (" << for_.range << ") ";
-      for_.body->printInner(os, indent);
-      break;
-    case Type::WHILE:
-      os << "while (" << while_.condition << ") ";
-      while_.body->printInner(os, indent);
-      break;
-    case Type::LOOP:
-      os << "loop ";
-      if (loop.name) {
-        os << *loop.name << " ";
+    case Statement::Type::UNION:
+      printer << "union {" << startBlock;
+      for (auto& decl: stmt.union_) {
+        decl.print(printer, true);
       }
-      loop.body->printInner(os, indent);
-      break;
-    case Type::PARALLEL:
-      os << "parallel {\n";
-      for (auto& statement: parallel) {
-        statement.print(os, indent + 1);
-      }
-      os << Indent(indent) << "}\n";
+      printer << endBlock << "}" << endStatement;
       break;
 
-    case Type::RETURN:
-      os << "return";
-      if (return_.getType() != Expression::Type::TUPLE ||
-          return_.tuple.size() != 0) {
-        os << " " << return_;
-      }
-      os << ";\n";
+    case Statement::Type::IF:
+      printer << "if (" << glue << stmt.if_.condition << glue << ") " << stmt.if_.body;
       break;
-    case Type::BREAK:
-      os << "break";
-      if (break_) {
-        os << " " << *break_;
-      }
-      os << ";\n";
+    case Statement::Type::ELSE:
+      printer << "else " << stmt.else_;
       break;
-    case Type::CONTINUE:
-      os << "continue";
-      if (continue_) {
-        os << " " << *continue_;
+    case Statement::Type::FOR:
+      printer << "for (" << glue << stmt.for_.range << glue << ") " << stmt.for_.body;
+      break;
+    case Statement::Type::WHILE:
+      printer << "while (" << glue << stmt.while_.condition << glue << ") " << stmt.while_.body;
+      break;
+    case Statement::Type::LOOP:
+      printer << "loop ";
+      if (stmt.loop.name) {
+        printer << glue << *stmt.loop.name << space;
       }
-      os << ";\n";
+      printer << stmt.loop.body;
+      break;
+    case Statement::Type::PARALLEL:
+      printer << "parallel {" << startBlock;
+      for (auto& statement: stmt.parallel) {
+        printer << statement;
+      }
+      printer << endBlock << "}" << endStatement;
       break;
 
-    case Type::BLANK:
-      os << "\n";
+    case Statement::Type::RETURN:
+      printer << "return";
+      if (stmt.return_.getType() != Expression::Type::TUPLE ||
+          stmt.return_.tuple.size() != 0) {
+        printer << space << glue << stmt.return_;
+      }
+      printer << glue << ";" << endStatement;
       break;
-    case Type::COMMENT: {
+    case Statement::Type::BREAK:
+      printer << "break";
+      if (stmt.break_) {
+        printer << space << glue << *stmt.break_;
+      }
+      printer << glue << ";" << endStatement;
+      break;
+    case Statement::Type::CONTINUE:
+      printer << "continue";
+      if (stmt.continue_) {
+        printer << space << glue << *stmt.continue_;
+      }
+      printer << glue << ";" << endStatement;
+      break;
+
+    case Statement::Type::BLANK:
+      printer << endStatement;
+      break;
+    case Statement::Type::COMMENT: {
       string::size_type pos = 0;
       while (true) {
         string::size_type start = pos;
-        pos = comment.find_first_of('\n');
+        pos = stmt.comment.find_first_of('\n');
         if (pos == string::npos) {
-          os << "#" << comment.substr(start);
+          printer << "#" << glue << stmt.comment.substr(start) << endStatement;
           break;
         } else {
-          os << "#" << comment.substr(start, pos - start);
+          printer << "#" << stmt.comment.substr(start, pos - start) << endStatement;
           ++pos;
         }
       }
-      os << "\n";
       break;
     }
   }
+
+  return printer;
 }
 
 }  // namespace ast

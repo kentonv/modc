@@ -25,6 +25,7 @@
 #include "errors.h"
 
 namespace modc {
+  class CodePrinter;
   namespace errors {
     class Error;
   }
@@ -49,7 +50,7 @@ enum class Style {
   CONSTANT
 };
 
-std::ostream& operator<<(std::ostream& os, Style style);
+CodePrinter& operator<<(CodePrinter& os, Style style);
 
 enum class StyleAllowance {
   VALUE,
@@ -58,7 +59,7 @@ enum class StyleAllowance {
   MOVE
 };
 
-std::ostream& operator<<(std::ostream& os, StyleAllowance style);
+CodePrinter& operator<<(CodePrinter& os, StyleAllowance style);
 
 class Statement;
 struct ParameterDeclaration;
@@ -253,13 +254,15 @@ public:
   static Expression fromLambda(Location location, Style style,
                                vector<ParameterDeclaration>&& parameters, Expression&& body);
 
+  void print(CodePrinter& printer);
+
 private:
   Type type;
 
   Expression(Location location, Type type): location(location), type(type) {}
 };
 
-std::ostream& operator<<(std::ostream& os, const Expression& expression);
+CodePrinter& operator<<(CodePrinter& os, const Expression& expression);
 
 // =======================================================================================
 
@@ -341,12 +344,11 @@ struct Declaration {
 
   static Declaration fromError(Location location, vector<errors::Error>&& errors);
 
-  // indent = -1 for non-statement
-  void print(std::ostream& os, int indent) const;
+  void print(CodePrinter& printer, bool asStatement) const;
 };
 
-inline std::ostream& operator<<(std::ostream& os, const Declaration& declaration) {
-  declaration.print(os, -1);
+inline CodePrinter& operator<<(CodePrinter& os, const Declaration& declaration) {
+  declaration.print(os, false);
   return os;
 }
 
@@ -376,7 +378,7 @@ private:
   ParameterDeclaration(Type type): type(type) {}
 };
 
-inline std::ostream& operator<<(std::ostream& os, const ParameterDeclaration& parameter);
+inline CodePrinter& operator<<(CodePrinter& os, const ParameterDeclaration& parameter);
 
 // =======================================================================================
 
@@ -498,20 +500,13 @@ public:
   static Statement fromBlank(Location location);
   static Statement fromComment(Location location, string&& text);
 
-  void print(std::ostream& os, int indent) const;
-
 private:
   Type type;
 
   Statement(Location location, Type type): location(location), type(type) {}
-
-  void printInner(std::ostream& os, int indent) const;
 };
 
-inline std::ostream& operator<<(std::ostream& os, const Statement& statement) {
-  statement.print(os, 0);
-  return os;
-}
+CodePrinter& operator<<(CodePrinter& printer, const Statement& statement);
 
 }  // namespace ast
 }  // namespace modc
