@@ -43,16 +43,6 @@ struct Tuple;
 template <>
 struct Tuple<> {
   Tuple() {}
-
-  template <typename ReturnType = void, typename Func, typename... InitialParams>
-  ReturnType apply(Func&& f, InitialParams&&... initialParams) const {
-    return f(std::forward<InitialParams>(initialParams)...);
-  }
-
-  template <typename ReturnType = void, typename Func, typename... InitialParams>
-  ReturnType applyAsRvalue(Func&& f, InitialParams&&... initialParams) {
-    return f(std::forward<InitialParams>(initialParams)...);
-  }
 };
 
 template <typename First, typename... Rest>
@@ -63,139 +53,142 @@ struct Tuple<First, Rest...> {
   Tuple(const Tuple& other): first(other.first), rest(other.rest) {}
   Tuple(Tuple& other): first(other.first), rest(other.rest) {}
 
-  template <typename First2, typename... Rest2>
-  explicit Tuple(First2&& first2, Rest2&&... rest2)
+  template <typename First2, typename Rest2>
+  explicit Tuple(First2&& first2, Rest2&& rest2)
       : first(std::forward<First2>(first2)),
-        rest(std::forward<Rest2>(rest2)...) {}
+        rest(std::forward<Rest2>(rest2)) {}
 
   First first;
   Tuple<Rest...> rest;
-
-  template <typename ReturnType = void, typename Func, typename... InitialParams>
-  ReturnType apply(Func&& f, InitialParams&&... initialParams) const {
-    return rest.apply<ReturnType>(
-        std::forward<Func>(f), std::forward<InitialParams>(initialParams)..., first);
-  }
-
-  template <typename ReturnType = void, typename Func, typename... InitialParams>
-  ReturnType applyAsRvalue(Func&& f, InitialParams&&... initialParams) {
-    return rest.applyAsRvalue<ReturnType>(
-        std::forward<Func>(f), std::forward<InitialParams>(initialParams)..., std::move(first));
-  }
 };
-
-template <typename... First, typename... Rest>
-struct Tuple<Tuple<First...>, Rest...> {
-  Tuple() {}
-
-  Tuple(Tuple&& other): first(move(other.first)), rest(move(other.rest)) {}
-  Tuple(const Tuple& other): first(other.first), rest(other.rest) {}
-  Tuple(Tuple& other): first(other.first), rest(other.rest) {}
-
-  template <typename First2, typename... Rest2>
-  Tuple(First2&& first2, Rest2&&... rest2)
-      : first(std::forward<First2>(first2)),
-        rest(std::forward<Rest2>(rest2)...) {}
-
-  Tuple<First...> first;
-  Tuple<Rest...> rest;
-
-  template <typename ReturnType, typename Func>
-  struct Continue {
-    Continue(const Tuple* self, Func&& f): self(self), f(f) {}
-    const Tuple* self;
-    Func& f;
-
-    template <typename... T>
-    ReturnType operator()(T&&... t) const {
-      return self->rest.apply<ReturnType>(std::forward<Func>(f), std::forward<T>(t)...);
-    }
-  };
-
-  template <typename ReturnType, typename Func>
-  struct ContinueAsRvalue {
-    ContinueAsRvalue(Tuple* self, Func&& f): self(self), f(f) {}
-    Tuple* self;
-    Func& f;
-
-    template <typename... T>
-    ReturnType operator()(T&&... t) const {
-      return self->rest.applyAsRvalue<ReturnType>(std::forward<Func>(f), std::forward<T>(t)...);
-    }
-  };
-
-  template <typename ReturnType = void, typename Func, typename... InitialParams>
-  ReturnType apply(Func&& f, InitialParams&&... initialParams) const {
-    return first.apply<ReturnType>(
-        Continue<ReturnType, Func>(this, std::forward<Func>(f)),
-        std::forward<InitialParams>(initialParams)...);
-  }
-
-  template <typename ReturnType = void, typename Func, typename... InitialParams>
-  ReturnType applyAsRvalue(Func&& f, InitialParams&&... initialParams) {
-    return first.applyAsRvalue<ReturnType>(
-        ContinueAsRvalue<ReturnType, Func>(this, std::forward<Func>(f)),
-        std::forward<InitialParams>(initialParams)...);
-  }
-};
-
-template <typename... Rest>
-struct Tuple<Tuple<>, Rest...> {
-  Tuple() {}
-
-  Tuple(Tuple&& other): first(move(other.first)), rest(move(other.rest)) {}
-  Tuple(const Tuple& other): first(other.first), rest(other.rest) {}
-  Tuple(Tuple& other): first(other.first), rest(other.rest) {}
-
-  template <typename First2, typename... Rest2>
-  Tuple(First2&& first2, Rest2&&... rest2)
-      : first(std::forward<First2>(first2)),
-        rest(std::forward<Rest2>(rest2)...) {}
-
-  Tuple<> first;
-  Tuple<Rest...> rest;
-
-  template <typename ReturnType = void, typename Func, typename... InitialParams>
-  ReturnType apply(Func&& f, InitialParams&&... initialParams) const {
-    return rest.apply<ReturnType>(
-        std::forward<Func>(f), std::forward<InitialParams>(initialParams)...);
-  }
-
-  template <typename ReturnType = void, typename Func, typename... InitialParams>
-  ReturnType applyAsRvalue(Func&& f, InitialParams&&... initialParams) {
-    return rest.applyAsRvalue<ReturnType>(
-        std::forward<Func>(f), std::forward<InitialParams>(initialParams)...);
-  }
-};
-
-template <typename... T>
-Tuple<T...> tuple(T&&... elements) {
-  return Tuple<T...>(elements...);
-}
 
 typedef Tuple<> Void;
 
 
 
+template <typename T, typename U>
+struct ConsTuple {
+  typedef Tuple<decay(T), decay(U)> Type;
+};
+
+template <typename T, typename... U>
+struct ConsTuple<T, Tuple<U...>> {
+  typedef Tuple<decay(T), U...> Type;
+};
+
+template <typename... T>
+struct MakeTuple;
+
+template <>
+struct MakeTuple<> {
+  typedef Tuple<> Type;
+};
+
+template <typename T>
+struct MakeTuple<T> {
+  typedef decay(T) Type;
+};
+
+template <typename T, typename U, typename... V>
+struct MakeTuple<T, U, V...> {
+  typedef typename ConsTuple<T, typename MakeTuple<U, V...>::Type>::Type Type;
+};
+
+template <typename T, typename... U>
+struct MakeTuple<Tuple<>, T, U...> {
+  typedef typename MakeTuple<T, U...>::Type Type;
+};
+
+template <typename T, typename... U, typename V, typename... W>
+struct MakeTuple<Tuple<T, U...>, V, W...> {
+  typedef typename ConsTuple<T, typename MakeTuple<Tuple<U...>, V, W...>::Type>::Type Type;
+};
+
+template <typename T, typename U>
+typename ConsTuple<T, U>::Type
+consTuple(T&& t, U&& u) {
+  return typename ConsTuple<T, U>::Type(
+      std::forward<T>(t),
+      Tuple<decay(U)>(std::forward<U>(u), Void()));
+}
+
+template <typename T, typename... U>
+typename ConsTuple<T, Tuple<U...>>::Type
+consTuple(T&& t, Tuple<U...>&& u) {
+  return typename ConsTuple<T, Tuple<U...>>::Type(move(t), move(u));
+}
+
+typename MakeTuple<>::Type
+tuple() {
+  return Tuple<>();
+}
+
+template <typename T>
+typename MakeTuple<T>::Type
+tuple(T&& first) {
+  return std::forward<T>(first);
+}
+
+template <typename T, typename U, typename... V>
+typename MakeTuple<T, U, V...>::Type
+tuple(T&& first, U&& second, V&&... rest) {
+  return consTuple(std::forward<T>(first),
+      tuple(std::forward<U>(second), std::forward<V>(rest)...));
+}
+
+template <typename T, typename... U>
+typename MakeTuple<Tuple<>, T, U...>::Type
+tuple(Tuple<>&&, T&& first, U&&... rest) {
+  return tuple(std::forward<T>(first), std::forward<U>(rest)...);
+}
+
+template <typename T, typename... U>
+typename MakeTuple<Tuple<>, T, U...>::Type
+tuple(const Tuple<>&, T&& first, U&&... rest) {
+  return tuple(std::forward<T>(first), std::forward<U>(rest)...);
+}
+
+template <typename T, typename... U, typename V, typename... W>
+typename MakeTuple<Tuple<T, U...>, V, W...>::Type
+tuple(Tuple<T, U...>&& first, V&& second, W&&... rest) {
+  return consTuple(move(first.first),
+      tuple(move(first.rest), std::forward<V>(second), std::forward<W>(rest)...));
+}
+
+template <typename T, typename... U, typename V, typename... W>
+typename MakeTuple<Tuple<T, U...>, V, W...>::Type
+tuple(const Tuple<T, U...>& first, V&& second, W&&... rest) {
+  return consTuple(first.first,
+      tuple(first.rest, std::forward<V>(second), std::forward<W>(rest)...));
+}
+
 template <typename T>
 T any();
 
-template <typename ReturnType = void, typename Transform, typename T>
-ReturnType applyMaybeTuple(Transform& transform, T&& t) {
-  return transform(move(t));
+template <typename Func, typename T>
+auto applyTuple(Func&& func, T&& t) -> decltype(func(std::forward<T>(t))) {
+  return func(std::forward<T>(t));
 }
 
-template <typename ReturnType = void, typename Transform, typename... T>
-ReturnType applyMaybeTuple(Transform& transform, Tuple<T...>&& t) {
-  return t.template applyAsRvalue<ReturnType>(transform);
+template <typename Func, typename... Params>
+auto applyTuple(Func&& func, Tuple<> t, Params&&... params) ->
+decltype(func(std::forward<Params>(params)...)) {
+  return func(std::forward<Params>(params)...);
 }
 
-// =======================================================================================
+template <typename Func, typename T, typename... U, typename... Params>
+auto applyTuple(Func&& func, Tuple<T, U...>&& t, Params&&... params) ->
+decltype(func(std::forward<Params>(params)..., any<T&&>(), any<U&&>()...)) {
+  return applyTuple(std::forward<Func>(func), move(t.rest),
+                    std::forward<Params>(params)..., move(t.first));
+}
 
-template <typename T, typename Return, typename... Params>
-Return extractReturnType(Return (T::*func)(Params...) const);
-template <typename T, typename Return, typename... Params>
-Return extractReturnType(Return (T::*func)(Params...));
+template <typename Func, typename T, typename... U, typename... Params>
+auto applyTuple(Func&& func, const Tuple<T, U...>& t, Params&&... params) ->
+decltype(func(std::forward<Params>(params)..., any<const T&>(), any<const U&>()...)) {
+  return applyTuple(std::forward<Func>(func), t.rest,
+                    std::forward<Params>(params)..., t.first);
+}
 
 // =======================================================================================
 
@@ -361,7 +354,7 @@ struct MaybeRef {
 
 template <typename T>
 struct MaybeRef<T&> {
-  typedef ParserRef<typename std::decay<T>::type> Type;
+  typedef ParserRef<decay(T)> Type;
 
   template <typename U>
   static Type from(U& parser) {
@@ -411,7 +404,7 @@ ExactElementParser<Input> exactElement(typename Input::ElementType&& expected) {
 
 // -------------------------------------------------------------------
 // SequenceParser
-// Output = Tuple of outputs of sub-parsers, eliding voids.
+// Output = Flattened Tuple of outputs of sub-parsers.
 
 template <typename Input, typename... SubParsers> class SequenceParser;
 
@@ -422,17 +415,19 @@ public:
   explicit SequenceParser(T&& firstSubParser, U&&... rest)
       : first(std::forward<T>(firstSubParser)), rest(std::forward<U>(rest)...) {}
 
-  Maybe<Tuple<typename ExtractParserType<FirstSubParser>::OutputType,
-              typename ExtractParserType<SubParsers>::OutputType...>>
-  operator()(Input& input) const {
+  auto operator()(Input& input) const ->
+      Maybe<decltype(tuple(
+          any<typename ExtractParserType<FirstSubParser>::OutputType>(),
+          any<typename ExtractParserType<SubParsers>::OutputType>()...))> {
     return parseNext(input);
   }
 
   template <typename... InitialParams>
-  Maybe<Tuple<InitialParams...,
-      typename ExtractParserType<FirstSubParser>::OutputType,
-      typename ExtractParserType<SubParsers>::OutputType...>>
-  parseNext(Input& input, InitialParams&&... initialParams) const {
+  auto parseNext(Input& input, InitialParams&&... initialParams) const ->
+      Maybe<decltype(tuple(
+          std::forward<InitialParams>(initialParams)...,
+          any<typename ExtractParserType<FirstSubParser>::OutputType>(),
+          any<typename ExtractParserType<SubParsers>::OutputType>()...))> {
     auto firstResult = first(input);
     if (firstResult) {
       return rest.parseNext(input, std::forward<InitialParams>(initialParams)...,
@@ -455,9 +450,9 @@ public:
   }
 
   template <typename... Params>
-  Maybe<Tuple<Params...>>
-  parseNext(Input& input, Params&&... params) const {
-    return Tuple<Params...>(std::forward<Params>(params)...);
+  auto parseNext(Input& input, Params&&... params) const ->
+      Maybe<decltype(tuple(std::forward<Params>(params)...))> {
+    return tuple(std::forward<Params>(params)...);
   }
 };
 
@@ -623,17 +618,19 @@ oneOf(FirstSubParser&& first, MoreSubParsers&&... rest) {
 // Output = Result of applying transform functor to input value.  If input is a tuple, it is
 // unpacked to form the transformation parameters.
 
-template <typename Output, typename SubParser, typename Transform>
+template <typename SubParser, typename Transform>
 class TransformParser {
 public:
   explicit TransformParser(SubParser&& subParser, Transform&& transform)
       : subParser(move(subParser)), transform(move(transform)) {}
 
+  typedef typename ExtractParserType<SubParser>::OutputType SubOutput;
+  typedef decltype(applyTuple(any<Transform&>(), any<SubOutput&&>())) Output;
+
   Maybe<Output> operator()(typename ExtractParserType<SubParser>::InputType& input) const {
-    Maybe<typename ExtractParserType<SubParser>::OutputType> subResult =
-        subParser(input);
+    Maybe<SubOutput> subResult = subParser(input);
     if (subResult) {
-      return applyMaybeTuple<Output>(transform, move(*subResult));
+      return applyTuple(transform, move(*subResult));
     } else {
       return nullptr;
     }
@@ -645,13 +642,9 @@ private:
 };
 
 template <typename SubParser, typename Transform>
-TransformParser<decltype(extractReturnType(&Transform::operator())),
-                typename MaybeRef<SubParser>::Type,
-                decay(Transform)>
+TransformParser<typename MaybeRef<SubParser>::Type, decay(Transform)>
 transform(SubParser&& subParser, Transform&& transform) {
-  return TransformParser<decltype(extractReturnType(&Transform::operator())),
-                         typename MaybeRef<SubParser>::Type,
-                         decay(Transform)>(
+  return TransformParser<typename MaybeRef<SubParser>::Type, decay(Transform)>(
       MaybeRef<SubParser>::from(subParser), std::forward<Transform>(transform));
 }
 

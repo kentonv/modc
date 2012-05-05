@@ -736,6 +736,7 @@ BlockType getBlockType(Declaration::Kind kind) {
     case Declaration::Kind::ENUM:
       return BlockType::ENUM;
 
+    case Declaration::Kind::ERROR:
     case Declaration::Kind::ENVIRONMENT:
       return BlockType::NONE;
   }

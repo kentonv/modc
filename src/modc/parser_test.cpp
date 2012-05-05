@@ -25,13 +25,16 @@ namespace {
 TEST(Tuple, Flatten) {
   int output = 0;
 
-  Tuple<Tuple<Tuple<>, Tuple<int>>, Tuple<>, int, Tuple<Tuple<Tuple<>, int>>> t =
-  tuple(tuple(tuple(), tuple( 1 )), tuple(),  20, tuple(tuple(tuple(), 300)));
+  Tuple<int, int, int> t =
+  tuple(tuple(tuple(), tuple(1)), tuple(), 20, tuple(tuple(tuple(), 300)));
 
-  t.apply([&](int i, int j, int k) { output = i + j + k; });
+  applyTuple([&](int i, int j, int k) { output = i + j + k; }, t);
   EXPECT_EQ(321, output);
 
-  EXPECT_EQ(321, t.apply<int>([](int i, int j, int k) { return i + j + k; }));
+  EXPECT_EQ(321, applyTuple([](int i, int j, int k) { return i + j + k; }, t));
+
+  Tuple<Maybe<int>, string> t2 = tuple(Maybe<int>(123), string("foo"));
+  string t3 = tuple(string("foo"));
 }
 
 typedef IteratorInput<char, string::iterator> Input;
@@ -65,24 +68,21 @@ TEST(Parsers, SequenceParser) {
 
   {
     Input input(text.begin(), text.end());
-    Maybe<Tuple<Void, Void, Void> > result =
-        sequence(exactChar('f'), exactChar('o'), exactChar('o'))(input);
+    Maybe<Void> result = sequence(exactChar('f'), exactChar('o'), exactChar('o'))(input);
     EXPECT_TRUE(result);
     EXPECT_TRUE(input.atEnd());
   }
 
   {
     Input input(text.begin(), text.end());
-    Maybe<Tuple<Void, Void> > result =
-        sequence(exactChar('f'), exactChar('o'))(input);
+    Maybe<Void> result = sequence(exactChar('f'), exactChar('o'))(input);
     EXPECT_TRUE(result);
     EXPECT_FALSE(input.atEnd());
   }
 
   {
     Input input(text.begin(), text.end());
-    Maybe<Tuple<Void, Void, Void> > result =
-        sequence(exactChar('x'), exactChar('o'), exactChar('o'))(input);
+    Maybe<Void> result = sequence(exactChar('x'), exactChar('o'), exactChar('o'))(input);
     EXPECT_FALSE(result);
     EXPECT_FALSE(input.atEnd());
   }
@@ -117,15 +117,15 @@ TEST(Parsers, TransformParser_MaybeRef) {
   // is working correctly.  When transform() is given an lvalue, it should wrap the type in
   // ParserRef.
 
-  TransformParser<int, ExactElementParser<Input>, Transform> parser1 =
+  TransformParser<ExactElementParser<Input>, Transform> parser1 =
       transform(exactChar('f'), Transform(12));
 
   auto otherParser = exactChar('o');
-  TransformParser<int, ParserRef<ExactElementParser<Input>>, Transform> parser2 =
+  TransformParser<ParserRef<ExactElementParser<Input>>, Transform> parser2 =
       transform(otherParser, Transform(34));
 
   auto otherParser2 = exactChar('b');
-  TransformParser<int, ExactElementParser<Input>, Transform> parser3 =
+  TransformParser<ExactElementParser<Input>, Transform> parser3 =
       transform(move(otherParser2), Transform(56));
 
   string text = "foob";
