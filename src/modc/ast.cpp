@@ -594,7 +594,20 @@ std::ostream& operator<<(std::ostream& os, const Indirect<T>& value) {
   return os << *value;
 }
 
+struct Indent {
+  int size;
+
+  Indent(int size): size(size) {}
+};
+
+std::ostream& operator<<(std::ostream& os, Indent indent) {
+  for (int i = 0; i < indent.size; i++) {
+    os << "  ";
+  }
+  return os;
 }
+
+}  // namespace
 
 std::ostream& operator<<(std::ostream& os, Style style) {
   switch (style) {
@@ -777,7 +790,7 @@ void Declaration::print(std::ostream& os, int indent) const {
           for (auto& statement: definition->block) {
             statement.print(os, indent + 1);
           }
-          os << "}\n";
+          os << Indent(indent) << "}\n";
         }
         break;
     }
@@ -802,10 +815,7 @@ std::ostream& operator<<(std::ostream& os, const ParameterDeclaration& param) {
 }
 
 void Statement::print(std::ostream& os, int indent) const {
-  for (int i = 0; i < indent; i++) {
-    os << "  ";
-  }
-
+  os << Indent(indent);
   printInner(os, indent);
 }
 
@@ -823,7 +833,7 @@ void Statement::printInner(std::ostream& os, int indent) const {
       for (auto& statement: block) {
         statement.print(os, indent + 1);
       }
-      os << "}\n";
+      os << Indent(indent) << "}\n";
       break;
 
     case Type::DECLARATION:
@@ -838,7 +848,7 @@ void Statement::printInner(std::ostream& os, int indent) const {
       for (auto& decl: union_) {
         decl.print(os, indent + 1);
       }
-      os << "}\n";
+      os << Indent(indent) << "}\n";
       break;
 
     case Type::IF:
@@ -869,7 +879,7 @@ void Statement::printInner(std::ostream& os, int indent) const {
       for (auto& statement: parallel) {
         statement.print(os, indent + 1);
       }
-      os << "}\n";
+      os << Indent(indent) << "}\n";
       break;
 
     case Type::RETURN:
