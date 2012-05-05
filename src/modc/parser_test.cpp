@@ -35,6 +35,7 @@ TEST(Tuple, Flatten) {
 
   Tuple<Maybe<int>, string> t2 = tuple(Maybe<int>(123), string("foo"));
   string t3 = tuple(string("foo"));
+  string t4 = tuple(string("foo"), Void());
 }
 
 typedef IteratorInput<char, string::iterator> Input;
@@ -58,7 +59,8 @@ TEST(Parsers, ExactElementParser) {
   EXPECT_FALSE(result);
   EXPECT_FALSE(input.atEnd());
 
-  result = exactChar('o')(input);
+  Parser<Input, Void> wrapped = exactChar('o');
+  result = wrapped(input);
   EXPECT_TRUE(result);
   EXPECT_TRUE(input.atEnd());
 }
@@ -85,6 +87,29 @@ TEST(Parsers, SequenceParser) {
     Maybe<Void> result = sequence(exactChar('x'), exactChar('o'), exactChar('o'))(input);
     EXPECT_FALSE(result);
     EXPECT_FALSE(input.atEnd());
+  }
+
+  {
+    Input input(text.begin(), text.end());
+    Maybe<Void> result = sequence(sequence(exactChar('f'), exactChar('o')), exactChar('o'))(input);
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(input.atEnd());
+  }
+
+  {
+    Input input(text.begin(), text.end());
+    Maybe<Void> result = sequence(sequence(exactChar('f')), exactChar('o'), exactChar('o'))(input);
+    EXPECT_TRUE(result);
+    EXPECT_TRUE(input.atEnd());
+  }
+
+  {
+    Input input(text.begin(), text.end());
+    Maybe<int> result = sequence(transform(exactChar('f'), [](){return 123;}),
+                                 exactChar('o'), exactChar('o'))(input);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(123, *result);
+    EXPECT_TRUE(input.atEnd());
   }
 }
 

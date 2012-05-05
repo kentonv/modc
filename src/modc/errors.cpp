@@ -21,12 +21,20 @@
 namespace modc {
 namespace errors {
 
-std::ostream& operator<<(std::ostream& os, const Error& error) {
-  os << '(' << error.startOffset;
-  if (error.endOffset != error.startOffset) {
-    os << '-' << error.endOffset;
+std::ostream& operator<<(std::ostream& os, const Location& location) {
+  os << '[';
+  if (location.start != -1) {
+    os << location.start;
+    if (location.end != location.start) {
+      os << ':' << location.end;
+    }
   }
-  os << ") \"" << error.message << "\"";
+  os << "]";
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const Error& error) {
+  os << error.location << "\"" << error.message << "\"";
   return os;
 }
 

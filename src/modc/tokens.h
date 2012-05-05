@@ -24,13 +24,11 @@
 
 #include "base/OwnedPtr.h"
 #include "Maybe.h"
+#include "errors.h"
 
 namespace modc {
   namespace chars {
     class CharClass;
-  }
-  namespace errors {
-    class Error;
   }
 }
 
@@ -40,6 +38,7 @@ namespace tokens {
 using ekam::OwnedPtr;
 using ekam::newOwned;
 using std::string;
+using errors::Location;
 
 class Token;
 class TokenSequence;
@@ -96,9 +95,8 @@ public:
     string literalString;
   };
 
-  // TODO:  Actually initialize these!
-  int startOffset;
-  int endOffset;
+  // TODO:  Actually initialize this!
+  Location location;
 
   void getErrors(std::vector<errors::Error>& errors) const;
   std::vector<errors::Error> getErrors() const;
@@ -106,48 +104,48 @@ public:
 private:
   Type type;
 
-  Token(Type type);
+  Token(Location location, Type type);
 
-  friend Token errorToken(errors::Error&& error);
-  friend Token errorToken(const errors::Error& error);
-  friend Token errorToken(std::vector<errors::Error>&& errors);
-  friend Token errorToken(const std::vector<errors::Error>& errors);
+  friend Token errorToken(Location location, errors::Error&& error);
+  friend Token errorToken(Location location, const errors::Error& error);
+  friend Token errorToken(Location location, std::vector<errors::Error>&& errors);
+  friend Token errorToken(Location location, const std::vector<errors::Error>& errors);
 
-  friend Token keyword(string&& keyword);
-  friend Token keyword(const string& keyword);
-  friend Token identifier(string&& name);
-  friend Token identifier(const string& name);
+  friend Token keyword(Location location, string&& keyword);
+  friend Token keyword(Location location, const string& keyword);
+  friend Token identifier(Location location, string&& name);
+  friend Token identifier(Location location, const string& name);
 
-  friend Token bracketed(std::vector<TokenSequence>&& content);
-  friend Token bracketed(const std::vector<TokenSequence>& content);
-  friend Token parenthesized(std::vector<TokenSequence>&& content);
-  friend Token parenthesized(const std::vector<TokenSequence>& content);
+  friend Token bracketed(Location location, std::vector<TokenSequence>&& content);
+  friend Token bracketed(Location location, const std::vector<TokenSequence>& content);
+  friend Token parenthesized(Location location, std::vector<TokenSequence>&& content);
+  friend Token parenthesized(Location location, const std::vector<TokenSequence>& content);
 
-  friend Token literal(int value);
-  friend Token literal(double value);
-  friend Token literal(string&& value);
-  friend Token literal(const string& value);
+  friend Token literal(Location location, int value);
+  friend Token literal(Location location, double value);
+  friend Token literal(Location location, string&& value);
+  friend Token literal(Location location, const string& value);
 };
 
-Token errorToken(errors::Error&& error);
-Token errorToken(const errors::Error& error);
-Token errorToken(std::vector<errors::Error>&& errors);
-Token errorToken(const std::vector<errors::Error>& errors);
+Token errorToken(Location location, errors::Error&& error);
+Token errorToken(Location location, const errors::Error& error);
+Token errorToken(Location location, std::vector<errors::Error>&& errors);
+Token errorToken(Location location, const std::vector<errors::Error>& errors);
 
-Token keyword(string&& keyword);
-Token keyword(const string& keyword);
-Token identifier(string&& name);
-Token identifier(const string& name);
+Token keyword(Location location, string&& keyword);
+Token keyword(Location location, const string& keyword);
+Token identifier(Location location, string&& name);
+Token identifier(Location location, const string& name);
 
-Token bracketed(std::vector<TokenSequence>&& content);
-Token bracketed(const std::vector<TokenSequence>& content);
-Token parenthesized(std::vector<TokenSequence>&& content);
-Token parenthesized(const std::vector<TokenSequence>& content);
+Token bracketed(Location location, std::vector<TokenSequence>&& content);
+Token bracketed(Location location, const std::vector<TokenSequence>& content);
+Token parenthesized(Location location, std::vector<TokenSequence>&& content);
+Token parenthesized(Location location, const std::vector<TokenSequence>& content);
 
-Token literal(int value);
-Token literal(double value);
-Token literal(string&& value);
-Token literal(const string& value);
+Token literal(Location location, int value);
+Token literal(Location location, double value);
+Token literal(Location location, string&& value);
+Token literal(Location location, const string& value);
 
 std::ostream& operator<<(std::ostream& os, const Token& token);
 
@@ -156,8 +154,7 @@ public:
   std::vector<Token> tokens;
 
   // TODO:  Fill these in.
-  int startOffset;
-  int endOffset;
+  Location location;
 
   bool operator==(const TokenSequence& other) const { return tokens == other.tokens; }
   bool operator!=(const TokenSequence& other) const { return tokens != other.tokens; }
@@ -202,6 +199,7 @@ private:
   Token parseQuote(Reader& reader, const chars::CharClass& quotable, const chars::CharClass& quote);
   Token parseNumber(Reader& reader);
   TokenSequence parseSequence(Reader& reader);
+  TokenSequence parseSequenceInternal(Reader& reader);
   void skipStatement(Reader& reader);
   TokenStatement parseStatement(Reader& reader);
 };

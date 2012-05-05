@@ -18,6 +18,8 @@
 
 #include <utility>
 #include <functional>
+#include <ostream>
+#include <google/protobuf/stubs/strutil.h>
 
 #include "tokens.h"
 #include "errors.h"
@@ -574,6 +576,337 @@ Statement Statement::fromComment(string&& text) {
   Statement result(Type::COMMENT);
   new (&result.comment) string(move(text));
   return result;
+}
+
+// =======================================================================================
+// iostreams
+
+namespace {
+
+// TODO:  Put this somewhere more general?
+template <typename T>
+std::ostream& operator<<(std::ostream& os, const Indirect<T>& value) {
+  return os << *value;
+}
+
+}
+
+std::ostream& operator<<(std::ostream& os, Style style) {
+  switch (style) {
+    case Style::VALUE: break;
+    case Style::IMMUTABLE_REFERENCE: os << "@"; break;
+    case Style::MUTABLE_REFERENCE:   os << "&"; break;
+    case Style::ENTANGLED_REFERENCE: os << "@&"; break;
+    case Style::HEAP_VALUE:          os << "*"; break;
+    case Style::CONSTANT:            os << "^"; break;
+  }
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, StyleAllowance allowance) {
+  switch (allowance) {
+    case StyleAllowance::VALUE: break;
+    case StyleAllowance::IMMUTABLE_REFERENCE: os << "@"; break;
+    case StyleAllowance::MUTABLE_REFERENCE:   os << "&"; break;
+    case StyleAllowance::MOVE:                os << "<-"; break;
+  }
+  return os;
+}
+
+template <typename T>
+std::ostream& operator<<(std::ostream& os, const vector<T>& vec) {
+  bool first = true;
+  for (auto& element: vec) {
+    if (first) {
+      first = false;
+    } else {
+      os << ", ";
+    }
+    os << element;
+  }
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const Expression::FunctionCall::Parameter& parameter) {
+  return os << parameter.styleAllowance << parameter.expression;
+}
+
+std::ostream& operator<<(std::ostream& os, const Expression& expression) {
+  switch (expression.getType()) {
+    case Expression::Type::ERROR:
+      os << "{{EXPRESSION ERROR: " << expression.error << "}}";
+      break;
+
+    case Expression::Type::VARIABLE:
+      os << expression.variable;
+      break;
+    case Expression::Type::TUPLE:
+      os << "(" << expression.tuple << ")";
+      break;
+
+    case Expression::Type::LITERAL_INT:
+      os << expression.literalInt;
+      break;
+    case Expression::Type::LITERAL_DOUBLE: {
+      string result = google::protobuf::SimpleDtoa(expression.literalDouble);
+      if (result.find_first_of(".eE") == string::npos) {
+        result += ".0";
+      }
+      os << result;
+      break;
+    }
+    case Expression::Type::LITERAL_STRING:
+      os << '\"' << google::protobuf::CEscape(expression.literalString) << '\"';
+      break;
+    case Expression::Type::LITERAL_ARRAY:
+      os << "[" << expression.literalArray << "]";
+      break;
+
+    case Expression::Type::BINARY_OPERATOR:
+      os << "(" << expression.binaryOperator.left
+         << " " << expression.binaryOperator.op
+         << " " << expression.binaryOperator.right
+         << ")";
+      break;
+    case Expression::Type::PREFIX_OPERATOR:
+      os << "(" << expression.prefixOperator.op
+         << " " << expression.prefixOperator.operand
+         << ")";
+      break;
+    case Expression::Type::POSTFIX_OPERATOR:
+      os << "(" << expression.postfixOperator.operand
+         << " " << expression.postfixOperator.op
+         << ")";
+      break;
+    case Expression::Type::TERNARY_OPERATOR:
+      os << "(" << expression.ternaryOperator.condition
+         << " ? " << expression.ternaryOperator.trueClause
+         << " : " << expression.ternaryOperator.falseClause
+         << ")";
+      break;
+
+    case Expression::Type::FUNCTION_CALL: {
+      os << expression.functionCall.function
+         << "(" << expression.functionCall.parameters << ")";
+      break;
+    }
+    case Expression::Type::SUBSCRIPT:
+      os << expression.subscript.container
+         << "[" << expression.subscript.subscript << "]";
+      break;
+    case Expression::Type::MEMBER_ACCESS:
+      os << expression.memberAccess.object << "." << expression.memberAccess.member;
+      break;
+
+    case Expression::Type::IMPORT:
+      os << "import \"" << google::protobuf::CEscape(expression.import) << '\"';
+      break;
+
+    case Expression::Type::LAMBDA:
+      os << "((" << expression.lambda.parameters << ")"
+         << expression.lambda.style << " => " << expression.lambda.body << ")";
+      break;
+  }
+
+  return os;
+}
+
+void Declaration::print(std::ostream& os, int indent) const {
+  switch (kind) {
+    case Kind::ERROR:
+      os << "{{DECLARATION ERROR: " << definition->expression << "}}";
+      if (indent != -1) {
+        os << ";\n";
+      }
+      return;
+
+    case Kind::VARIABLE: if (indent != -1) { os << "var "; } break;
+    case Kind::ENVIRONMENT: os << "env "; break;
+
+    case Kind::FUNCTION:    os << "func "; break;
+    case Kind::CONSTRUCTOR: os << "constructor "; break;
+    case Kind::DESTRUCTOR:  os << "destructor "; break;
+    case Kind::CONVERSION:  os << "conversion"; break;
+    case Kind::DEFAULT_CONVERSION: os << "default conversion "; break;
+
+    case Kind::CLASS:       os << "class "; break;
+    case Kind::INTERFACE:   os << "interface "; break;
+    case Kind::ENUM:        os << "enum "; break;
+  }
+
+  os << thisStyle << name;
+  if (parameters) {
+    os << "(" << *parameters << ")";
+  }
+  os << style;
+
+  for (auto& ann: annotations) {
+    switch (ann.relationship) {
+      case Annotation::Relationship::IS_A: os << ":"; break;
+      case Annotation::Relationship::SUBCLASS_OF: os << " <:"; break;
+      case Annotation::Relationship::SUPERCLASS_OF: os << " :>"; break;
+      case Annotation::Relationship::ANNOTATION: os << " ::"; break;
+    }
+
+    if (ann.param) {
+      os << " " << *ann.param;
+    }
+  }
+
+  if (definition) {
+    switch (definition->getType()) {
+      case Declaration::Definition::Type::EXPRESSION:
+        os << " = " << definition->expression;
+        if (indent != -1) {
+          os << ";\n";
+        }
+        break;
+      case Declaration::Definition::Type::BLOCK:
+        if (indent == -1) {
+          os << "{ ... }";
+        } else {
+          os << " {\n";
+          for (auto& statement: definition->block) {
+            statement.print(os, indent + 1);
+          }
+          os << "}\n";
+        }
+        break;
+    }
+  } else {
+    if (indent != -1) {
+      os << ";\n";
+    }
+  }
+}
+
+std::ostream& operator<<(std::ostream& os, const ParameterDeclaration& param) {
+  switch (param.getType()) {
+    case ParameterDeclaration::Type::CONSTANT:
+      os << param.constant;
+      break;
+    case ParameterDeclaration::Type::VARIABLE:
+      param.variable.print(os, -1);
+      break;
+  }
+
+  return os;
+}
+
+void Statement::print(std::ostream& os, int indent) const {
+  for (int i = 0; i < indent; i++) {
+    os << "  ";
+  }
+
+  printInner(os, indent);
+}
+
+void Statement::printInner(std::ostream& os, int indent) const {
+  switch (getType()) {
+    case Type::ERROR:
+      os << "{{STATEMENT ERROR: " << error << "}};\n";
+      break;
+
+    case Type::EXPRESSION:
+      os << expression << ";\n";
+      break;
+    case Type::BLOCK:
+      os << "{\n";
+      for (auto& statement: block) {
+        statement.print(os, indent + 1);
+      }
+      os << "}\n";
+      break;
+
+    case Type::DECLARATION:
+      declaration.print(os, indent);
+      break;
+    case Type::ASSIGNMENT:
+      os << assignment.variable << " = " << assignment.value << ";\n";
+      break;
+
+    case Type::UNION:
+      os << "union {\n";
+      for (auto& decl: union_) {
+        decl.print(os, indent + 1);
+      }
+      os << "}\n";
+      break;
+
+    case Type::IF:
+      os << "if (" << if_.condition << ") ";
+      if_.body->printInner(os, indent);
+      break;
+    case Type::ELSE:
+      os << "else ";
+      else_->printInner(os, indent);
+      break;
+    case Type::FOR:
+      os << "for (" << for_.range << ") ";
+      for_.body->printInner(os, indent);
+      break;
+    case Type::WHILE:
+      os << "while (" << while_.condition << ") ";
+      while_.body->printInner(os, indent);
+      break;
+    case Type::LOOP:
+      os << "loop ";
+      if (loop.name) {
+        os << *loop.name << " ";
+      }
+      loop.body->printInner(os, indent);
+      break;
+    case Type::PARALLEL:
+      os << "parallel {\n";
+      for (auto& statement: parallel) {
+        statement.print(os, indent + 1);
+      }
+      os << "}\n";
+      break;
+
+    case Type::RETURN:
+      os << "return";
+      if (return_.getType() != Expression::Type::TUPLE ||
+          return_.tuple.size() != 0) {
+        os << " " << return_;
+      }
+      os << ";\n";
+      break;
+    case Type::BREAK:
+      os << "break";
+      if (break_) {
+        os << " " << *break_;
+      }
+      os << ";\n";
+      break;
+    case Type::CONTINUE:
+      os << "continue";
+      if (continue_) {
+        os << " " << *continue_;
+      }
+      os << ";\n";
+      break;
+
+    case Type::BLANK:
+      os << "\n";
+      break;
+    case Type::COMMENT: {
+      string::size_type pos = 0;
+      while (true) {
+        string::size_type start = pos;
+        pos = comment.find_first_of('\n');
+        if (pos == string::npos) {
+          os << "#" << comment.substr(start);
+          break;
+        } else {
+          os << "#" << comment.substr(start, pos - start);
+          ++pos;
+        }
+      }
+      os << "\n";
+      break;
+    }
+  }
 }
 
 }  // namespace ast

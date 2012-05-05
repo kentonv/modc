@@ -21,6 +21,8 @@
 #include <string>
 #include <utility>
 
+#include "base/Debug.h"
+
 namespace modc {
 namespace errors {
 
@@ -42,27 +44,53 @@ string concat(Parts&&... parts) {
   return os.str();
 }
 
+struct Location {
+  int start;
+  int end;
+
+  Location(): start(-1), end(-1) {}
+  explicit Location(int pos): start(pos), end(pos) {}
+  Location(int start, int end): start(start), end(end) {}
+  Location(Location start, Location end): start(start.start), end(end.end) {}
+
+  bool operator==(const Location& other) const {
+    return start == other.start && end == other.end;
+  }
+  bool operator!=(const Location& other) const {
+    return !(*this == other);
+  }
+
+  Location first(int amount) const {
+    return Location(start, std::min(end, start + amount));
+  }
+  Location last(int amount) const {
+    return Location(std::max(start, end - amount), end);
+  }
+  Location to(const Location& other) const {
+    return Location(*this, other);
+  }
+};
+
+std::ostream& operator<<(std::ostream& os, const Location& location);
+
 class Error {
 public:
   string message;
 
-  int startOffset;
-  int endOffset;
+  Location location;
 
   // TODO:  Suggested fix.
 
   inline bool operator==(const Error& other) const {
-    return message == other.message && startOffset == other.startOffset &&
-           endOffset == other.endOffset;
+    return message == other.message && location == other.location;
   }
   inline bool operator!=(const Error& other) const { return !(*this == other); }
 };
 
 template <typename... Parts>
-Error error(int startOffset, int endOffset, Parts... message) {
+Error error(Location location, Parts... message) {
   Error result;
-  result.startOffset = startOffset;
-  result.endOffset = endOffset;
+  result.location = location;
   result.message = concat(std::forward<Parts>(message)...);
   return result;
 }

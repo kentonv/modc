@@ -76,6 +76,11 @@ struct ConsTuple<T, Tuple<U...>> {
   typedef Tuple<decay(T), U...> Type;
 };
 
+template <typename T>
+struct ConsTuple<T, Tuple<>> {
+  typedef decay(T) Type;
+};
+
 template <typename... T>
 struct MakeTuple;
 
@@ -106,7 +111,7 @@ struct MakeTuple<Tuple<T, U...>, V, W...> {
 
 template <typename T, typename U>
 typename ConsTuple<T, U>::Type
-consTuple(T&& t, U&& u) {
+inline consTuple(T&& t, U&& u) {
   return typename ConsTuple<T, U>::Type(
       std::forward<T>(t),
       Tuple<decay(U)>(std::forward<U>(u), Void()));
@@ -114,50 +119,56 @@ consTuple(T&& t, U&& u) {
 
 template <typename T, typename... U>
 typename ConsTuple<T, Tuple<U...>>::Type
-consTuple(T&& t, Tuple<U...>&& u) {
+inline consTuple(T&& t, Tuple<U...>&& u) {
   return typename ConsTuple<T, Tuple<U...>>::Type(move(t), move(u));
 }
 
+template <typename T>
+typename ConsTuple<T, Tuple<>>::Type
+inline consTuple(T&& t, Tuple<>&& u) {
+  return std::forward<T>(t);
+}
+
 typename MakeTuple<>::Type
-tuple() {
+inline tuple() {
   return Tuple<>();
 }
 
 template <typename T>
 typename MakeTuple<T>::Type
-tuple(T&& first) {
+inline tuple(T&& first) {
   return std::forward<T>(first);
 }
 
 template <typename T, typename U, typename... V>
 typename MakeTuple<T, U, V...>::Type
-tuple(T&& first, U&& second, V&&... rest) {
+inline tuple(T&& first, U&& second, V&&... rest) {
   return consTuple(std::forward<T>(first),
       tuple(std::forward<U>(second), std::forward<V>(rest)...));
 }
 
 template <typename T, typename... U>
 typename MakeTuple<Tuple<>, T, U...>::Type
-tuple(Tuple<>&&, T&& first, U&&... rest) {
+inline tuple(Tuple<>&&, T&& first, U&&... rest) {
   return tuple(std::forward<T>(first), std::forward<U>(rest)...);
 }
 
 template <typename T, typename... U>
 typename MakeTuple<Tuple<>, T, U...>::Type
-tuple(const Tuple<>&, T&& first, U&&... rest) {
+inline tuple(const Tuple<>&, T&& first, U&&... rest) {
   return tuple(std::forward<T>(first), std::forward<U>(rest)...);
 }
 
 template <typename T, typename... U, typename V, typename... W>
 typename MakeTuple<Tuple<T, U...>, V, W...>::Type
-tuple(Tuple<T, U...>&& first, V&& second, W&&... rest) {
+inline tuple(Tuple<T, U...>&& first, V&& second, W&&... rest) {
   return consTuple(move(first.first),
       tuple(move(first.rest), std::forward<V>(second), std::forward<W>(rest)...));
 }
 
 template <typename T, typename... U, typename V, typename... W>
 typename MakeTuple<Tuple<T, U...>, V, W...>::Type
-tuple(const Tuple<T, U...>& first, V&& second, W&&... rest) {
+inline tuple(const Tuple<T, U...>& first, V&& second, W&&... rest) {
   return consTuple(first.first,
       tuple(first.rest, std::forward<V>(second), std::forward<W>(rest)...));
 }
@@ -166,25 +177,25 @@ template <typename T>
 T any();
 
 template <typename Func, typename T>
-auto applyTuple(Func&& func, T&& t) -> decltype(func(std::forward<T>(t))) {
+inline auto applyTuple(Func&& func, T&& t) -> decltype(func(std::forward<T>(t))) {
   return func(std::forward<T>(t));
 }
 
 template <typename Func, typename... Params>
-auto applyTuple(Func&& func, Tuple<> t, Params&&... params) ->
+inline auto applyTuple(Func&& func, Tuple<> t, Params&&... params) ->
 decltype(func(std::forward<Params>(params)...)) {
   return func(std::forward<Params>(params)...);
 }
 
 template <typename Func, typename T, typename... U, typename... Params>
-auto applyTuple(Func&& func, Tuple<T, U...>&& t, Params&&... params) ->
+inline auto applyTuple(Func&& func, Tuple<T, U...>&& t, Params&&... params) ->
 decltype(func(std::forward<Params>(params)..., any<T&&>(), any<U&&>()...)) {
   return applyTuple(std::forward<Func>(func), move(t.rest),
                     std::forward<Params>(params)..., move(t.first));
 }
 
 template <typename Func, typename T, typename... U, typename... Params>
-auto applyTuple(Func&& func, const Tuple<T, U...>& t, Params&&... params) ->
+inline auto applyTuple(Func&& func, const Tuple<T, U...>& t, Params&&... params) ->
 decltype(func(std::forward<Params>(params)..., any<const T&>(), any<const U&>()...)) {
   return applyTuple(std::forward<Func>(func), t.rest,
                     std::forward<Params>(params)..., t.first);
@@ -278,26 +289,14 @@ template <typename Input, typename Output>
 class Parser {
 public:
   Parser(const Parser& other): wrapper(other.wrapper->clone()) {}
+  Parser(Parser& other): wrapper(other.wrapper->clone()) {}
+  Parser(const Parser&& other): wrapper(other.wrapper->clone()) {}
   Parser(Parser&& other): wrapper(move(other.wrapper)) {}
   Parser(OwnedPtr<ParserWrapper<Input, Output>> wrapper): wrapper(move(wrapper)) {}
 
   template <typename Other>
   Parser(Other&& other) {
-    struct WrapperImpl: public ParserWrapper<Input, Output> {
-      WrapperImpl(Other&& impl): impl(move(impl)) {};
-
-      Maybe<Output> operator()(Input& input) const {
-        return impl(input);
-      }
-
-      OwnedPtr<ParserWrapper<Input, Output>> clone() {
-        return ekam::newOwned<WrapperImpl>(*this);
-      }
-
-      Other impl;
-    };
-
-    wrapper = ekam::newOwned<WrapperImpl>(move(other));
+    wrapper = ekam::newOwned<WrapperImpl<Other>>(move(other));
   }
 
   Parser& operator=(const Parser& other) { wrapper = other.wrapper->clone(); }
@@ -311,6 +310,22 @@ public:
 
 private:
   OwnedPtr<ParserWrapper<Input, Output>> wrapper;
+
+  template <typename Other>
+  struct WrapperImpl: public ParserWrapper<Input, Output> {
+    WrapperImpl(Other&& impl): impl(move(impl)) {};
+    ~WrapperImpl() {}
+
+    Maybe<Output> operator()(Input& input) const {
+      return impl(input);
+    }
+
+    OwnedPtr<ParserWrapper<Input, Output>> clone() {
+      return ekam::newOwned<WrapperImpl>(*this);
+    }
+
+    Other impl;
+  };
 };
 
 template <typename ParserImpl>
@@ -541,7 +556,7 @@ public:
       subInput.advanceParent();
       return Result(move(*subResult));
     } else {
-      return nullptr;
+      return Result(nullptr);
     }
   }
 

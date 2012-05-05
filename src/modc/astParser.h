@@ -18,6 +18,8 @@
 #define KENTONSCODE_MODC_ASTPARSER_H_
 
 #include <vector>
+#include <set>
+#include <string>
 
 namespace modc {
   namespace tokens { class TokenStatement; }
@@ -30,7 +32,11 @@ namespace modc {
 namespace modc {
 namespace astParser {
 
-std::vector<ast::Statement> parse(const std::vector<tokens::TokenStatement>& statements);
+ast::Statement parseImperative(const tokens::TokenStatement& input);
+ast::Statement parseDeclarative(const tokens::TokenStatement& input);
+
+// All keywords used by the base parser.
+const std::set<std::string>& keywordSet();
 
 }  // namespace astParser
 }  // namespace modc

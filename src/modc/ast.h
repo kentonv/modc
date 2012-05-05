@@ -46,12 +46,16 @@ enum class Style {
   CONSTANT
 };
 
+std::ostream& operator<<(std::ostream& os, Style style);
+
 enum class StyleAllowance {
   VALUE,
   IMMUTABLE_REFERENCE,
   MUTABLE_REFERENCE,
   MOVE
 };
+
+std::ostream& operator<<(std::ostream& os, StyleAllowance style);
 
 class Statement;
 struct ParameterDeclaration;
@@ -117,7 +121,7 @@ public:
     LAMBDA
   };
 
-  Type getType();
+  Type getType() const { return type; }
 
   struct BinaryOperator {
     string op;
@@ -249,6 +253,8 @@ private:
   Expression(Type type): type(type) {}
 };
 
+std::ostream& operator<<(std::ostream& os, const Expression& expression);
+
 // =======================================================================================
 
 struct Annotation {
@@ -326,7 +332,15 @@ struct Declaration {
   bool operator!=(const Declaration& other) const { return !(*this == other); }
 
   static Declaration fromError(vector<errors::Error>&& errors);
+
+  // indent = -1 for non-statement
+  void print(std::ostream& os, int indent) const;
 };
+
+inline std::ostream& operator<<(std::ostream& os, const Declaration& declaration) {
+  declaration.print(os, -1);
+  return os;
+}
 
 class ParameterDeclaration {
 public:
@@ -353,6 +367,8 @@ private:
 
   ParameterDeclaration(Type type): type(type) {}
 };
+
+inline std::ostream& operator<<(std::ostream& os, const ParameterDeclaration& parameter);
 
 // =======================================================================================
 
@@ -386,7 +402,7 @@ public:
     COMMENT
   };
 
-  Type getType();
+  Type getType() const { return type; }
 
   struct Assignment {
     Expression variable;
@@ -472,11 +488,20 @@ public:
   static Statement fromBlank();
   static Statement fromComment(string&& text);
 
+  void print(std::ostream& os, int indent) const;
+
 private:
   Type type;
 
   Statement(Type type): type(type) {}
+
+  void printInner(std::ostream& os, int indent) const;
 };
+
+inline std::ostream& operator<<(std::ostream& os, const Statement& statement) {
+  statement.print(os, 0);
+  return os;
+}
 
 }  // namespace ast
 }  // namespace modc

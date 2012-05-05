@@ -17,7 +17,14 @@
 #include <iostream>
 #include <string>
 #include "tokens.h"
+#include "astParser.h"
+#include "ast.h"
 #include "errors.h"
+
+using std::cout;
+using std::cerr;
+using std::endl;
+using std::vector;
 
 int main(int argc, char* argv[]) {
   std::string text, line;
@@ -27,18 +34,25 @@ int main(int argc, char* argv[]) {
     text += '\n';
   }
 
-  modc::tokens::Parser parser({
-    "if", "else", "+", "+=", "=", "<", "<<", "<<<", "<<=", "<<<=", "=="});
-  auto statements = parser.parse(text);
+  modc::tokens::Parser parser(modc::astParser::keywordSet());
+  auto tokenStatements = parser.parse(text);
 
-  for (auto& statement: statements) {
+  cout << "=================================== TOKENS ===================================" << endl;
+
+  for (auto& statement: tokenStatements) {
     for (auto& error: statement.getErrors()) {
       std::cerr << "ERROR: " << error << std::endl;
     }
   }
 
-  for (auto& statement : statements) {
+  for (auto& statement : tokenStatements) {
     std::cout << statement;
+  }
+
+  cout << "=================================== AST ===================================" << endl;
+
+  for (auto& tokenStatement: tokenStatements) {
+    std::cout << modc::astParser::parseImperative(tokenStatement);
   }
 
   return 0;

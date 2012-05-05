@@ -54,6 +54,8 @@ using parser::repeated;
 using parser::oneOrMore;
 using parser::optional;
 
+using errors::Location;
+
 using namespace std::placeholders;
 
 struct TokenParserInput : public parser::IteratorInput<Token, vector<Token>::const_iterator> {
@@ -76,6 +78,13 @@ extern const StatementParser generalStatement;
 // =======================================================================================
 // Parsers for simple tokens
 
+// Hack:  This set is automatically initialized as the parsers are constructed.
+std::set<string> keywords;
+
+const std::set<string>& keywordSet() {
+  return keywords;
+}
+
 template <typename Parser>
 typename parser::ExtractParserType<Parser>::OutputType
 parseTokenSequence(const TokenSequence& sequence, const Parser& subParser) {
@@ -86,20 +95,21 @@ parseTokenSequence(const TokenSequence& sequence, const Parser& subParser) {
   if (parseResult && input.atEnd()) {
     return *parseResult;
   } else {
-    vector<errors::Error> errors;
+    vector<errors::Error> errors = sequence.getErrors();
 
     vector<Token>::const_iterator best = input.getBest();
     if (best < sequence.tokens.end()) {
-      errors.push_back(errors::error(best->startOffset, sequence.endOffset, "Syntax error."));
+      errors.push_back(errors::error(best->location.to(sequence.location), "Syntax error."));
     } else {
-      errors.push_back(errors::error(sequence.endOffset, sequence.endOffset, "Syntax error."));
+      errors.push_back(errors::error(sequence.location.last(0), "Syntax error."));
     }
-    return Result::fromError(sequence.getErrors());
+    return Result::fromError(move(errors));
   }
 }
 
 parser::ExactElementParser<TokenParserInput> keyword(string&& name) {
-  return parser::exactElement<TokenParserInput>(tokens::keyword(move(name)));
+  keywords.insert(name);
+  return parser::exactElement<TokenParserInput>(tokens::keyword(Location(), move(name)));
 }
 
 class OneOfKeywordsParser {
@@ -121,6 +131,7 @@ private:
 };
 
 OneOfKeywordsParser oneOfKeywords(std::initializer_list<string> names) {
+  keywords.insert(names.begin(), names.end());
   return OneOfKeywordsParser(names);
 }
 
@@ -151,6 +162,9 @@ private:
 template <typename T>
 OneOfKeywordsToTParser<T> oneOfKeywordsTo(
     std::initializer_list<typename std::map<string, T>::value_type> entries) {
+  for (auto& pair: entries) {
+    keywords.insert(pair.first);
+  }
   return OneOfKeywordsToTParser<T>(entries);
 }
 
@@ -208,7 +222,7 @@ struct BracketedParserTemplate {
           return parseTokenSequence((input.consume().*member)[0], subParser);
         } else {
           vector<errors::Error> errors;
-          errors.push_back(errors::error(input.current().startOffset, input.current().endOffset,
+          errors.push_back(errors::error(input.current().location,
                            "Must have exactly one element."));
           input.consume().getErrors(errors);
           return SubResult::fromError(move(errors));
@@ -256,9 +270,9 @@ parser::WrapperParserConstructor<BracketedParserTemplate<
 parser::WrapperParserConstructor<ListParserTemplate<
     Token::Type::BRACKETED, &Token::bracketed>::Parser> bracketedList;
 parser::WrapperParserConstructor<BracketedParserTemplate<
-    Token::Type::PARENTHESIZED, &Token::bracketed>::Parser> parenthesized;
+    Token::Type::PARENTHESIZED, &Token::parenthesized>::Parser> parenthesized;
 parser::WrapperParserConstructor<ListParserTemplate<
-    Token::Type::PARENTHESIZED, &Token::bracketed>::Parser> parenthesizedList;
+    Token::Type::PARENTHESIZED, &Token::parenthesized>::Parser> parenthesizedList;
 
 // =======================================================================================
 // Expression parser!
@@ -565,7 +579,12 @@ const DeclarationParser declarationForParameter = oneOf(
 
 // A parameter can be either a declaration or a constant.
 const ParameterDeclarationParser parameterDeclaration = oneOf(
-    transform(declarationForParameter, [](Declaration&& declaration){
+    transform(sequence(declarationForParameter,
+          optional(sequence(keyword("="), generalExpression))),
+      [](Declaration&& declaration, Maybe<Expression>&& definition){
+      if (definition) {
+        declaration.definition = Declaration::Definition::fromExpression(move(*definition));
+      }
       return ParameterDeclaration::fromVariable(move(declaration));
     }),
     transform(generalExpression, [](Expression&& expression){
@@ -670,10 +689,10 @@ StatementParser breakContinueStatement = transform(
     });
 
 const StatementParser imperativeLineStatement = oneOf(
-    expressionStatement,
-    declarationStatement(bareDeclarationInImperativeScope),
-    declarationStatement(definitionByAssignment),
     assignmentStatement,
+    declarationStatement(definitionByAssignment),
+    declarationStatement(bareDeclarationInImperativeScope),
+    expressionStatement,
     ifStatement(imperativeLineStatement),
     forStatement(imperativeLineStatement),
     whileStatement(imperativeLineStatement),
@@ -691,8 +710,8 @@ const StatementParser imperativeBlockStatement = oneOf(
     parallelStatement);
 
 const StatementParser declarativeLineStatement = oneOf(
-    declarationStatement(bareDeclarationInDeclarativeScope),
     declarationStatement(definitionByAssignment),
+    declarationStatement(bareDeclarationInDeclarativeScope),
     ifStatement(declarativeLineStatement),
     forStatement(declarativeLineStatement),
     whileStatement(declarativeLineStatement),
@@ -706,47 +725,91 @@ const StatementParser declarativeBlockStatement = oneOf(
     whileStatement(declarativeBlockStatement),
     loopStatement(declarativeBlockStatement));
 
-// enumStatement
-// unionStatement
+// TODO: enumStatement
+
+const DeclarationParser unionLineMember = oneOf(
+    definitionByAssignment,
+    bareDeclarationInDeclarativeScope);
+auto& unionBlockMember = declarationForBlock;
 
 // =======================================================================================
 
-enum class BlockType {
-  DECLARATIVE,
+Declaration parseUnionMember(const TokenStatement& input);
+
+enum class StatementContext {
   IMPERATIVE,
-  ENUM,
-  UNION,
-  NONE
+  DECLARATIVE,
+  ENUM
 };
 
-BlockType getBlockType(Declaration::Kind kind) {
-  switch (kind) {
+bool attachBlock(vector<Statement>& target, const vector<TokenStatement>& block,
+                 StatementContext context) {
+  target.reserve(block.size());
+  switch (context) {
+    case StatementContext::IMPERATIVE:
+      for (auto& tokenStatement: block) {
+        target.push_back(parseImperative(tokenStatement));
+      }
+      return true;
+    case StatementContext::DECLARATIVE:
+      for (auto& tokenStatement: block) {
+        target.push_back(parseDeclarative(tokenStatement));
+      }
+      return true;
+    case StatementContext::ENUM:
+      throw "unimplemented";
+      return true;
+  }
+
+  return false;
+}
+
+bool attachBlock(vector<Declaration>& target, const vector<TokenStatement>& block) {
+  target.reserve(block.size());
+  for (auto& tokenStatement: block) {
+    target.push_back(parseUnionMember(tokenStatement));
+  }
+
+  return true;
+}
+
+bool attachBlock(Declaration& declaration, const vector<TokenStatement>& block) {
+  declaration.definition = Declaration::Definition::fromBlock(vector<Statement>());
+
+  switch (declaration.kind) {
     case Declaration::Kind::VARIABLE:
     case Declaration::Kind::CLASS:
     case Declaration::Kind::INTERFACE:
-      return BlockType::DECLARATIVE;
+      attachBlock(declaration.definition->block, block, StatementContext::DECLARATIVE);
+      return true;
 
     case Declaration::Kind::FUNCTION:
     case Declaration::Kind::CONSTRUCTOR:
     case Declaration::Kind::DESTRUCTOR:
     case Declaration::Kind::CONVERSION:
     case Declaration::Kind::DEFAULT_CONVERSION:
-      return BlockType::IMPERATIVE;
+      attachBlock(declaration.definition->block, block, StatementContext::IMPERATIVE);
+      return true;
 
     case Declaration::Kind::ENUM:
-      return BlockType::ENUM;
+      attachBlock(declaration.definition->block, block, StatementContext::ENUM);
+      return true;
 
     case Declaration::Kind::ERROR:
+      return true;
+
     case Declaration::Kind::ENVIRONMENT:
-      return BlockType::NONE;
+      return false;
   }
 
-  return BlockType::NONE;
+  return false;
 }
 
-std::pair<BlockType, vector<Statement>*> whereDoesTheBlockGo(Statement& outer) {
-  switch (outer.getType()) {
+bool attachBlock(Statement& statement, const vector<TokenStatement>& block) {
+  switch (statement.getType()) {
     case Statement::Type::ERROR:
+      return true;
+
     case Statement::Type::EXPRESSION:
     case Statement::Type::ASSIGNMENT:
     case Statement::Type::RETURN:
@@ -754,94 +817,68 @@ std::pair<BlockType, vector<Statement>*> whereDoesTheBlockGo(Statement& outer) {
     case Statement::Type::CONTINUE:
     case Statement::Type::BLANK:
     case Statement::Type::COMMENT:
-      return std::make_pair(BlockType::NONE, nullptr);
+      return false;
 
     case Statement::Type::DECLARATION:
-      outer.declaration.definition = Declaration::Definition::fromBlock(vector<Statement>());
-      return std::make_pair(getBlockType(outer.declaration.kind),
-                            &outer.declaration.definition->block);
+      return attachBlock(statement.declaration, block);
 
     case Statement::Type::BLOCK:
-      return std::make_pair(BlockType::IMPERATIVE, &outer.block);
+      return attachBlock(statement.block, block, StatementContext::IMPERATIVE);
 
     case Statement::Type::IF:
-      return whereDoesTheBlockGo(*outer.if_.body);
+      return attachBlock(*statement.if_.body, block);
     case Statement::Type::ELSE:
-      return whereDoesTheBlockGo(*outer.else_);
+      return attachBlock(*statement.else_, block);
     case Statement::Type::FOR:
-      return whereDoesTheBlockGo(*outer.for_.body);
+      return attachBlock(*statement.for_.body, block);
     case Statement::Type::WHILE:
-      return whereDoesTheBlockGo(*outer.while_.body);
+      return attachBlock(*statement.while_.body, block);
     case Statement::Type::LOOP:
-      return whereDoesTheBlockGo(*outer.loop.body);
+      return attachBlock(*statement.loop.body, block);
     case Statement::Type::PARALLEL:
-      return std::make_pair(BlockType::IMPERATIVE, &outer.parallel);
+      return attachBlock(statement.parallel, block, StatementContext::IMPERATIVE);
 
     case Statement::Type::UNION:
-      return std::make_pair(BlockType::UNION, nullptr);
+      return attachBlock(statement.union_, block);
   }
 
-  return std::make_pair(BlockType::NONE, nullptr);
-}
-
-Statement parseImperative(const TokenStatement& input);
-Statement parseDeclarative(const TokenStatement& input);
-
-void parseBlock(const vector<TokenStatement>& block, Statement& target) {
-  auto where = whereDoesTheBlockGo(target);
-  BlockType blockType = where.first;
-  vector<Statement>* targetVec = where.second;
-
-  if (targetVec != nullptr) {
-    targetVec->reserve(block.size());
-  }
-
-  switch (blockType) {
-    case BlockType::DECLARATIVE:
-      for (auto& tokenStatement: block) {
-        targetVec->push_back(parseDeclarative(tokenStatement));
-      }
-      break;
-    case BlockType::IMPERATIVE:
-      for (auto& tokenStatement: block) {
-        targetVec->push_back(parseImperative(tokenStatement));
-      }
-      break;
-    case BlockType::ENUM:
-      throw "unimplemented";
-    case BlockType::UNION:
-      throw "unimplemented";
-    case BlockType::NONE:
-      // TODO:  Some kind of error.
-      break;
-  }
+  return false;
 }
 
 Statement parseImperative(const TokenStatement& input) {
   if (input.block) {
     Statement result = parseTokenSequence(input.tokens, imperativeBlockStatement);
-    parseBlock(*input.block, result);
+    if (!attachBlock(result, *input.block)) {
+      throw "bad block";
+    }
     return result;
   } else {
-    return parseTokenSequence(input.tokens, imperativeBlockStatement);
+    return parseTokenSequence(input.tokens, imperativeLineStatement);
   }
 }
 
 Statement parseDeclarative(const TokenStatement& input) {
   if (input.block) {
     Statement result = parseTokenSequence(input.tokens, declarativeBlockStatement);
-    parseBlock(*input.block, result);
+    if (!attachBlock(result, *input.block)) {
+      throw "bad block";
+    }
     return result;
   } else {
-    return parseTokenSequence(input.tokens, declarativeBlockStatement);
+    return parseTokenSequence(input.tokens, declarativeLineStatement);
   }
 }
 
-vector<Statement> parse(const vector<TokenStatement>& statements) {
-  // Temporary:  Force compilation.
-  generalExpression(*((TokenParserInput*)nullptr));
-
-  return vector<Statement>();
+Declaration parseUnionMember(const TokenStatement& input) {
+  if (input.block) {
+    Declaration result = parseTokenSequence(input.tokens, unionBlockMember);
+    if (!attachBlock(result, *input.block)) {
+      throw "bad block";
+    }
+    return result;
+  } else {
+    return parseTokenSequence(input.tokens, unionLineMember);
+  }
 }
 
 }  // namespace astParser

@@ -31,6 +31,8 @@ void expectNoErrors(const std::vector<TokenStatement>& statements) {
   }
 }
 
+auto LOC = Location();
+
 TEST(Tokens, ParseIdentifiers) {
   Parser parser({});
   std::vector<TokenStatement> statements = parser.parse("foo bar baz;");
@@ -43,9 +45,9 @@ TEST(Tokens, ParseIdentifiers) {
   const std::vector<Token>& tokens = statement.tokens.tokens;
   ASSERT_EQ(3u, tokens.size());
 
-  EXPECT_EQ(identifier("foo"), tokens[0]);
-  EXPECT_EQ(identifier("bar"), tokens[1]);
-  EXPECT_EQ(identifier("baz"), tokens[2]);
+  EXPECT_EQ(identifier(LOC, "foo"), tokens[0]);
+  EXPECT_EQ(identifier(LOC, "bar"), tokens[1]);
+  EXPECT_EQ(identifier(LOC, "baz"), tokens[2]);
 }
 
 TEST(Tokens, ParseKeywords) {
@@ -60,14 +62,14 @@ TEST(Tokens, ParseKeywords) {
   const std::vector<Token>& tokens = statement.tokens.tokens;
   ASSERT_EQ(8u, tokens.size());
 
-  EXPECT_EQ(keyword("foo"), tokens[0]);
-  EXPECT_EQ(keyword("bar"), tokens[1]);
-  EXPECT_EQ(identifier("baz"), tokens[2]);
-  EXPECT_EQ(keyword("+"), tokens[3]);
-  EXPECT_EQ(keyword("-"), tokens[4]);
-  EXPECT_EQ(keyword("+="), tokens[5]);
-  EXPECT_EQ(keyword("-"), tokens[6]);
-  EXPECT_EQ(keyword("="), tokens[7]);
+  EXPECT_EQ(keyword(LOC, "foo"), tokens[0]);
+  EXPECT_EQ(keyword(LOC, "bar"), tokens[1]);
+  EXPECT_EQ(identifier(LOC, "baz"), tokens[2]);
+  EXPECT_EQ(keyword(LOC, "+"), tokens[3]);
+  EXPECT_EQ(keyword(LOC, "-"), tokens[4]);
+  EXPECT_EQ(keyword(LOC, "+="), tokens[5]);
+  EXPECT_EQ(keyword(LOC, "-"), tokens[6]);
+  EXPECT_EQ(keyword(LOC, "="), tokens[7]);
 }
 
 TEST(Tokens, ParseIntegers) {
@@ -82,9 +84,9 @@ TEST(Tokens, ParseIntegers) {
   const std::vector<Token>& tokens = statement.tokens.tokens;
   ASSERT_EQ(3u, tokens.size());
 
-  EXPECT_EQ(literal(1234567890), tokens[0]);
-  EXPECT_EQ(literal(01234567), tokens[1]);
-  EXPECT_EQ(literal(0x1234abcd), tokens[2]);
+  EXPECT_EQ(literal(LOC, 1234567890), tokens[0]);
+  EXPECT_EQ(literal(LOC, 01234567), tokens[1]);
+  EXPECT_EQ(literal(LOC, 0x1234abcd), tokens[2]);
 }
 
 TEST(Tokens, ParseFloats) {
@@ -99,10 +101,10 @@ TEST(Tokens, ParseFloats) {
   const std::vector<Token>& tokens = statement.tokens.tokens;
   ASSERT_EQ(4u, tokens.size());
 
-  EXPECT_EQ(literal(1.0), tokens[0]);
-  EXPECT_EQ(literal(12.25), tokens[1]);
-  EXPECT_EQ(literal(12e34), tokens[2]);
-  EXPECT_EQ(literal(12.25e34), tokens[3]);
+  EXPECT_EQ(literal(LOC, 1.0), tokens[0]);
+  EXPECT_EQ(literal(LOC, 12.25), tokens[1]);
+  EXPECT_EQ(literal(LOC, 12e34), tokens[2]);
+  EXPECT_EQ(literal(LOC, 12.25e34), tokens[3]);
 }
 
 const char HEX_DIGITS[] = "0123456789abcdef";
@@ -141,14 +143,14 @@ TEST(Tokens, ParseStrings) {
   const std::vector<Token>& tokens = statement.tokens.tokens;
   ASSERT_EQ(8u, tokens.size());
 
-  EXPECT_EQ(literal("foo bar \b\n\t\"\\ baz"), tokens[0]);
-  EXPECT_EQ(literal("foo \\bar \"' baz"), tokens[1]);
-  EXPECT_EQ(literal("foo \n"), tokens[2]);
-  EXPECT_EQ(literal("test\" test"), tokens[3]);
-  EXPECT_EQ(literal("\1 \12 \123"), tokens[4]);
-  EXPECT_EQ(literal("\x12 \xab"), tokens[5]);
-  EXPECT_EQ(literal(u8"\u000a \u00ab \u0abc \uabcd"), tokens[6]);
-  EXPECT_EQ(literal(
+  EXPECT_EQ(literal(LOC, "foo bar \b\n\t\"\\ baz"), tokens[0]);
+  EXPECT_EQ(literal(LOC, "foo \\bar \"' baz"), tokens[1]);
+  EXPECT_EQ(literal(LOC, "foo \n"), tokens[2]);
+  EXPECT_EQ(literal(LOC, "test\" test"), tokens[3]);
+  EXPECT_EQ(literal(LOC, "\1 \12 \123"), tokens[4]);
+  EXPECT_EQ(literal(LOC, "\x12 \xab"), tokens[5]);
+  EXPECT_EQ(literal(LOC, u8"\u000a \u00ab \u0abc \uabcd"), tokens[6]);
+  EXPECT_EQ(literal(LOC,
       u8"\U0000000a \U000000a1 \U00000a12 \U0000a123 \U000a1234 \U00a12345 \U0a123456 \U1a123456"),
       tokens[7]);
 }

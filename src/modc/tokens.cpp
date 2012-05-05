@@ -31,9 +31,9 @@ using std::move;
 
 using chars::CharClass;
 using chars::CharType;
-Token::Token(Type type): type(type) {}
+Token::Token(Location location, Type type): location(location), type(type) {}
 
-Token::Token(Token&& other): type(other.type) {
+Token::Token(Token&& other): location(other.location), type(other.type) {
   switch (type) {
     case Type::ERROR:
       new (&error) std::vector<errors::Error>(move(other.error));
@@ -65,7 +65,7 @@ Token::Token(Token&& other): type(other.type) {
   }
 }
 
-Token::Token(const Token& other): type(other.type) {
+Token::Token(const Token& other): location(other.location), type(other.type) {
   switch (type) {
     case Type::ERROR:
       new (&error) std::vector<errors::Error>(other.error);
@@ -170,93 +170,93 @@ bool Token::operator==(const Token& other) const {
 
 // =======================================================================================
 
-Token errorToken(errors::Error&& error) {
-  Token result(Token::Type::ERROR);
+Token errorToken(Location location, errors::Error&& error) {
+  Token result(location, Token::Type::ERROR);
   new (&result.error) std::vector<errors::Error>();
   result.error.push_back(move(error));
   return result;
 }
-Token errorToken(const errors::Error& error) {
-  Token result(Token::Type::ERROR);
+Token errorToken(Location location, const errors::Error& error) {
+  Token result(location, Token::Type::ERROR);
   new (&result.error) std::vector<errors::Error>();
   result.error.push_back(error);
   return result;
 }
 
-Token errorToken(std::vector<errors::Error>&& errors) {
-  Token result(Token::Type::ERROR);
+Token errorToken(Location location, std::vector<errors::Error>&& errors) {
+  Token result(location, Token::Type::ERROR);
   new (&result.error) std::vector<errors::Error>(move(errors));
   return result;
 }
 
-Token errorToken(const std::vector<errors::Error>& errors) {
-  Token result(Token::Type::ERROR);
+Token errorToken(Location location, const std::vector<errors::Error>& errors) {
+  Token result(location, Token::Type::ERROR);
   new (&result.error) std::vector<errors::Error>(errors);
   return result;
 }
 
-Token keyword(string&& keyword) {
-  Token result(Token::Type::KEYWORD);
+Token keyword(Location location, string&& keyword) {
+  Token result(location, Token::Type::KEYWORD);
   new (&result.keyword) string(move(keyword));
   return result;
 }
 
-Token keyword(const string& keyword) {
-  Token result(Token::Type::KEYWORD);
+Token keyword(Location location, const string& keyword) {
+  Token result(location, Token::Type::KEYWORD);
   new (&result.keyword) string(keyword);
   return result;
 }
 
-Token identifier(string&& name) {
-  Token result(Token::Type::IDENTIFIER);
+Token identifier(Location location, string&& name) {
+  Token result(location, Token::Type::IDENTIFIER);
   new (&result.identifier) string(move(name));
   return result;
 }
 
-Token identifier(const string& name) {
-  Token result(Token::Type::IDENTIFIER);
+Token identifier(Location location, const string& name) {
+  Token result(location, Token::Type::IDENTIFIER);
   new (&result.identifier) string(name);
   return result;
 }
 
-Token bracketed(std::vector<TokenSequence>&& content) {
-  Token result(Token::Type::BRACKETED);
+Token bracketed(Location location, std::vector<TokenSequence>&& content) {
+  Token result(location, Token::Type::BRACKETED);
   new (&result.bracketed) std::vector<TokenSequence>(move(content));
   return result;
 }
-Token bracketed(const std::vector<TokenSequence>& content) {
-  Token result(Token::Type::BRACKETED);
+Token bracketed(Location location, const std::vector<TokenSequence>& content) {
+  Token result(location, Token::Type::BRACKETED);
   new (&result.bracketed) std::vector<TokenSequence>(content);
   return result;
 }
-Token parenthesized(std::vector<TokenSequence>&& content) {
-  Token result(Token::Type::PARENTHESIZED);
+Token parenthesized(Location location, std::vector<TokenSequence>&& content) {
+  Token result(location, Token::Type::PARENTHESIZED);
   new (&result.parenthesized) std::vector<TokenSequence>(move(content));
   return result;
 }
-Token parenthesized(const std::vector<TokenSequence>& content) {
-  Token result(Token::Type::PARENTHESIZED);
+Token parenthesized(Location location, const std::vector<TokenSequence>& content) {
+  Token result(location, Token::Type::PARENTHESIZED);
   new (&result.parenthesized) std::vector<TokenSequence>(content);
   return result;
 }
 
-Token literal(int value) {
-  Token result(Token::Type::LITERAL_INT);
+Token literal(Location location, int value) {
+  Token result(location, Token::Type::LITERAL_INT);
   new (&result.literalInt) int(value);
   return result;
 }
-Token literal(double value) {
-  Token result(Token::Type::LITERAL_DOUBLE);
+Token literal(Location location, double value) {
+  Token result(location, Token::Type::LITERAL_DOUBLE);
   new (&result.literalDouble) double(value);
   return result;
 }
-Token literal(string&& value) {
-  Token result(Token::Type::LITERAL_STRING);
+Token literal(Location location, string&& value) {
+  Token result(location, Token::Type::LITERAL_STRING);
   new (&result.literalString) string(move(value));
   return result;
 }
-Token literal(const string& value) {
-  Token result(Token::Type::LITERAL_STRING);
+Token literal(Location location, const string& value) {
+  Token result(location, Token::Type::LITERAL_STRING);
   new (&result.literalString) string(value);
   return result;
 }
@@ -322,6 +322,8 @@ std::vector<errors::Error> TokenStatement::getErrors() const {
 }
 
 std::ostream& operator<<(std::ostream& os, const Token& token) {
+  os << token.location;
+
   switch (token.getType()) {
     case Token::Type::ERROR: {
       os << "errorToken([";
@@ -503,9 +505,13 @@ public:
     return string(start, end);
   }
 
+  errors::Location location() {
+    return errors::Location(start - fileStart, end - fileStart);
+  }
+
   template <typename... Parts>
   errors::Error error(Parts&&... message) {
-    return errors::error(start - fileStart, end - fileStart, std::forward<Parts>(message)...);
+    return errors::error(location(), std::forward<Parts>(message)...);
   }
 
   template <typename... Parts>
@@ -514,18 +520,18 @@ public:
       DEBUG_ERROR << "errorAtEnd() byteCount overflow.";
     }
 
-    return errors::error(end - fileStart - byteCount, end - fileStart,
-                         std::forward<Parts>(message)...);
+    return errors::error(location().last(byteCount), std::forward<Parts>(message)...);
   }
 
   template <typename... Parts>
   Token errorToken(Parts&&... message) {
-    return tokens::errorToken(error(std::forward<Parts>(message)...));
+    return tokens::errorToken(location(), error(std::forward<Parts>(message)...));
   }
 
   template <typename... Parts>
   Token errorTokenAtEnd(int byteCount, Parts&&... message) {
-    return tokens::errorToken(errorAtEnd(byteCount, std::forward<Parts>(message)...));
+    return tokens::errorToken(location().last(byteCount),
+                              errorAtEnd(byteCount, std::forward<Parts>(message)...));
   }
 
 private:
@@ -716,9 +722,9 @@ Token Parser::parseQuote(Reader& reader, const CharClass& quotable, const CharCl
   }
 
   if (errors.empty()) {
-    return literal(move(text));
+    return literal(span.location(), move(text));
   } else {
-    return errorToken(move(errors));
+    return errorToken(span.location(), move(errors));
   }
 }
 
@@ -727,10 +733,10 @@ Token Parser::parseNumber(Reader& reader) {
   if (span.tryConsume('0')) {
     if (span.tryConsume('x')) {
       span.consumeAll(chars::HEX_DIGIT);
-      return literal(parseInt(span.content(), 0));
+      return literal(span.location(), parseInt(span.content(), 0));
     } else {
       span.consumeAll(chars::OCTAL_DIGIT);
-      return literal(parseInt(span.content(), 0));
+      return literal(span.location(), parseInt(span.content(), 0));
     }
   } else {
     bool isFloat = false;
@@ -746,14 +752,21 @@ Token Parser::parseNumber(Reader& reader) {
     }
 
     if (isFloat) {
-      return literal(parseDouble(span.content().c_str()));
+      return literal(span.location(), parseDouble(span.content().c_str()));
     } else {
-      return literal(parseInt(span.content().c_str(), 10));
+      return literal(span.location(), parseInt(span.content().c_str(), 10));
     }
   }
 }
 
 TokenSequence Parser::parseSequence(Reader& reader) {
+  Reader span(reader);
+  TokenSequence result = parseSequenceInternal(span);
+  result.location = span.location();
+  return result;
+}
+
+TokenSequence Parser::parseSequenceInternal(Reader& reader) {
   TokenSequence result;
 
   while (true) {
@@ -775,6 +788,7 @@ TokenSequence Parser::parseSequence(Reader& reader) {
         Reader span(reader);
         span.consumeAll(chars::OPERATOR);
         string op = span.content();
+        Location location = span.location();
 
         while (!op.empty()) {
           for (string::size_type i = op.size(); ; i--) {
@@ -786,8 +800,9 @@ TokenSequence Parser::parseSequence(Reader& reader) {
 
             string sub = op.substr(0, i);
             if (keywords.count(sub)) {
+              result.tokens.push_back(keyword(location.first(i), sub));
               op.erase(0, i);
-              result.tokens.push_back(keyword(sub));
+              location = location.last(op.size());
               break;
             }
           }
@@ -800,9 +815,9 @@ TokenSequence Parser::parseSequence(Reader& reader) {
         span.consumeAll(chars::ALPHANUMERIC);
         string word = span.content();
         if (keywords.count(word) > 0) {
-          result.tokens.push_back(keyword(move(word)));
+          result.tokens.push_back(keyword(span.location(), move(word)));
         } else {
-          result.tokens.push_back(identifier(move(word)));
+          result.tokens.push_back(identifier(span.location(), move(word)));
         }
         break;
       }
@@ -847,8 +862,12 @@ TokenSequence Parser::parseSequence(Reader& reader) {
               terms.push_back(parseSequence(span));
             } while (span.tryConsume(','));
 
+            if (terms.size() == 1 && terms.back().tokens.empty()) {
+              terms.pop_back();
+            }
+
             if (span.tryConsume(')')) {
-              result.tokens.push_back(parenthesized(move(terms)));
+              result.tokens.push_back(parenthesized(span.location(), move(terms)));
             } else {
               result.tokens.push_back(span.errorToken("Expected ')'."));
             }
@@ -865,7 +884,7 @@ TokenSequence Parser::parseSequence(Reader& reader) {
             } while (span.tryConsume(','));
 
             if (span.tryConsume(']')) {
-              result.tokens.push_back(bracketed(move(terms)));
+              result.tokens.push_back(bracketed(span.location(), move(terms)));
             } else {
               result.tokens.push_back(span.errorToken("Expected ']'."));
             }
@@ -910,8 +929,9 @@ void Parser::skipStatement(Reader& reader) {
 }
 
 TokenStatement Parser::parseStatement(Reader& reader) {
-  Reader span(reader);
   TokenStatement result;
+  Reader span(reader);
+
   result.tokens = parseSequence(span);
   if (span.lookingAt('{')) {
     Reader blockSpan(span);
@@ -944,7 +964,11 @@ TokenStatement Parser::parseStatement(Reader& reader) {
 std::vector<TokenStatement> Parser::parse(const string& text) {
   Reader reader(text);
   std::vector<TokenStatement> result;
-  while (reader.lookingAt(chars::ANY)) {
+  while (true) {
+    reader.consumeAll(chars::WHITESPACE);
+    if (!reader.lookingAt(chars::ANY)) {
+      break;
+    }
     result.push_back(parseStatement(reader));
   }
   return result;

@@ -78,7 +78,7 @@ public:
       }
       isSet = other.isSet;
       if (isSet) {
-        value = move(other.value);
+        new (&value) T(move(other.value));
       }
     }
     return *this;
@@ -91,7 +91,7 @@ public:
       }
       isSet = other.isSet;
       if (isSet) {
-        value = other.value;
+        new (&value) T(other.value);
       }
     }
     return *this;
