@@ -225,13 +225,6 @@ public:
 
   Iterator getBest() { return std::max(pos, best); }
 
-  bool operator==(const IteratorInput& other) const { return pos == other.pos; }
-  bool operator!=(const IteratorInput& other) const { return pos != other.pos; }
-  bool operator<=(const IteratorInput& other) const { return pos <= other.pos; }
-  bool operator>=(const IteratorInput& other) const { return pos >= other.pos; }
-  bool operator< (const IteratorInput& other) const { return pos <  other.pos; }
-  bool operator> (const IteratorInput& other) const { return pos >  other.pos; }
-
 private:
   IteratorInput* parent;
   Iterator pos;
@@ -263,15 +256,15 @@ struct ExtractParseFuncType<Maybe<O> (Object::*)(I&)> {
 template <typename T>
 struct ExtractParserType: public ExtractParseFuncType<decltype(&T::operator())> {};
 template <typename T>
-struct ExtractParserType<T&>: public ExtractParseFuncType<decltype(&T::operator())> {};
+struct ExtractParserType<T&>: public ExtractParserType<T> {};
 template <typename T>
-struct ExtractParserType<T&&>: public ExtractParseFuncType<decltype(&T::operator())> {};
+struct ExtractParserType<T&&>: public ExtractParserType<T> {};
 template <typename T>
-struct ExtractParserType<const T>: public ExtractParseFuncType<decltype(&T::operator())> {};
+struct ExtractParserType<const T>: public ExtractParserType<T> {};
 template <typename T>
-struct ExtractParserType<const T&>: public ExtractParseFuncType<decltype(&T::operator())> {};
+struct ExtractParserType<const T&>: public ExtractParserType<T> {};
 template <typename T>
-struct ExtractParserType<const T&&>: public ExtractParseFuncType<decltype(&T::operator())> {};
+struct ExtractParserType<const T&&>: public ExtractParserType<T> {};
 
 // =======================================================================================
 
@@ -697,9 +690,9 @@ acceptIf(SubParser&& subParser, Condition&& condition) {
 // EndOfInputParser
 // Output = Void, only succeeds if at end-of-input
 
+template <typename Input>
 class EndOfInputParser {
 public:
-  template <typename Input>
   Maybe<Void> operator()(Input& input) const {
     if (input.atEnd()) {
       return Void();
@@ -709,8 +702,9 @@ public:
   }
 };
 
-EndOfInputParser endOfInput() {
-  return EndOfInputParser();
+template <typename T>
+EndOfInputParser<T> endOfInput() {
+  return EndOfInputParser<T>();
 }
 
 }  // namespace ast

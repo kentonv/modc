@@ -234,6 +234,12 @@ bool Declaration::operator==(const Declaration& other) const {
          definition == other.definition;
 }
 
+Declaration Declaration::fromError(vector<errors::Error>&& errors) {
+  Declaration result(Kind::ERROR);
+  result.definition = Definition::fromExpression(Expression::fromError(move(errors)));
+  return result;
+}
+
 Declaration::Definition::Definition(Definition&& other): type(other.type) {
   switch (type) {
     case Type::EXPRESSION:
@@ -369,6 +375,7 @@ bool ParameterDeclaration::operator==(const ParameterDeclaration& other) const {
 }
 
 ParameterDeclaration ParameterDeclaration::fromError(vector<errors::Error>&& errors) {
+  // TODO:  Maybe there should be an ERROR Type.
   return fromConstant(Expression::fromError(move(errors)));
 }
 ParameterDeclaration ParameterDeclaration::fromConstant(Expression&& expression) {
@@ -533,7 +540,7 @@ Statement Statement::fromWhile(Expression&& condition, Statement&& body) {
   new (&result.while_) While(move(condition), move(body));
   return result;
 }
-Statement Statement::fromLoop(string&& name, Statement&& body) {
+Statement Statement::fromLoop(Maybe<string>&& name, Statement&& body) {
   Statement result(Type::LOOP);
   new (&result.loop) Loop(move(name), move(body));
   return result;

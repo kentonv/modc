@@ -62,6 +62,8 @@ struct TokenParserInput : public parser::IteratorInput<Token, vector<Token>::con
           sequence.tokens.begin(), sequence.tokens.end()) {}
 };
 
+auto endOfInput = parser::endOfInput<TokenParserInput>();
+
 typedef parser::Parser<TokenParserInput, Expression> ExpressionParser;
 extern const ExpressionParser generalExpression;
 typedef parser::Parser<TokenParserInput, Declaration> DeclarationParser;
@@ -512,11 +514,15 @@ const DeclarationParser explicitDeclaration = transform(
       return move(result);
     });
 
+// -------------------------------------------------------------------
+
+// A declaration that will be followed by a block.
 const DeclarationParser declarationForBlock = oneOf(
     variableDeclaration,
     functionDeclaration,
     explicitDeclaration);
 
+// A declaration that will be followed by an assignment.
 // TODO:  Allow assignment syntax for defining functions, without "func" keyword?  It could be a
 //   nice way to write a quick one-liner function without using a block.  The trouble is:
 //   1) We need to not match the left-hand side when it is a function call.  We could accomplish
@@ -528,26 +534,36 @@ const DeclarationParser declarationForBlock = oneOf(
 //      variables here, it may be better to avoid supporting functions.
 // TODO:  Speaking of which, *do* we want to allow complexly-named variables here, without the
 //   "var" keyword?
+// TODO:  Maybe use "=>" for short functions?
 const DeclarationParser declarationForAssignment = oneOf(
     annotatedVariableDeclaration,
     explicitDeclaration);
 
+// A declaration that is followed by semicolon, in declarative scope.
 const DeclarationParser bareDeclarationInDeclarativeScope = oneOf(
     annotatedVariableDeclaration,
     functionDeclaration,
     explicitDeclaration);
 
+// A declaration that is followed by semicolon, in imperative scope.  In fact, only variable
+// declarations can occur this way in imperative scope, but we parse the others in order to produce
+// nicer errors.
 const DeclarationParser bareDeclarationInImperativeScope = oneOf(
     annotatedVariableDeclaration,
     explicitDeclaration);
 
-// Since it makes no sense for a parameter to be a function, we can allow complexly-named
-// variables here without the "var" keyword.
+// The only declaration kinds that remotely make sense as parameters are "var" and "class".
+// As a result, we can allow complexly-named vars without the explit "var" keyword, because they
+// cannot be mistaken for functions.
+// TODO:  Do we actually want to allow "class" here, or just use vars with type "Type"?
+//
+// Note that this parser is also used to parse the stuff in parentheses after the "for" keyword.
 const DeclarationParser declarationForParameter = oneOf(
     annotatedVariableDeclaration,
     complexlyNamedVariableDeclaration,
     explicitDeclaration);
 
+// A parameter can be either a declaration or a constant.
 const ParameterDeclarationParser parameterDeclaration = oneOf(
     transform(declarationForParameter, [](Declaration&& declaration){
       return ParameterDeclaration::fromVariable(move(declaration));
@@ -556,6 +572,7 @@ const ParameterDeclarationParser parameterDeclaration = oneOf(
       return ParameterDeclaration::fromConstant(move(expression));
     }));
 
+// A complete assignment statement.
 const DeclarationParser definitionByAssignment = transform(
     sequence(declarationForAssignment, keyword("="), generalExpression),
     [](Declaration&& declaration, Expression&& expression) {
@@ -563,28 +580,134 @@ const DeclarationParser definitionByAssignment = transform(
       return move(declaration);
     });
 
+// =======================================================================================
+// Statement parser!
+
+StatementParser expressionStatement = transform(generalExpression,
+    [](Expression&& expression) { return Statement::fromExpression(move(expression)); });
+
+StatementParser blockStatement = transform(endOfInput,
+    // Block will be filled in later.
+    []() { return Statement::fromBlock(vector<Statement>()); });
+
+// Convert a declaration parser into a statement parser.
 StatementParser declarationStatement(const DeclarationParser& parser) {
   return transform(parser, [](Declaration&& declaration) {
     return Statement::fromDeclaration(move(declaration));
   });
 }
 
-// =======================================================================================
-// Statement parser!
+StatementParser assignmentStatement = transform(
+    sequence(generalExpression, keyword("="), generalExpression),
+    [](Expression&& variable, Expression&& value) {
+      return Statement::fromAssignment(move(variable), move(value));
+    });
 
-const StatementParser declarativeBlockStatement = oneOf(
-    declarationStatement(declarationForBlock));
+StatementParser unionStatement = transform(keyword("union"),
+    // Block will be filled in later.
+    []() { return Statement::fromUnion(vector<Declaration>()); });
+
+StatementParser ifStatement(const StatementParser& generalStatement) {
+  return transform(sequence(keyword("if"), parenthesized(generalExpression), generalStatement),
+      [](Expression&& condition, Statement&& body) {
+        return Statement::fromIf(move(condition), move(body));
+      });
+}
+
+StatementParser forStatement(const StatementParser& generalStatement) {
+  return transform(sequence(keyword("for"), parenthesizedList(declarationForParameter),
+                            generalStatement),
+      [](vector<Declaration>&& declarations, Statement&& body) {
+        return Statement::fromFor(move(declarations), move(body));
+      });
+}
+
+StatementParser whileStatement(const StatementParser& generalStatement) {
+  return transform(sequence(keyword("while"), parenthesized(generalExpression),
+                            generalStatement),
+      [](Expression&& condition, Statement&& body) {
+        return Statement::fromWhile(move(condition), move(body));
+      });
+}
+
+StatementParser loopStatement(const StatementParser& generalStatement) {
+  return transform(sequence(keyword("loop"), optional(identifier), generalStatement),
+      [](Maybe<string>&& name, Statement&& body) {
+        return Statement::fromLoop(move(name), move(body));
+      });
+}
+
+StatementParser parallelStatement = transform(keyword("parallel"),
+    // Block will be filled in later.
+    []() { return Statement::fromParallel(vector<Statement>()); });
+
+StatementParser returnStatement = transform(
+    sequence(keyword("return"), optional(generalExpression)),
+    [](Maybe<Expression>&& expression) {
+      if (expression) {
+        return Statement::fromReturn(move(*expression));
+      } else {
+        return Statement::fromReturn(Expression::fromTuple(vector<Expression>()));
+      }
+    });
+
+
+auto breakOrContinue = oneOfKeywordsTo<bool>({
+    std::make_pair("break", true),
+    std::make_pair("continue", false)});
+
+StatementParser breakContinueStatement = transform(
+    sequence(breakOrContinue, optional(identifier),
+             optional(sequence(keyword("if"), parenthesized(generalExpression)))),
+    [](bool isBreak, Maybe<string>&& loopName, Maybe<Expression>&& condition) {
+      Statement result = isBreak ?
+          Statement::fromBreak(move(loopName)) :
+          Statement::fromContinue(move(loopName));
+      if (condition) {
+        result = Statement::fromIf(move(*condition), move(result));
+      }
+      return result;
+    });
+
+const StatementParser imperativeLineStatement = oneOf(
+    expressionStatement,
+    declarationStatement(bareDeclarationInImperativeScope),
+    declarationStatement(definitionByAssignment),
+    assignmentStatement,
+    ifStatement(imperativeLineStatement),
+    forStatement(imperativeLineStatement),
+    whileStatement(imperativeLineStatement),
+    loopStatement(imperativeLineStatement),
+    returnStatement,
+    breakContinueStatement);
 
 const StatementParser imperativeBlockStatement = oneOf(
-    declarationStatement(declarationForBlock));
+    blockStatement,
+    declarationStatement(declarationForBlock),
+    ifStatement(imperativeBlockStatement),
+    forStatement(imperativeBlockStatement),
+    whileStatement(imperativeBlockStatement),
+    loopStatement(imperativeBlockStatement),
+    parallelStatement);
 
 const StatementParser declarativeLineStatement = oneOf(
     declarationStatement(bareDeclarationInDeclarativeScope),
-    declarationStatement(definitionByAssignment));
+    declarationStatement(definitionByAssignment),
+    ifStatement(declarativeLineStatement),
+    forStatement(declarativeLineStatement),
+    whileStatement(declarativeLineStatement),
+    loopStatement(declarativeLineStatement));
 
-const StatementParser imperativeLineStatement = oneOf(
-    declarationStatement(bareDeclarationInImperativeScope),
-    declarationStatement(definitionByAssignment));
+const StatementParser declarativeBlockStatement = oneOf(
+    declarationStatement(declarationForBlock),
+    unionStatement,
+    ifStatement(declarativeBlockStatement),
+    forStatement(declarativeBlockStatement),
+    whileStatement(declarativeBlockStatement),
+    loopStatement(declarativeBlockStatement));
+
+// enumStatement
+// unionStatement
 
 // =======================================================================================
 

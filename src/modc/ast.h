@@ -267,6 +267,8 @@ struct Annotation {
 
 struct Declaration {
   enum class Kind {
+    ERROR,  // definition->expression contains error, rest of structure is undefined.
+
     VARIABLE,
     ENVIRONMENT,
 
@@ -322,6 +324,8 @@ struct Declaration {
 
   bool operator==(const Declaration& other) const;
   bool operator!=(const Declaration& other) const { return !(*this == other); }
+
+  static Declaration fromError(vector<errors::Error>&& errors);
 };
 
 class ParameterDeclaration {
@@ -458,7 +462,7 @@ public:
   static Statement fromIf(Expression&& condition, Statement&& body);
   static Statement fromFor(vector<Declaration>&& range, Statement&& body);
   static Statement fromWhile(Expression&& condition, Statement&& body);
-  static Statement fromLoop(string&& name, Statement&& body);
+  static Statement fromLoop(Maybe<string>&& name, Statement&& body);
   static Statement fromParallel(vector<Statement>&& statements);
 
   static Statement fromReturn(Expression&& value);
