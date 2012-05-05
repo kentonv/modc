@@ -268,7 +268,6 @@ CodePrinter& operator<<(CodePrinter& os, const Expression& expression);
 
 struct Annotation {
   enum Relationship {
-    IS_A,
     SUBCLASS_OF,
     SUPERCLASS_OF,
     ANNOTATION
@@ -307,6 +306,7 @@ struct Declaration {
 
   Maybe<Located<string>> name;  // omitted for implicit constructor, destructor, conversion.
   Maybe<vector<ParameterDeclaration>> parameters;
+  Maybe<Expression> type;
   vector<Annotation> annotations;
   Maybe<Located<string>> documentation;
 
@@ -488,6 +488,7 @@ public:
   static Statement fromUnion(Location location, vector<Declaration>&& declarations);
 
   static Statement fromIf(Location location, Expression&& condition, Statement&& body);
+  static Statement fromElse(Location location, Statement&& body);
   static Statement fromFor(Location location, vector<Declaration>&& range, Statement&& body);
   static Statement fromWhile(Location location, Expression&& condition, Statement&& body);
   static Statement fromLoop(Location location, Maybe<string>&& name, Statement&& body);

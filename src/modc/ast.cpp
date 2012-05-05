@@ -228,12 +228,13 @@ Declaration::Declaration(Location location, Kind kind)
 Declaration::~Declaration() {}
 
 bool Declaration::operator==(const Declaration& other) const {
-  static_assert(sizeof(Declaration) == 200, "Please update Declaration::operator==.");
+  static_assert(sizeof(Declaration) == 264, "Please update Declaration::operator==.");
   return kind == other.kind &&
          thisStyle == other.thisStyle &&
          style == other.style &&
          name == other.name &&
          parameters == other.parameters &&
+         type == other.type &&
          annotations == other.annotations &&
          documentation == other.documentation &&
          definition == other.definition;
@@ -538,6 +539,11 @@ Statement Statement::fromIf(Location location, Expression&& condition, Statement
   new (&result.if_) If(move(condition), move(body));
   return result;
 }
+Statement Statement::fromElse(Location location, Statement&& body) {
+  Statement result(location, Type::ELSE);
+  new (&result.else_) Indirect<Statement>(move(body));
+  return result;
+}
 Statement Statement::fromFor(Location location, vector<Declaration>&& range, Statement&& body) {
   Statement result(location, Type::FOR);
   new (&result.for_) For(move(range), move(body));
@@ -755,9 +761,22 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
   }
   printer << glue << style;
 
+  if (kind == Kind::FUNCTION) {
+    if (!type) {
+      printer << ": ";
+    } else if (type->getType() == Expression::Type::TUPLE && type->tuple.empty()) {
+      // empty tuple return -- nothing to print
+    } else {
+      printer << ": " << glue << *type;
+    }
+  } else {
+    if (type) {
+      printer << ": " << glue << *type;
+    }
+  }
+
   for (auto& ann: annotations) {
     switch (ann.relationship) {
-      case Annotation::Relationship::IS_A: printer << ": "; break;
       case Annotation::Relationship::SUBCLASS_OF: printer << space << "<: "; break;
       case Annotation::Relationship::SUPERCLASS_OF: printer << space << ":> "; break;
       case Annotation::Relationship::ANNOTATION: printer << space << ":: "; break;

@@ -435,7 +435,9 @@ const ExpressionParser binaryOpParser(const ExpressionParser& next,
 const ExpressionParser multiplyExpression = binaryOpParser(prefixedExpression, {"*", "/", "%"});
 const ExpressionParser addExpression      = binaryOpParser(multiplyExpression, {"+", "-"});
 const ExpressionParser shiftExpression    = binaryOpParser(addExpression     , {"<<", ">>"});
-const ExpressionParser bitandExpression   = binaryOpParser(shiftExpression   , {"&"});
+const ExpressionParser orderExpression    = binaryOpParser(shiftExpression   , {"<",">","<=",">="});
+const ExpressionParser compareExpression  = binaryOpParser(orderExpression   , {"==", "!="});
+const ExpressionParser bitandExpression   = binaryOpParser(compareExpression , {"&"});
 const ExpressionParser bitxorExpression   = binaryOpParser(bitandExpression  , {"^"});
 const ExpressionParser bitorExpression    = binaryOpParser(bitxorExpression  , {"|"});
 const ExpressionParser andExpression      = binaryOpParser(bitorExpression   , {"&&"});
@@ -480,7 +482,6 @@ auto aliasQualifier = oneOfKeywordsTo<Style>({
     std::make_pair("^", Style::CONSTANT)});
 
 auto relationship = oneOfKeywordsTo<Annotation::Relationship>({
-    std::make_pair(":", Annotation::Relationship::IS_A),
     std::make_pair("<:", Annotation::Relationship::SUBCLASS_OF),
     std::make_pair(":>", Annotation::Relationship::SUPERCLASS_OF),
     std::make_pair("::", Annotation::Relationship::ANNOTATION)});
@@ -490,69 +491,13 @@ auto annotation = transform(sequence(relationship, optional(generalExpression)),
       return Annotation(relationship, move(param));
     });
 
-const DeclarationParser variableDeclaration = transform(
-    sequence(located(identifier), optional(aliasQualifier), repeated(annotation)),
-    [](Loc l, Located<string>&& name, Maybe<Style>&& style, vector<Annotation>&& annotations) {
-      Declaration result(l, Declaration::Kind::VARIABLE);
-      result.name = move(name);
-      result.style = style ? *style : Style::VALUE;
-      result.annotations = move(annotations);
-      return move(result);
-    });
-
-const DeclarationParser annotatedVariableDeclaration = transform(
-    sequence(located(identifier), optional(aliasQualifier), oneOrMore(annotation)),
-    [](Loc l, Located<string>&& name, Maybe<Style>&& style, vector<Annotation>&& annotations) {
-      Declaration result(l, Declaration::Kind::VARIABLE);
-      result.name = move(name);
-      result.style = style ? *style : Style::VALUE;
-      result.annotations = move(annotations);
-      return move(result);
-    });
-
-const DeclarationParser complexlyNamedVariableDeclaration = transform(
-    sequence(located(identifier),
-             parenthesizedList(generalExpression),
-             optional(aliasQualifier),
-             oneOrMore(annotation)),
-    [] (Loc l,
-        Located<string>&& name,
-        vector<Expression>&& parameters,
-        Maybe<Style>&& style,
-        vector<Annotation>&& annotations) {
-      Declaration result(l, Declaration::Kind::VARIABLE);
-      result.name = move(name);
-      result.style = style ? *style : Style::VALUE;
-      result.annotations = move(annotations);
-      return move(result);
-    });
-
-const DeclarationParser functionDeclaration = transform(
-    sequence(optional(aliasQualifier),
-             located(identifier),
-             parenthesizedList(parameterDeclaration),
-             optional(aliasQualifier),
-             repeated(annotation)),
-    [] (Loc l,
-        Maybe<Style> thisStyle,
-        Located<string>&& name,
-        vector<ParameterDeclaration> parameters,
-        Maybe<Style> style, vector<Annotation>&& annotations) {
-      Declaration result(l, Declaration::Kind::FUNCTION);
-      result.thisStyle = thisStyle ? *thisStyle : Style::VALUE;
-      result.name = move(name);
-      result.parameters = move(parameters);
-      result.style = style ? *style : Style::VALUE;
-      result.annotations = move(annotations);
-      return move(result);
-    });
-
-const DeclarationParser explicitDeclaration = transform(
+const DeclarationParser declaration = transform(
     sequence(kind,
              optional(aliasQualifier),
              optional(located(identifier)),
              optional(parenthesizedList(parameterDeclaration)),
              optional(aliasQualifier),
+             optional(sequence(keyword(":"), optional(generalExpression))),
              repeated(annotation)),
     [] (Loc l,
         Declaration::Kind kind,
@@ -560,68 +505,59 @@ const DeclarationParser explicitDeclaration = transform(
         Maybe<Located<string>>&& name,
         Maybe<vector<ParameterDeclaration>>&& parameters,
         Maybe<Style>&& style,
+        Maybe<Maybe<Expression>>&& type,
         vector<Annotation>&& annotations) {
       Declaration result(l, kind);
       result.thisStyle = thisStyle ? *thisStyle : Style::VALUE;
       result.style = style ? *style : Style::VALUE;
       result.name = move(name);
       result.parameters = move(parameters);
+      if (type) {
+        result.type = *type;
+      } else if (kind == Declaration::Kind::FUNCTION) {
+        result.type = Expression::fromTuple(Location(), vector<Expression>());
+      }
+      result.annotations = move(annotations);
+      return move(result);
+    });
+
+// In a parameter, "var" is implicit, but every parameter must have a type.
+const DeclarationParser implicitVarDeclaration = transform(
+    sequence(located(identifier),
+             optional(parenthesizedList(generalExpression)),
+             optional(aliasQualifier),
+             sequence(keyword(":"), optional(generalExpression)),
+             repeated(annotation)),
+    [] (Loc l,
+        Located<string>&& name,
+        Maybe<vector<Expression>>&& parameters,
+        Maybe<Style>&& style,
+        Maybe<Expression>&& type,
+        vector<Annotation>&& annotations) {
+      Declaration result(l, Declaration::Kind::VARIABLE);
+      result.name = move(name);
+      if (parameters) {
+        result.parameters = vector<ParameterDeclaration>();
+        result.parameters->reserve(parameters->size());
+        for (auto& param: *parameters) {
+          result.parameters->push_back(ParameterDeclaration::fromConstant(
+              param.location, move(param)));
+        }
+      }
+      result.style = style ? *style : Style::VALUE;
+      result.type = move(type);
       result.annotations = move(annotations);
       return move(result);
     });
 
 // -------------------------------------------------------------------
 
-// A declaration that will be followed by a block.
-const DeclarationParser declarationForBlock = oneOf(
-    variableDeclaration,
-    functionDeclaration,
-    explicitDeclaration);
-
-// A declaration that will be followed by an assignment.
-// TODO:  Allow assignment syntax for defining functions, without "func" keyword?  It could be a
-//   nice way to write a quick one-liner function without using a block.  The trouble is:
-//   1) We need to not match the left-hand side when it is a function call.  We could accomplish
-//      this by requiring the declaration to have a return type annotation, but this is
-//      inconsistent with other function call declarations that can omit the return type to return
-//      void.
-//   2) We may want to distinguish from complexly-named variables as well, in which case we need to
-//      ensure that at least one parameter is a variable.  If we want to support complexly-named
-//      variables here, it may be better to avoid supporting functions.
-// TODO:  Speaking of which, *do* we want to allow complexly-named variables here, without the
-//   "var" keyword?
-// TODO:  Maybe use "=>" for short functions?
-const DeclarationParser declarationForAssignment = oneOf(
-    annotatedVariableDeclaration,
-    explicitDeclaration);
-
-// A declaration that is followed by semicolon, in declarative scope.
-const DeclarationParser bareDeclarationInDeclarativeScope = oneOf(
-    annotatedVariableDeclaration,
-    functionDeclaration,
-    explicitDeclaration);
-
-// A declaration that is followed by semicolon, in imperative scope.  In fact, only variable
-// declarations can occur this way in imperative scope, but we parse the others in order to produce
-// nicer errors.
-const DeclarationParser bareDeclarationInImperativeScope = oneOf(
-    annotatedVariableDeclaration,
-    explicitDeclaration);
-
-// The only declaration kinds that remotely make sense as parameters are "var" and "class".
-// As a result, we can allow complexly-named vars without the explit "var" keyword, because they
-// cannot be mistaken for functions.
-// TODO:  Do we actually want to allow "class" here, or just use vars with type "Type"?
-//
-// Note that this parser is also used to parse the stuff in parentheses after the "for" keyword.
-const DeclarationParser declarationForParameter = oneOf(
-    annotatedVariableDeclaration,
-    complexlyNamedVariableDeclaration,
-    explicitDeclaration);
-
 // A parameter can be either a declaration or a constant.
+//
+// The only declaration kinds that remotely make sense as parameters are "var" and "class".
+// TODO:  Do we actually want to allow "class" here, or just use vars with type "Type"?
 const ParameterDeclarationParser parameterDeclaration = oneOf(
-    transform(sequence(declarationForParameter,
+    transform(sequence(oneOf(declaration, implicitVarDeclaration),
           optional(sequence(keyword("="), generalExpression))),
       [](Loc l, Declaration&& declaration, Maybe<Expression>&& definition){
       if (definition) {
@@ -633,11 +569,12 @@ const ParameterDeclarationParser parameterDeclaration = oneOf(
       return ParameterDeclaration::fromConstant(l, move(expression));
     }));
 
-// A complete assignment statement.
-const DeclarationParser definitionByAssignment = transform(
-    sequence(declarationForAssignment, keyword("="), generalExpression),
-    [](Loc l, Declaration&& declaration, Expression&& expression) {
-      declaration.definition = Declaration::Definition::fromExpression(move(expression));
+const DeclarationParser declarationMaybeAssignment = transform(
+    sequence(declaration, optional(sequence(keyword("="), generalExpression))),
+    [](Loc l, Declaration&& declaration, Maybe<Expression>&& expression) {
+      if (expression) {
+        declaration.definition = Declaration::Definition::fromExpression(move(*expression));
+      }
       return move(declaration);
     });
 
@@ -675,8 +612,16 @@ StatementParser ifStatement(const StatementParser& generalStatement) {
       });
 }
 
+StatementParser elseStatement(const StatementParser& generalStatement) {
+  return transform(sequence(keyword("else"), generalStatement),
+      [](Loc l, Statement&& body) {
+        return Statement::fromElse(l, move(body));
+      });
+}
+
 StatementParser forStatement(const StatementParser& generalStatement) {
-  return transform(sequence(keyword("for"), parenthesizedList(declarationForParameter),
+  return transform(sequence(keyword("for"),
+                            parenthesizedList(oneOf(declaration, implicitVarDeclaration)),
                             generalStatement),
       [](Loc l, vector<Declaration>&& declarations, Statement&& body) {
         return Statement::fromFor(l, move(declarations), move(body));
@@ -734,10 +679,10 @@ StatementParser breakContinueStatement = transform(
 
 const StatementParser imperativeLineStatement = oneOf(
     assignmentStatement,
-    declarationStatement(definitionByAssignment),
-    declarationStatement(bareDeclarationInImperativeScope),
+    declarationStatement(declarationMaybeAssignment),
     expressionStatement,
     ifStatement(imperativeLineStatement),
+    elseStatement(imperativeLineStatement),
     forStatement(imperativeLineStatement),
     whileStatement(imperativeLineStatement),
     loopStatement(imperativeLineStatement),
@@ -746,35 +691,35 @@ const StatementParser imperativeLineStatement = oneOf(
 
 const StatementParser imperativeBlockStatement = oneOf(
     blockStatement,
-    declarationStatement(declarationForBlock),
+    declarationStatement(declaration),
     ifStatement(imperativeBlockStatement),
+    elseStatement(imperativeBlockStatement),
     forStatement(imperativeBlockStatement),
     whileStatement(imperativeBlockStatement),
     loopStatement(imperativeBlockStatement),
     parallelStatement);
 
 const StatementParser declarativeLineStatement = oneOf(
-    declarationStatement(definitionByAssignment),
-    declarationStatement(bareDeclarationInDeclarativeScope),
+    declarationStatement(declarationMaybeAssignment),
     ifStatement(declarativeLineStatement),
+    elseStatement(declarativeLineStatement),
     forStatement(declarativeLineStatement),
     whileStatement(declarativeLineStatement),
     loopStatement(declarativeLineStatement));
 
 const StatementParser declarativeBlockStatement = oneOf(
-    declarationStatement(declarationForBlock),
+    declarationStatement(declaration),
     unionStatement,
     ifStatement(declarativeBlockStatement),
+    elseStatement(declarativeBlockStatement),
     forStatement(declarativeBlockStatement),
     whileStatement(declarativeBlockStatement),
     loopStatement(declarativeBlockStatement));
 
 // TODO: enumStatement
 
-const DeclarationParser unionLineMember = oneOf(
-    definitionByAssignment,
-    bareDeclarationInDeclarativeScope);
-auto& unionBlockMember = declarationForBlock;
+auto& unionLineMember = declarationMaybeAssignment;
+auto& unionBlockMember = declaration;
 
 // =======================================================================================
 
