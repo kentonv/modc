@@ -465,10 +465,10 @@ Parser::Parser(std::set<string> keywords): keywords(move(keywords)) {}
 class Parser::Reader {
 public:
   Reader(const string& text)
-      : parent(NULL), fileStart(&text.front()), start(fileStart), end(start),
+      : parent(NULL), line(0), lineStart(&text.front()), start(lineStart), end(start),
         limit(&text.back() + 1) {}
   Reader(Reader& parent)
-      : parent(&parent), fileStart(parent.fileStart), start(parent.end),
+      : parent(&parent), line(parent.line), lineStart(parent.lineStart), start(parent.end),
         end(start), limit(parent.limit) {
     parent.end = NULL;
   }
@@ -476,15 +476,21 @@ public:
   ~Reader() {
     if (parent != NULL) {
       parent->end = end;
+      parent->line = line;
+      parent->lineStart = lineStart;
     }
   }
 
   bool lookingAt(const CharClass& charClass) {
+    assert(end != nullptr);
     return end < limit && charClass.contains(*end);
   }
   bool tryConsume(const CharClass& charClass) {
     if (lookingAt(charClass)) {
-      ++end;
+      if (*end++ == '\n') {
+        ++line;
+        lineStart = end;
+      }
       return true;
     } else {
       return false;
@@ -506,7 +512,8 @@ public:
   }
 
   errors::Location location() {
-    return errors::Location(start - fileStart, end - fileStart);
+    return errors::Location(errors::LineColumn(line, start - lineStart),
+                            errors::LineColumn(line, end - lineStart));
   }
 
   template <typename... Parts>
@@ -536,7 +543,8 @@ public:
 
 private:
   Reader* const parent;
-  const char* const fileStart;
+  int line;
+  const char* lineStart;
   const char* const start;
   const char* end;
   const char* const limit;
@@ -730,7 +738,7 @@ Token Parser::parseQuote(Reader& reader, const CharClass& quotable, const CharCl
 
 Token Parser::parseNumber(Reader& reader) {
   Reader span(reader);
-  if (span.tryConsume('0')) {
+  if (span.tryConsume('0') && !span.lookingAt('.')) {
     if (span.tryConsume('x')) {
       span.consumeAll(chars::HEX_DIGIT);
       return literal(span.location(), parseInt(span.content(), 0));
@@ -929,35 +937,71 @@ void Parser::skipStatement(Reader& reader) {
 }
 
 TokenStatement Parser::parseStatement(Reader& reader) {
+  // All callers should have already eaten leading whitespace, but do so here anyway to be safe.
+  reader.consumeAll(chars::INLINE_WHITESPACE);
+
   TokenStatement result;
-  Reader span(reader);
+  if (!reader.lookingAt('#')) {
+    Reader span(reader);
 
-  result.tokens = parseSequence(span);
-  if (span.lookingAt('{')) {
-    Reader blockSpan(span);
-    blockSpan.tryConsume('{');
-    result.block.init();
-    while (true) {
-      blockSpan.consumeAll(chars::WHITESPACE);
-
-      if (blockSpan.tryConsume('}')) {
-        break;
-      }
-
-      if (blockSpan.lookingAt(chars::ANY)) {
-        result.block->push_back(parseStatement(blockSpan));
-      } else {
-        TokenStatement errorStatement;
-        errorStatement.tokens.tokens.push_back(
-            blockSpan.errorTokenAtEnd(0, "Block missing closing brace."));
-        result.block->push_back(errorStatement);
-        break;
-      }
+    if (span.tryConsume('\n')) {
+      // Blank statement.
+      return result;
     }
-  } else if (!span.tryConsume(';')) {
-    result.tokens.tokens.push_back(span.errorTokenAtEnd(0, "Expected ';'."));
-    skipStatement(span);
+
+    result.tokens = parseSequence(span);
+    if (span.lookingAt('{')) {
+      Reader blockSpan(span);
+      blockSpan.tryConsume('{');
+
+      // Consume whitespace and newline after opening brace so that it isn't considered a blank
+      // statement.
+      blockSpan.consumeAll(chars::INLINE_WHITESPACE);
+      blockSpan.tryConsume('\n');
+
+      result.block.init();
+      while (true) {
+        blockSpan.consumeAll(chars::INLINE_WHITESPACE);
+
+        if (blockSpan.tryConsume('}')) {
+          break;
+        }
+
+        if (blockSpan.lookingAt(chars::ANY)) {
+          result.block->push_back(parseStatement(blockSpan));
+        } else {
+          TokenStatement errorStatement;
+          errorStatement.tokens.tokens.push_back(
+              blockSpan.errorTokenAtEnd(0, "Block missing closing brace."));
+          result.block->push_back(errorStatement);
+          break;
+        }
+      }
+    } else if (!span.tryConsume(';')) {
+      result.tokens.tokens.push_back(span.errorTokenAtEnd(0, "Expected ';'."));
+      skipStatement(span);
+    }
   }
+
+  // Consume whitespace and newline after semicolon so that it isn't considered a blank
+  // statement.
+  reader.consumeAll(chars::INLINE_WHITESPACE);
+
+  if (reader.lookingAt('#')) {
+    Reader commentSpan(reader);
+    commentSpan.tryConsume('#');
+    commentSpan.tryConsume(' ');
+    string content;
+    {
+      Reader commentContentSpan(commentSpan);
+      commentContentSpan.consumeAll(chars::ANY - '\n');
+      content = commentContentSpan.content();
+    }
+    result.comment = Located<string>(commentSpan.location(), move(content));
+  }
+
+  reader.tryConsume('\n');
+
   return result;
 }
 
@@ -965,7 +1009,7 @@ std::vector<TokenStatement> Parser::parse(const string& text) {
   Reader reader(text);
   std::vector<TokenStatement> result;
   while (true) {
-    reader.consumeAll(chars::WHITESPACE);
+    reader.consumeAll(chars::INLINE_WHITESPACE);
     if (!reader.lookingAt(chars::ANY)) {
       break;
     }

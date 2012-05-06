@@ -20,6 +20,7 @@
 #include <functional>
 #include <ostream>
 #include <google/protobuf/stubs/strutil.h>
+#include <map>
 
 #include "tokens.h"
 #include "errors.h"
@@ -58,7 +59,7 @@ void Destroy(T& obj) {
   HANDLE(IMPORT, import, string) \
   HANDLE(LAMBDA, lambda, Lambda)
 
-Expression::Expression(Expression&& other): type(other.type) {
+Expression::Expression(Expression&& other): location(other.location), type(other.type) {
   switch (type) {
 #define MOVE_CONSTRUCT(ID, NAME, TYPE) \
     case Type::ID: \
@@ -69,7 +70,7 @@ Expression::Expression(Expression&& other): type(other.type) {
   }
 }
 
-Expression::Expression(const Expression& other): type(other.type) {
+Expression::Expression(const Expression& other): location(other.location), type(other.type) {
   switch (type) {
 #define COPY_CONSTRUCT(ID, NAME, TYPE) \
     case Type::ID: \
@@ -228,7 +229,7 @@ Declaration::Declaration(Location location, Kind kind)
 Declaration::~Declaration() {}
 
 bool Declaration::operator==(const Declaration& other) const {
-  static_assert(sizeof(Declaration) == 264, "Please update Declaration::operator==.");
+  static_assert(sizeof(Declaration) == 336, "Please update Declaration::operator==.");
   return kind == other.kind &&
          thisStyle == other.thisStyle &&
          style == other.style &&
@@ -237,7 +238,8 @@ bool Declaration::operator==(const Declaration& other) const {
          type == other.type &&
          annotations == other.annotations &&
          documentation == other.documentation &&
-         definition == other.definition;
+         definition == other.definition &&
+         comment == other.comment;
 }
 
 Declaration Declaration::fromError(Location location, vector<errors::Error>&& errors) {
@@ -416,10 +418,10 @@ ParameterDeclaration ParameterDeclaration::fromVariable(Location location,
   HANDLE(PARALLEL, parallel, vector<Statement>) \
   HANDLE(RETURN, return_, Expression) \
   HANDLE(BREAK, break_, Maybe<string>) \
-  HANDLE(CONTINUE, continue_, Maybe<string>) \
-  HANDLE(COMMENT, comment, string)
+  HANDLE(CONTINUE, continue_, Maybe<string>)
 
-Statement::Statement(Statement&& other): type(other.type) {
+Statement::Statement(Statement&& other)
+    : comment(other.comment), location(other.location), type(other.type) {
   switch (type) {
 #define MOVE_CONSTRUCT(ID, NAME, TYPE) \
     case Type::ID: \
@@ -433,7 +435,8 @@ Statement::Statement(Statement&& other): type(other.type) {
   }
 }
 
-Statement::Statement(const Statement& other): type(other.type) {
+Statement::Statement(const Statement& other)
+    : comment(other.comment), location(other.location), type(other.type) {
   switch (type) {
 #define COPY_CONSTRUCT(ID, NAME, TYPE) \
     case Type::ID: \
@@ -476,6 +479,10 @@ Statement& Statement::operator=(const Statement& other) {
 }
 
 bool Statement::operator==(const Statement& other) const {
+  if (comment != other.comment) {
+    return false;
+  }
+
   if (type == other.type) {
     switch (type) {
 #define COMPARE(ID, NAME, TYPE) \
@@ -584,11 +591,6 @@ Statement Statement::fromContinue(Location location, Maybe<string>&& loopName) {
 Statement Statement::fromBlank(Location location) {
   return Statement(location, Type::BLANK);
 }
-Statement Statement::fromComment(Location location, string&& text) {
-  Statement result(location, Type::COMMENT);
-  new (&result.comment) string(move(text));
-  return result;
-}
 
 // =======================================================================================
 // iostreams
@@ -617,6 +619,74 @@ CodePrinter& operator<<(CodePrinter& printer, const vector<T>& vec) {
 
 CodePrinter& operator<<(CodePrinter& printer, const errors::Error& error) {
   return printer << "(" << glue << error.message << glue << ")";
+}
+
+vector<vector<string>> operators = {
+  vector<string> {"*", "/", "%"},
+  vector<string> {"+", "-"},
+  vector<string> {"<<", ">>"},
+  vector<string> {"<", ">", "<=", ">="},
+  vector<string> {"==", "!="},
+  vector<string> {"&"},
+  vector<string> {"^"},
+  vector<string> {"|"},
+  vector<string> {"&&"},
+  vector<string> {"||"}
+};
+
+std::map<string, int> operatorPriorities;
+
+struct Initializer {
+  Initializer() {
+    for (size_t i = 0; i < operators.size(); i++) {
+      for (const string& op: operators[i]) {
+        operatorPriorities[op] = 50 - i;
+      }
+    }
+  }
+};
+Initializer initializer;
+
+int priority(const Expression& exp) {
+  switch (exp.getType()) {
+    case Expression::Type::ERROR:
+    case Expression::Type::VARIABLE:
+    case Expression::Type::TUPLE:
+    case Expression::Type::LITERAL_INT:
+    case Expression::Type::LITERAL_DOUBLE:
+    case Expression::Type::LITERAL_STRING:
+    case Expression::Type::LITERAL_ARRAY:
+    case Expression::Type::IMPORT:
+      return 100;
+
+    case Expression::Type::FUNCTION_CALL:
+    case Expression::Type::SUBSCRIPT:
+    case Expression::Type::MEMBER_ACCESS:
+    case Expression::Type::POSTFIX_OPERATOR:
+      return 90;
+
+    case Expression::Type::PREFIX_OPERATOR:
+      return 80;
+
+    case Expression::Type::BINARY_OPERATOR: {
+      auto iter = operatorPriorities.find(exp.binaryOperator.op);
+      if (iter == operatorPriorities.end()) {
+        DEBUG_ERROR << "Missing operator priority: " << exp.binaryOperator.op;
+        return 50;
+      } else {
+        return iter->second;
+      }
+    }
+
+    case Expression::Type::TERNARY_OPERATOR:
+      return 10;
+
+    case Expression::Type::LAMBDA:
+      // Well, it's really only a zero if stuff appear on the right side of the lambda...
+      return 0;
+  }
+
+  throw "can't get here";
 }
 
 }  // namespace
@@ -648,85 +718,110 @@ CodePrinter& operator<<(CodePrinter& printer,
   return printer << parameter.styleAllowance << parameter.expression;
 }
 
-CodePrinter& operator<<(CodePrinter& printer, const Expression& exp) {
-  switch (exp.getType()) {
+void Expression::print(CodePrinter& printer, int minPriority) const {
+  int pri = priority(*this);
+  if (pri < minPriority) {
+    printer << "(" << glue;
+  }
+
+  switch (getType()) {
     case Expression::Type::ERROR:
-      printer << "{{EXPRESSION ERROR: " << exp.error << glue << "}}";
+      printer << "{{EXPRESSION ERROR: " << error << glue << "}}";
       break;
 
     case Expression::Type::VARIABLE:
-      printer << exp.variable;
+      printer << variable;
       break;
     case Expression::Type::TUPLE:
-      printer << "(" << glue << exp.tuple << glue << ")";
+      // Expressions in the array never need parenthesization.
+      printer << "(" << glue << tuple << glue << ")";
       break;
 
     case Expression::Type::LITERAL_INT:
-      printer << google::protobuf::SimpleItoa(exp.literalInt);
+      printer << google::protobuf::SimpleItoa(literalInt);
       break;
     case Expression::Type::LITERAL_DOUBLE: {
-      string result = google::protobuf::SimpleDtoa(exp.literalDouble);
+      string result = google::protobuf::SimpleDtoa(literalDouble);
       if (result.find_first_of(".eE") == string::npos) {
         result += ".0";
+      } else {
+        // SimpleDtoa() likes to put plus signs on positive exponents.  Remove it.
+        string::size_type pos = result.find_first_of('+');
+        if (pos != string::npos) {
+          result.erase(pos, 1);
+        }
       }
       printer << result;
       break;
     }
     case Expression::Type::LITERAL_STRING:
       // TODO:  Split on line breaks.
-      printer << "\"" << glue << google::protobuf::CEscape(exp.literalString) << glue << "\"";
+      printer << "\"" << glue << google::protobuf::CEscape(literalString) << glue << "\"";
       break;
     case Expression::Type::LITERAL_ARRAY:
-      printer << "[" << glue << exp.literalArray << glue << "]";
+      // Expressions in the list never need parenthesization.
+      printer << "[" << glue << literalArray << glue << "]";
       break;
 
-    case Expression::Type::BINARY_OPERATOR:
-      printer << "(" << glue << exp.binaryOperator.left
-              << " " << exp.binaryOperator.op
-              << " " << exp.binaryOperator.right
-              << glue << ")";
+    case Expression::Type::BINARY_OPERATOR: {
+      // Left side can have equal priority to expression.
+      binaryOperator.left->print(printer, pri);
+
+      printer << space << glue << binaryOperator.op << space;
+
+      // Right side must have higher priority.
+      binaryOperator.right->print(printer, pri + 1);
+
       break;
-    case Expression::Type::PREFIX_OPERATOR:
-      printer << "(" << glue << exp.prefixOperator.op
-              << glue << exp.prefixOperator.operand
-              << glue << ")";
+    }
+    case Expression::Type::PREFIX_OPERATOR: {
+      printer << prefixOperator.op << glue;
+      prefixOperator.operand->print(printer, pri);
       break;
+    }
     case Expression::Type::POSTFIX_OPERATOR:
-      printer << "(" << glue << exp.postfixOperator.operand
-              << glue << exp.postfixOperator.op
-              << ")";
+      postfixOperator.operand->print(printer, pri);
+      printer << glue << postfixOperator.op;
       break;
     case Expression::Type::TERNARY_OPERATOR:
-      printer << "(" << glue << exp.ternaryOperator.condition
-              << " ? " << exp.ternaryOperator.trueClause
-              << " : " << exp.ternaryOperator.falseClause
-              << glue << ")";
+      // The middle part doesn't need parenthesization, but the ends might.  The ternary operator
+      // is right-to-left associative, so the condition needs to have pri + 1 but the false clause
+      // can have just pri.
+      ternaryOperator.condition->print(printer, pri + 1);
+      printer << glue << " ? " << ternaryOperator.trueClause << glue << " : ";
+      ternaryOperator.falseClause->print(printer, pri);
       break;
 
     case Expression::Type::FUNCTION_CALL: {
-      printer << exp.functionCall.function << glue
-              << "(" << exp.functionCall.parameters << glue << ")";
+      functionCall.function->print(printer, pri);
+      // Parameters don't need parenthesization.
+      printer << glue << "(" << functionCall.parameters << glue << ")";
       break;
     }
     case Expression::Type::SUBSCRIPT:
-      printer << exp.subscript.container << glue
-              << "[" << exp.subscript.subscript << glue << "]";
+      subscript.container->print(printer, pri);
+      // Subscript doesn't need parenthesization.
+      printer << glue << "[" << subscript.subscript << glue << "]";
       break;
     case Expression::Type::MEMBER_ACCESS:
-      printer << exp.memberAccess.object << "." << glue << exp.memberAccess.member;
+      memberAccess.object->print(printer, pri);
+      printer << "." << glue << memberAccess.member;
       break;
 
     case Expression::Type::IMPORT:
-      printer << "import \"" << glue << google::protobuf::CEscape(exp.import) << glue << "\"";
+      printer << "import \"" << glue << google::protobuf::CEscape(import) << glue << "\"";
       break;
 
     case Expression::Type::LAMBDA:
-      printer << "((" << glue << exp.lambda.parameters << glue << ")" << glue
-              << exp.lambda.style << glue << " => " << exp.lambda.body << glue << ")";
+      printer << "(" << glue << lambda.parameters << glue << ")" << glue
+              << lambda.style << glue << " => ";
+      lambda.body->print(printer, pri);
       break;
   }
 
-  return printer;
+  if (pri < minPriority) {
+    printer << glue << ")";
+  }
 }
 
 void Declaration::print(CodePrinter& printer, bool asStatement) const {
@@ -797,7 +892,7 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
         break;
       case Declaration::Definition::Type::BLOCK:
         if (asStatement) {
-          printer << " {" << startBlock;
+          printer << " {" << endStatement << startBlock;
           for (auto& statement: definition->block) {
             printer << statement;
           }
@@ -831,61 +926,61 @@ CodePrinter& operator<<(CodePrinter& printer, const ParameterDeclaration& param)
 CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
   switch (stmt.getType()) {
     case Statement::Type::ERROR:
-      printer << "{{STATEMENT ERROR: " << stmt.error << glue << "}};" << endStatement;
+      printer << "{{STATEMENT ERROR: " << stmt.error << glue << "}};";
       break;
 
     case Statement::Type::EXPRESSION:
-      printer << stmt.expression << glue << ";" << endStatement;
+      printer << stmt.expression << glue << ";";
       break;
     case Statement::Type::BLOCK:
-      printer << "{" << startBlock;
+      printer << "{" << endStatement << startBlock;
       for (auto& statement: stmt.block) {
         printer << statement;
       }
-      printer << endBlock << "}" << endStatement;
+      printer << endBlock << "}";
       break;
 
     case Statement::Type::DECLARATION:
       stmt.declaration.print(printer, true);
-      break;
+      return printer;
     case Statement::Type::ASSIGNMENT:
-      printer << stmt.assignment.variable << glue << " = " << stmt.assignment.value << glue << ";"
-              << endStatement;
+      printer << stmt.assignment.variable << glue << " = " << stmt.assignment.value << glue << ";";
       break;
 
     case Statement::Type::UNION:
-      printer << "union {" << startBlock;
+      printer << "union {" << endStatement << startBlock;
       for (auto& decl: stmt.union_) {
         decl.print(printer, true);
       }
-      printer << endBlock << "}" << endStatement;
+      printer << endBlock << "}";
       break;
 
     case Statement::Type::IF:
       printer << "if (" << glue << stmt.if_.condition << glue << ") " << stmt.if_.body;
-      break;
+      return printer;
     case Statement::Type::ELSE:
-      printer << "else " << stmt.else_;
-      break;
+      printer.extendLineIfEquals("}");
+      printer << space << "else " << stmt.else_;
+      return printer;
     case Statement::Type::FOR:
       printer << "for (" << glue << stmt.for_.range << glue << ") " << stmt.for_.body;
-      break;
+      return printer;
     case Statement::Type::WHILE:
       printer << "while (" << glue << stmt.while_.condition << glue << ") " << stmt.while_.body;
-      break;
+      return printer;
     case Statement::Type::LOOP:
       printer << "loop ";
       if (stmt.loop.name) {
         printer << glue << *stmt.loop.name << space;
       }
       printer << stmt.loop.body;
-      break;
+      return printer;
     case Statement::Type::PARALLEL:
-      printer << "parallel {" << startBlock;
+      printer << "parallel {" << endStatement << startBlock;
       for (auto& statement: stmt.parallel) {
         printer << statement;
       }
-      printer << endBlock << "}" << endStatement;
+      printer << endBlock << "}";
       break;
 
     case Statement::Type::RETURN:
@@ -894,42 +989,34 @@ CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
           stmt.return_.tuple.size() != 0) {
         printer << space << glue << stmt.return_;
       }
-      printer << glue << ";" << endStatement;
+      printer << glue << ";";
       break;
     case Statement::Type::BREAK:
       printer << "break";
       if (stmt.break_) {
         printer << space << glue << *stmt.break_;
       }
-      printer << glue << ";" << endStatement;
+      printer << glue << ";";
       break;
     case Statement::Type::CONTINUE:
       printer << "continue";
       if (stmt.continue_) {
         printer << space << glue << *stmt.continue_;
       }
-      printer << glue << ";" << endStatement;
+      printer << glue << ";";
       break;
 
     case Statement::Type::BLANK:
-      printer << endStatement;
+      // Nothing.
       break;
-    case Statement::Type::COMMENT: {
-      string::size_type pos = 0;
-      while (true) {
-        string::size_type start = pos;
-        pos = stmt.comment.find_first_of('\n');
-        if (pos == string::npos) {
-          printer << "#" << glue << stmt.comment.substr(start) << endStatement;
-          break;
-        } else {
-          printer << "#" << stmt.comment.substr(start, pos - start) << endStatement;
-          ++pos;
-        }
-      }
-      break;
-    }
   }
+
+  if (stmt.comment) {
+    printer.advanceToColumn(stmt.comment->location.start.column);
+    printer << space << "# " << glue << stmt.comment->value;
+  }
+
+  printer << endStatement;
 
   return printer;
 }

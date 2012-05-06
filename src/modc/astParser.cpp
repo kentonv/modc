@@ -66,9 +66,12 @@ struct TokenParserInput : public parser::IteratorInput<Token, vector<Token>::con
 };
 
 // Proxy type that converts token iterator range to location.
+// TODO:  Figure out what to do when the location is blank.
 struct Loc: public Location {
   Loc(const std::pair<vector<Token>::const_iterator, vector<Token>::const_iterator>& range)
-      : Location(range.first->location.to(range.second->location)) {}
+      : Location(range.second > range.first ?
+                 range.first->location.to((range.second - 1)->location) :
+                 Location()) {}
 };
 
 auto endOfInput = parser::endOfInput<TokenParserInput>();
@@ -432,6 +435,7 @@ const ExpressionParser binaryOpParser(const ExpressionParser& next,
       });
 }
 
+// If you add new operators, please make sure to update operator<< in ast.cc.
 const ExpressionParser multiplyExpression = binaryOpParser(prefixedExpression, {"*", "/", "%"});
 const ExpressionParser addExpression      = binaryOpParser(multiplyExpression, {"+", "-"});
 const ExpressionParser shiftExpression    = binaryOpParser(addExpression     , {"<<", ">>"});
@@ -588,6 +592,9 @@ StatementParser blockStatement = transform(endOfInput,
     // Block will be filled in later.
     [](Loc l) { return Statement::fromBlock(l, vector<Statement>()); });
 
+StatementParser blank = transform(endOfInput,
+    [](Loc l) { return Statement::fromBlank(l); });
+
 // Convert a declaration parser into a statement parser.
 StatementParser declarationStatement(const DeclarationParser& parser) {
   return transform(parser, [](Loc l, Declaration&& declaration) {
@@ -687,7 +694,8 @@ const StatementParser imperativeLineStatement = oneOf(
     whileStatement(imperativeLineStatement),
     loopStatement(imperativeLineStatement),
     returnStatement,
-    breakContinueStatement);
+    breakContinueStatement,
+    blank);
 
 const StatementParser imperativeBlockStatement = oneOf(
     blockStatement,
@@ -705,7 +713,8 @@ const StatementParser declarativeLineStatement = oneOf(
     elseStatement(declarativeLineStatement),
     forStatement(declarativeLineStatement),
     whileStatement(declarativeLineStatement),
-    loopStatement(declarativeLineStatement));
+    loopStatement(declarativeLineStatement),
+    blank);
 
 const StatementParser declarativeBlockStatement = oneOf(
     declarationStatement(declaration),
@@ -805,7 +814,6 @@ bool attachBlock(Statement& statement, const vector<TokenStatement>& block) {
     case Statement::Type::BREAK:
     case Statement::Type::CONTINUE:
     case Statement::Type::BLANK:
-    case Statement::Type::COMMENT:
       return false;
 
     case Statement::Type::DECLARATION:
@@ -834,39 +842,87 @@ bool attachBlock(Statement& statement, const vector<TokenStatement>& block) {
   return false;
 }
 
+void attachComment(Statement& statement, const Maybe<Located<string>>& comment) {
+  if (comment) {
+    switch (statement.getType()) {
+      case Statement::Type::ERROR:
+      case Statement::Type::EXPRESSION:
+      case Statement::Type::ASSIGNMENT:
+      case Statement::Type::RETURN:
+      case Statement::Type::BREAK:
+      case Statement::Type::CONTINUE:
+      case Statement::Type::BLANK:
+      case Statement::Type::BLOCK:
+      case Statement::Type::PARALLEL:
+      case Statement::Type::UNION:
+        statement.comment = comment;
+        break;
+
+      case Statement::Type::DECLARATION:
+        statement.declaration.comment = comment;
+        break;
+
+      case Statement::Type::IF:
+        attachComment(*statement.if_.body, comment);
+        break;
+      case Statement::Type::ELSE:
+        attachComment(*statement.else_, comment);
+        break;
+      case Statement::Type::FOR:
+        attachComment(*statement.for_.body, comment);
+        break;
+      case Statement::Type::WHILE:
+        attachComment(*statement.while_.body, comment);
+        break;
+      case Statement::Type::LOOP:
+        attachComment(*statement.loop.body, comment);
+        break;
+    }
+  }
+}
+
 Statement parseImperative(const TokenStatement& input) {
   if (input.block) {
     Statement result = parseTokenSequence(input.tokens, imperativeBlockStatement);
+    attachComment(result, input.comment);
     if (!attachBlock(result, *input.block)) {
       throw "bad block";
     }
     return result;
   } else {
-    return parseTokenSequence(input.tokens, imperativeLineStatement);
+    Statement result = parseTokenSequence(input.tokens, imperativeLineStatement);
+    attachComment(result, input.comment);
+    return result;
   }
 }
 
 Statement parseDeclarative(const TokenStatement& input) {
   if (input.block) {
     Statement result = parseTokenSequence(input.tokens, declarativeBlockStatement);
+    attachComment(result, input.comment);
     if (!attachBlock(result, *input.block)) {
       throw "bad block";
     }
     return result;
   } else {
-    return parseTokenSequence(input.tokens, declarativeLineStatement);
+    Statement result = parseTokenSequence(input.tokens, declarativeLineStatement);
+    attachComment(result, input.comment);
+    return result;
   }
 }
 
 Declaration parseUnionMember(const TokenStatement& input) {
   if (input.block) {
     Declaration result = parseTokenSequence(input.tokens, unionBlockMember);
+    result.comment = input.comment;
     if (!attachBlock(result, *input.block)) {
       throw "bad block";
     }
     return result;
   } else {
-    return parseTokenSequence(input.tokens, unionLineMember);
+    Declaration result = parseTokenSequence(input.tokens, unionLineMember);
+    result.comment = input.comment;
+    return result;
   }
 }
 

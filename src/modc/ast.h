@@ -254,7 +254,8 @@ public:
   static Expression fromLambda(Location location, Style style,
                                vector<ParameterDeclaration>&& parameters, Expression&& body);
 
-  void print(CodePrinter& printer);
+  // minPriority = Minimum priority level at which parenthesization is not needed.
+  void print(CodePrinter& printer, int minPriority = -1) const;
 
 private:
   Type type;
@@ -262,7 +263,10 @@ private:
   Expression(Location location, Type type): location(location), type(type) {}
 };
 
-CodePrinter& operator<<(CodePrinter& os, const Expression& expression);
+inline CodePrinter& operator<<(CodePrinter& printer, const Expression& expression) {
+  expression.print(printer);
+  return printer;
+}
 
 // =======================================================================================
 
@@ -337,6 +341,9 @@ struct Declaration {
 
   Maybe<Definition> definition;
 
+  // Comment appearing after the end of the statement, on the same line.
+  Maybe<Located<string>> comment;
+
   Location location;
 
   bool operator==(const Declaration& other) const;
@@ -408,8 +415,7 @@ public:
     BREAK,
     CONTINUE,
 
-    BLANK,
-    COMMENT
+    BLANK
   };
 
   Type getType() const { return type; }
@@ -470,9 +476,11 @@ public:
     Expression return_;  // if not returning a value, expression will be empty tuple.
     Maybe<string> break_;
     Maybe<string> continue_;
-
-    string comment;
   };
+
+  // Comment appearing after the end of the statement, on the same line.
+  // For declarations, the comment should go in declaration.comment instead of here.
+  Maybe<Located<string>> comment;
 
   Location location;
 
@@ -499,7 +507,6 @@ public:
   static Statement fromContinue(Location location, Maybe<string>&& loopName);
 
   static Statement fromBlank(Location location);
-  static Statement fromComment(Location location, string&& text);
 
 private:
   Type type;

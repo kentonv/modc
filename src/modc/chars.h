@@ -134,6 +134,7 @@ constexpr CharClass allOf(const char* str) {
 constexpr CharClass ANY = range(0, 0xFF);
 
 constexpr CharClass WHITESPACE = allOf("\n\r\t ");
+constexpr CharClass INLINE_WHITESPACE = WHITESPACE - '\n';
 
 constexpr CharClass QUOTE = allOf("\"'`");
 constexpr CharClass DELIMITER = allOf(",;");

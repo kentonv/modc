@@ -39,6 +39,7 @@ using ekam::OwnedPtr;
 using ekam::newOwned;
 using std::string;
 using errors::Location;
+using errors::Located;
 
 class Token;
 class TokenSequence;
@@ -95,7 +96,6 @@ public:
     string literalString;
   };
 
-  // TODO:  Actually initialize this!
   Location location;
 
   void getErrors(std::vector<errors::Error>& errors) const;
@@ -153,7 +153,6 @@ class TokenSequence {
 public:
   std::vector<Token> tokens;
 
-  // TODO:  Fill these in.
   Location location;
 
   bool operator==(const TokenSequence& other) const { return tokens == other.tokens; }
@@ -169,6 +168,9 @@ class TokenStatement {
 public:
   TokenSequence tokens;
   Maybe<std::vector<TokenStatement>> block;
+
+  // Comment appearing after the end of the statement.
+  Maybe<Located<string>> comment;
 
   bool operator==(const TokenStatement& other) const;
   bool operator!=(const TokenStatement& other) const { return !(*this == other); }

@@ -21,13 +21,22 @@
 namespace modc {
 namespace errors {
 
-std::ostream& operator<<(std::ostream& os, const Location& location) {
-  os << '[';
-  if (location.start != -1) {
-    os << location.start;
-    if (location.end != location.start) {
-      os << ':' << location.end;
+std::ostream& operator<<(std::ostream& os, const LineColumn& lineColumn) {
+  if (lineColumn.line == -1) {
+    os << "?";
+  } else {
+    os << lineColumn.line;
+    if (lineColumn.column != -1) {
+      os << lineColumn.column;
     }
+  }
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const Location& location) {
+  os << '[' << location.start;
+  if (location.end != location.start) {
+    os << '-' << location.end;
   }
   os << "]";
   return os;

@@ -33,20 +33,23 @@ static const int INDENT_WIDTH = 2;
 static const int WRAP_INDENT_WIDTH = 4;
 
 CodePrinter::CodePrinter(string::size_type lineWidth)
-    : lineWidth(lineWidth), indentLevel(0), column(0), lineStart(0), nextWriteCanBreak(true) {}
+    : lineWidth(lineWidth), indentLevel(0), lineStart(0), indentedLineStart(0),
+      nextWriteStartsNewStatement(false), nextWriteCanBreak(true) {}
 CodePrinter::~CodePrinter() {}
 
 void CodePrinter::startNewLine(int leadingSpaceCount) {
-  flushUnbreakable();
   buffer.erase(buffer.find_last_not_of(' ') + 1);
   buffer += '\n';
-  buffer.append(leadingSpaceCount, ' ');
-  column = leadingSpaceCount;
   lineStart = buffer.size();
+  buffer.append(leadingSpaceCount, ' ');
+  indentedLineStart = buffer.size();
 }
 
 void CodePrinter::nextStatement() {
-  startNewLine(indentLevel * INDENT_WIDTH);
+  if (nextWriteStartsNewStatement) {
+    flushUnbreakable();
+  }
+  nextWriteStartsNewStatement = true;
 }
 
 void CodePrinter::wrapLine() {
@@ -55,42 +58,60 @@ void CodePrinter::wrapLine() {
 
 void CodePrinter::enterBlock() {
   ++indentLevel;
-  nextStatement();
 }
 
 void CodePrinter::leaveBlock() {
+  bool newStatement = nextWriteStartsNewStatement;
+  nextWriteStartsNewStatement = false;
+  flushUnbreakable();
+  nextWriteStartsNewStatement = newStatement;
   --indentLevel;
-  if (buffer.size() == lineStart) {
-    if (indentLevel >= 0) {
-      buffer.erase(buffer.size() - INDENT_WIDTH);
-    }
-  } else {
-    nextStatement();
+}
+
+void CodePrinter::extendLineIfEquals(const char* text) {
+  if (!nextWriteStartsNewStatement) {
+    return;
+  }
+
+  nextWriteStartsNewStatement = false;
+  flushUnbreakable();
+
+  if (buffer.substr(indentedLineStart) != text) {
+    startNewLine(indentLevel * INDENT_WIDTH);
+  }
+}
+
+void CodePrinter::advanceToColumn(string::size_type column) {
+  flushUnbreakable();
+  if (buffer.size() - lineStart < column) {
+    buffer.append(column - (buffer.size() - lineStart), ' ');
   }
 }
 
 void CodePrinter::flushUnbreakable() {
-  if (unbreakableText.empty()) {
-    return;
-  }
+  if (!unbreakableText.empty()) {
+    string::size_type length = countChars(unbreakableText);
+    string::size_type last_nonspace = unbreakableText.find_last_not_of(' ') + 1;
 
-  string::size_type length = countChars(unbreakableText);
-  string::size_type last_nonspace = unbreakableText.find_last_not_of(' ') + 1;
-
-  if (buffer.size() == lineStart) {
-    // We're at the beginning of a line, so don't wrap even if there is not enough space!
-    if (last_nonspace == 0) {
-      // Don't add spaces at the beginning of a line.
-      return;
+    if (buffer.size() == indentedLineStart) {
+      // We're at the beginning of a line, so don't wrap even if there is not enough space!
+      if (last_nonspace == 0) {
+        // Don't add spaces at the beginning of a line.
+        return;
+      }
+    } else if (buffer.size() + last_nonspace > lineStart + lineWidth) {
+      // Not enough space on current line.  Wrap.
+      wrapLine();
     }
-  } else if (column + last_nonspace > lineWidth) {
-    // Not enough space on current line.  Wrap.
-    wrapLine();
+
+    buffer += unbreakableText;
+    unbreakableText.clear();
   }
 
-  buffer += unbreakableText;
-  column += length;
-  unbreakableText.clear();
+  if (nextWriteStartsNewStatement) {
+    nextWriteStartsNewStatement = false;
+    startNewLine(indentLevel * INDENT_WIDTH);
+  }
 }
 
 CodePrinter& CodePrinter::operator<<(const string& text) {
@@ -122,7 +143,7 @@ inline void ensureNoTrailingSpace(string& str) {
 CodePrinter& CodePrinter::operator<<(Space) {
   if (!unbreakableText.empty()) {
     ensureTrailingSpace(unbreakableText);
-  } else if (buffer.size() > lineStart) {
+  } else if (buffer.size() > indentedLineStart) {
     ensureTrailingSpace(buffer);
   }
   return *this;
@@ -131,7 +152,7 @@ CodePrinter& CodePrinter::operator<<(Space) {
 CodePrinter& CodePrinter::operator<<(NoSpace) {
   if (!unbreakableText.empty()) {
     ensureNoTrailingSpace(unbreakableText);
-  } else if (buffer.size() > lineStart) {
+  } else if (buffer.size() > indentedLineStart) {
     ensureNoTrailingSpace(buffer);
   }
   return *this;

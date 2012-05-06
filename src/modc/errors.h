@@ -44,13 +44,50 @@ string concat(Parts&&... parts) {
   return os.str();
 }
 
-struct Location {
-  int start;
-  int end;
+struct LineColumn {
+  int line;
+  int column;
 
-  Location(): start(-1), end(-1) {}
-  explicit Location(int pos): start(pos), end(pos) {}
-  Location(int start, int end): start(start), end(end) {}
+  LineColumn(): line(-1), column(-1) {}
+  explicit LineColumn(int line): line(line), column(-1) {}
+  LineColumn(int line, int column): line(line), column(column) {}
+
+  bool operator==(const LineColumn& other) const {
+    return line == other.line && column == other.column;
+  }
+  bool operator!=(const LineColumn& other) const {
+    return line != other.line || column != other.column;
+  }
+  bool operator<=(const LineColumn& other) const {
+    return line <= other.line || (line == other.line && column <= other.column);
+  }
+  bool operator>=(const LineColumn& other) const {
+    return line >= other.line || (line == other.line && column >= other.column);
+  }
+  bool operator< (const LineColumn& other) const {
+    return line <  other.line || (line == other.line && column <  other.column);
+  }
+  bool operator> (const LineColumn& other) const {
+    return line >  other.line || (line == other.line && column >  other.column);
+  }
+
+  LineColumn operator+(int amount) const {
+    return LineColumn(line, column + amount);
+  }
+  LineColumn operator-(int amount) const {
+    return LineColumn(line, column - amount);
+  }
+};
+
+std::ostream& operator<<(std::ostream& os, const LineColumn& lineColumn);
+
+struct Location {
+  LineColumn start;
+  LineColumn end;
+
+  Location() {}
+  explicit Location(LineColumn pos): start(pos), end(pos) {}
+  Location(LineColumn start, LineColumn end): start(start), end(end) {}
   Location(Location start, Location end): start(start.start), end(end.end) {}
 
   bool operator==(const Location& other) const {
@@ -71,6 +108,8 @@ struct Location {
   }
 };
 
+std::ostream& operator<<(std::ostream& os, const Location& location);
+
 template <typename T>
 struct Located {
   Location location;
@@ -85,8 +124,6 @@ struct Located {
   inline bool operator==(const Located& other) const { return value == other.value; }
   inline bool operator!=(const Located& other) const { return value != other.value; }
 };
-
-std::ostream& operator<<(std::ostream& os, const Location& location);
 
 class Error {
 public:

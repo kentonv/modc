@@ -53,6 +53,14 @@ public:
   void enterBlock();
   void leaveBlock();
 
+  // If the previous line matches exactly the given text (not including indent), and nothing has
+  // been printed yet on the current line, go back to the previous line.  Useful for making "else"
+  // appear after a closing brace.
+  void extendLineIfEquals(const char* text);
+
+  // Advance to the given column if not already past it.
+  void advanceToColumn(string::size_type column);
+
   CodePrinter& operator<<(const string& text);
   CodePrinter& operator<<(Glue) { nextWriteCanBreak = false; return *this; }
   CodePrinter& operator<<(Space);
@@ -68,9 +76,10 @@ private:
   string unbreakableText;
 
   int indentLevel;
-  string::size_type column;
   string::size_type lineStart;
+  string::size_type indentedLineStart;
 
+  bool nextWriteStartsNewStatement;
   bool nextWriteCanBreak;
 
   void startNewLine(int leadingSpaceCount);

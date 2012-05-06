@@ -21,6 +21,7 @@
 #include <type_traits>
 #include <vector>
 #include <string>
+#include <assert.h>
 
 #include "base/OwnedPtr.h"
 #include "modc/errors.h"
@@ -224,9 +225,18 @@ public:
   }
 
   bool atEnd() { return pos == end; }
-  const Element& current() { return *pos; }
-  const Element& consume() { return *pos++; }
-  void next() { ++pos; }
+  const Element& current() {
+    assert(!atEnd());
+    return *pos;
+  }
+  const Element& consume() {
+    assert(!atEnd());
+    return *pos++;
+  }
+  void next() {
+    assert(!atEnd());
+    ++pos;
+  }
 
   Iterator getBest() { return std::max(pos, best); }
 

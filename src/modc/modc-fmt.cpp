@@ -21,6 +21,7 @@
 #include "ast.h"
 #include "errors.h"
 #include "CodePrinter.h"
+#include "base/Debug.h"
 
 using std::cout;
 using std::cerr;
@@ -46,7 +47,7 @@ int main(int argc, char* argv[]) {
     printer << modc::astParser::parseDeclarative(tokenStatement);
   }
 
-  std::cout << printer.getText() << endl;
+  std::cout << printer.getText();
 
   return 0;
 }
