@@ -61,6 +61,8 @@ enum class StyleAllowance {
 
 CodePrinter& operator<<(CodePrinter& os, StyleAllowance style);
 
+class ListElement;
+class Declaration;
 class Statement;
 struct ParameterDeclaration;
 
@@ -93,6 +95,14 @@ struct ParameterDeclaration;
       : VAR1(move(VAR1)), VAR2(move(VAR2)), VAR3(move(VAR3)) {} \
   bool operator==(const TYPENAME& other) const { \
     return VAR1 == other.VAR1 && VAR2 == other.VAR2 && VAR3 == other.VAR3; \
+  } \
+  bool operator!=(const TYPENAME& other) const { return !(*this == other); }
+
+#define VALUE_TYPE4(TYPENAME, TYPE1, VAR1, TYPE2, VAR2, TYPE3, VAR3, TYPE4, VAR4) \
+  TYPENAME(TYPE1 VAR1, TYPE2 VAR2, TYPE3 VAR3, TYPE4 VAR4) \
+      : VAR1(move(VAR1)), VAR2(move(VAR2)), VAR3(move(VAR3)), VAR4(move(VAR4)) {} \
+  bool operator==(const TYPENAME& other) const { \
+    return VAR1 == other.VAR1 && VAR2 == other.VAR2 && VAR3 == other.VAR3 && VAR4 == other.VAR4; \
   } \
   bool operator!=(const TYPENAME& other) const { return !(*this == other); }
 
@@ -185,8 +195,10 @@ public:
   struct MemberAccess {
     Indirect<Expression> object;
     string member;
+    StyleAllowance thisStyleAllowance;
 
-    VALUE_TYPE2(MemberAccess, Expression&&, object, string&&, member);
+    VALUE_TYPE3(MemberAccess, Expression&&, object, string&&, member,
+                StyleAllowance, thisStyleAllowance);
   };
 
   struct Lambda {
@@ -202,12 +214,12 @@ public:
     vector<errors::Error> error;
 
     string variable;
-    vector<Expression> tuple;
+    vector<ListElement> tuple;
 
     int literalInt;
     double literalDouble;
     string literalString;
-    vector<Expression> literalArray;
+    vector<ListElement> literalArray;
 
     BinaryOperator binaryOperator;
     PrefixOperator prefixOperator;
@@ -230,12 +242,12 @@ public:
 
   static Expression fromVariable(Location location, string&& name);
 
-  static Expression fromTuple(Location location, vector<Expression>&& elements);
+  static Expression fromTuple(Location location, vector<ListElement>&& elements);
 
   static Expression fromLiteralInt(Location location, int value);
   static Expression fromLiteralDouble(Location location, double value);
   static Expression fromLiteralString(Location location, string&& value);
-  static Expression fromLiteralArray(Location location, vector<Expression>&& elements);
+  static Expression fromLiteralArray(Location location, vector<ListElement>&& elements);
 
   static Expression fromBinaryOperator(Location location, string&& op,
                                        Expression&& left, Expression&& right);
@@ -247,7 +259,8 @@ public:
   static Expression fromFunctionCall(Location location, Expression&& function,
                                      vector<FunctionCall::Parameter>&& parameters);
   static Expression fromSubscript(Location location, Expression&& container, Expression&& key);
-  static Expression fromMemberAccess(Location location, Expression&& object, string&& member);
+  static Expression fromMemberAccess(Location location, Expression&& object, string&& member,
+                                     StyleAllowance thisStyleAllowance);
 
   static Expression fromImport(Location location, string&& moduleName);
 
@@ -268,10 +281,41 @@ inline CodePrinter& operator<<(CodePrinter& printer, const Expression& expressio
   return printer;
 }
 
+class ListElement {
+public:
+  vector<Declaration> ranges;
+  Maybe<Expression> condition;
+  Maybe<string> name;
+  Expression value;
+
+  VALUE_TYPE4(ListElement, vector<Declaration>&&, ranges, Maybe<Expression>&&, condition,
+              Maybe<string>&&, name, Expression&&, value);
+
+  static ListElement fromError(Location location, vector<errors::Error>&& errors);
+};
+
+CodePrinter& operator<<(CodePrinter& printer, const ListElement& element);
+
 // =======================================================================================
+
+struct Visibility {
+public:
+  enum Type {
+    PUBLIC,
+    PRIVATE
+  };
+
+  Type type;
+  vector<Expression> friends;
+
+  VALUE_TYPE2(Visibility, Type, type, vector<Expression>&&, friends);
+};
+
+CodePrinter& operator<<(CodePrinter& printer, const Visibility& visibility);
 
 struct Annotation {
   enum Relationship {
+    LESS_THAN,
     SUBCLASS_OF,
     SUPERCLASS_OF,
     ANNOTATION
@@ -295,6 +339,7 @@ struct Declaration {
     DESTRUCTOR,
     CONVERSION,
     DEFAULT_CONVERSION,  // TODO:  Combine with CONVERSION somehow?
+    OPERATOR,
 
     CLASS,
     INTERFACE,
@@ -303,6 +348,8 @@ struct Declaration {
 
   Declaration(Location location, Kind kind);
   ~Declaration();
+
+  Maybe<Visibility> visibility;
 
   Kind kind;
   Style thisStyle;
@@ -422,9 +469,11 @@ public:
 
   struct Assignment {
     Expression variable;
+    Maybe<string> compoundOp;
     Expression value;
 
-    VALUE_TYPE2(Assignment, Expression&&, variable, Expression&&, value);
+    VALUE_TYPE3(Assignment, Expression&&, variable, Maybe<string>&&, compoundOp,
+                Expression&&, value);
   };
 
   struct If {
@@ -491,7 +540,8 @@ public:
   static Statement fromBlock(Location location, vector<Statement>&& block);
 
   static Statement fromDeclaration(Location location, Declaration&& declaration);
-  static Statement fromAssignment(Location location, Expression&& variable, Expression&& value);
+  static Statement fromAssignment(Location location, Expression&& variable,
+                                  Maybe<string>&& compoundOp, Expression&& value);
 
   static Statement fromUnion(Location location, vector<Declaration>&& declarations);
 

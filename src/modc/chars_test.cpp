@@ -52,6 +52,8 @@ TEST(Chars, Simple) {
   }
 
   EXPECT_FALSE(CharClass('{').contains(';'));
+
+  EXPECT_TRUE(OPERATOR.contains('@'));
 }
 
 }  // namespace

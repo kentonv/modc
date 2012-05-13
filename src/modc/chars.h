@@ -31,7 +31,7 @@ static constexpr std::uint64_t oneBits(int count) {
 }
 
 static constexpr std::uint64_t bit(int index) {
-  return index <= 0 ? 0 : index >= 64 ? 0 : (1ll << index);
+  return index < 0 ? 0 : index >= 64 ? 0 : (1ll << index);
 }
 
 class CharClass {
@@ -149,7 +149,7 @@ constexpr CharClass OCTAL_DIGIT = range('0', '7');
 constexpr CharClass HEX_DIGIT = DIGIT + range('a', 'f') + range('A', 'F');
 constexpr CharClass ALPHANUMERIC = LETTER + DIGIT + '_';
 
-constexpr CharClass OPERATOR = allOf("!#$%&*+-./:<=>?@\\^|~");
+constexpr CharClass OPERATOR = allOf("!@$%&*+-./:<=>?\\^|~");
 
 constexpr CharClass PRINTABLE = range(0x20, 0xFF) - '\x7f';
 constexpr CharClass UNPRINTABLE = ANY - PRINTABLE;

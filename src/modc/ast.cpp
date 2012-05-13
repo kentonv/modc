@@ -34,7 +34,7 @@ namespace ast {
 using std::move;
 
 template <typename T>
-void Destroy(T& obj) {
+void destroy(T& obj) {
   obj.~T();
 }
 
@@ -44,11 +44,11 @@ void Destroy(T& obj) {
 #define FOR_ALL_EXPRESSIONS(HANDLE) \
   HANDLE(ERROR, error, vector<errors::Error>) \
   HANDLE(VARIABLE, variable, string) \
-  HANDLE(TUPLE, tuple, vector<Expression>) \
+  HANDLE(TUPLE, tuple, vector<ListElement>) \
   HANDLE(LITERAL_INT, literalInt, int) \
   HANDLE(LITERAL_DOUBLE, literalDouble, double) \
   HANDLE(LITERAL_STRING, literalString, string) \
-  HANDLE(LITERAL_ARRAY, literalArray, vector<Expression>) \
+  HANDLE(LITERAL_ARRAY, literalArray, vector<ListElement>) \
   HANDLE(BINARY_OPERATOR, binaryOperator, BinaryOperator) \
   HANDLE(PREFIX_OPERATOR, prefixOperator, PrefixOperator) \
   HANDLE(POSTFIX_OPERATOR, postfixOperator, PostfixOperator) \
@@ -85,7 +85,7 @@ Expression::~Expression() noexcept {
   switch (type) {
 #define DESTRUCT(ID, NAME, TYPE) \
     case Type::ID: \
-      Destroy(NAME); \
+      destroy(NAME); \
       break;
     FOR_ALL_EXPRESSIONS(DESTRUCT)
 #undef DESTRUCT
@@ -140,9 +140,9 @@ Expression Expression::fromVariable(Location location, string&& name) {
   return result;
 }
 
-Expression Expression::fromTuple(Location location, vector<Expression>&& elements) {
+Expression Expression::fromTuple(Location location, vector<ListElement>&& elements) {
   Expression result(location, Type::TUPLE);
-  new (&result.tuple) vector<Expression>(move(elements));
+  new (&result.tuple) vector<ListElement>(move(elements));
   return result;
 }
 
@@ -161,9 +161,9 @@ Expression Expression::fromLiteralString(Location location, string&& value) {
   new (&result.literalString) string(move(value));
   return result;
 }
-Expression Expression::fromLiteralArray(Location location, vector<Expression>&& elements) {
+Expression Expression::fromLiteralArray(Location location, vector<ListElement>&& elements) {
   Expression result(location, Type::LITERAL_ARRAY);
-  new (&result.literalArray) vector<Expression>(move(elements));
+  new (&result.literalArray) vector<ListElement>(move(elements));
   return result;
 }
 
@@ -202,9 +202,10 @@ Expression Expression::fromSubscript(Location location, Expression&& container, 
   new (&result.subscript) Subscript(move(container), move(key));
   return result;
 }
-Expression Expression::fromMemberAccess(Location location, Expression&& object, string&& member) {
+Expression Expression::fromMemberAccess(Location location, Expression&& object, string&& member,
+                                        StyleAllowance thisStyleAllowance) {
   Expression result(location, Type::MEMBER_ACCESS);
-  new (&result.memberAccess) MemberAccess(move(object), move(member));
+  new (&result.memberAccess) MemberAccess(move(object), move(member), thisStyleAllowance);
   return result;
 }
 
@@ -221,6 +222,11 @@ Expression Expression::fromLambda(Location location, Style style,
   return result;
 }
 
+ListElement ListElement::fromError(Location location, vector<errors::Error>&& errors) {
+  return ListElement(vector<Declaration>(), nullptr, nullptr,
+                     Expression::fromError(location, move(errors)));
+}
+
 // =======================================================================================
 // Declaration
 
@@ -229,8 +235,9 @@ Declaration::Declaration(Location location, Kind kind)
 Declaration::~Declaration() {}
 
 bool Declaration::operator==(const Declaration& other) const {
-  static_assert(sizeof(Declaration) == 336, "Please update Declaration::operator==.");
-  return kind == other.kind &&
+  static_assert(sizeof(Declaration) == 376, "Please update Declaration::operator==.");
+  return visibility == other.visibility &&
+         kind == other.kind &&
          thisStyle == other.thisStyle &&
          style == other.style &&
          name == other.name &&
@@ -273,10 +280,10 @@ Declaration::Definition::Definition(const Definition& other): type(other.type) {
 Declaration::Definition::~Definition() noexcept {
   switch (type) {
     case Type::EXPRESSION:
-      Destroy(expression);
+      destroy(expression);
       break;
     case Type::BLOCK:
-      Destroy(block);
+      destroy(block);
       break;
   }
 }
@@ -347,10 +354,10 @@ ParameterDeclaration::ParameterDeclaration(const ParameterDeclaration& other): t
 ParameterDeclaration::~ParameterDeclaration() noexcept {
   switch (type) {
     case Type::CONSTANT:
-      Destroy(constant);
+      destroy(constant);
       break;
     case Type::VARIABLE:
-      Destroy(variable);
+      destroy(variable);
       break;
   }
 }
@@ -454,7 +461,7 @@ Statement::~Statement() noexcept {
   switch (type) {
 #define DESTRUCT(ID, NAME, TYPE) \
     case Type::ID: \
-      Destroy(NAME); \
+      destroy(NAME); \
       break;
       FOR_ALL_STATEMENTS(DESTRUCT)
 #undef DESTRUCT
@@ -529,9 +536,10 @@ Statement Statement::fromDeclaration(Location location, Declaration&& declaratio
   new (&result.declaration) Declaration(move(declaration));
   return result;
 }
-Statement Statement::fromAssignment(Location location, Expression&& variable, Expression&& value) {
+Statement Statement::fromAssignment(Location location, Expression&& variable,
+                                    Maybe<string>&& compoundOp, Expression&& value) {
   Statement result(location, Type::ASSIGNMENT);
-  new (&result.assignment) Assignment(move(variable), move(value));
+  new (&result.assignment) Assignment(move(variable), move(compoundOp), move(value));
   return result;
 }
 
@@ -805,7 +813,13 @@ void Expression::print(CodePrinter& printer, int minPriority) const {
       break;
     case Expression::Type::MEMBER_ACCESS:
       memberAccess.object->print(printer, pri);
-      printer << "." << glue << memberAccess.member;
+      switch (memberAccess.thisStyleAllowance) {
+        case StyleAllowance::VALUE:               printer << "."; break;
+        case StyleAllowance::IMMUTABLE_REFERENCE: printer << "."; break;
+        case StyleAllowance::MUTABLE_REFERENCE:   printer << ".&"; break;
+        case StyleAllowance::MOVE:                printer << "->"; break;
+      }
+      printer << glue << memberAccess.member;
       break;
 
     case Expression::Type::IMPORT:
@@ -824,7 +838,45 @@ void Expression::print(CodePrinter& printer, int minPriority) const {
   }
 }
 
+CodePrinter& operator<<(CodePrinter& printer, const ListElement& element) {
+  if (!element.ranges.empty()) {
+    printer << "for (" << glue << element.ranges << glue << ") ";
+  }
+  if (element.condition) {
+    printer << "if (" << glue << *element.condition << glue << ") ";
+  }
+  if (element.name) {
+    printer << *element.name << glue << " = ";
+  }
+
+  printer << element.value;
+
+  return printer;
+}
+
+CodePrinter& operator<<(CodePrinter& printer, const Visibility& visibility) {
+  switch (visibility.type) {
+    case Visibility::Type::PUBLIC:
+      printer << "public";
+      break;
+    case Visibility::Type::PRIVATE:
+      printer << "private";
+      break;
+  }
+
+  if (!visibility.friends.empty()) {
+    printer << glue << "(" << glue << visibility.friends << glue << ")";
+  }
+
+  printer << space;
+  return printer;
+}
+
 void Declaration::print(CodePrinter& printer, bool asStatement) const {
+  if (visibility) {
+    printer << *visibility;
+  }
+
   switch (kind) {
     case Kind::ERROR:
       printer << "{{DECLARATION ERROR: " << definition->expression.error << glue << "}}";
@@ -837,10 +889,11 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
     case Kind::ENVIRONMENT: printer << "env "; break;
 
     case Kind::FUNCTION:    printer << "func "; break;
-    case Kind::CONSTRUCTOR: printer << "constructor "; break;
-    case Kind::DESTRUCTOR:  printer << "destructor "; break;
-    case Kind::CONVERSION:  printer << "conversion"; break;
-    case Kind::DEFAULT_CONVERSION: printer << "default conversion "; break;
+    case Kind::CONSTRUCTOR: printer << "ctor "; break;
+    case Kind::DESTRUCTOR:  printer << "dtor "; break;
+    case Kind::CONVERSION:  printer << "conv "; break;
+    case Kind::DEFAULT_CONVERSION: printer << "default conv "; break;
+    case Kind::OPERATOR:    printer << "operator "; break;
 
     case Kind::CLASS:       printer << "class "; break;
     case Kind::INTERFACE:   printer << "interface "; break;
@@ -850,6 +903,8 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
   printer << thisStyle << glue;
   if (name) {
     printer << name->value;
+  } else {
+    printer << noSpace;
   }
   if (parameters) {
     printer << glue << "(" << *parameters << glue << ")";
@@ -858,20 +913,21 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
 
   if (kind == Kind::FUNCTION) {
     if (!type) {
-      printer << ": ";
+      printer << glue << ": ";
     } else if (type->getType() == Expression::Type::TUPLE && type->tuple.empty()) {
       // empty tuple return -- nothing to print
     } else {
-      printer << ": " << glue << *type;
+      printer << glue << ": " << *type;
     }
   } else {
     if (type) {
-      printer << ": " << glue << *type;
+      printer << glue << ": " << glue << *type;
     }
   }
 
   for (auto& ann: annotations) {
     switch (ann.relationship) {
+      case Annotation::Relationship::LESS_THAN: printer << space << "< "; break;
       case Annotation::Relationship::SUBCLASS_OF: printer << space << "<: "; break;
       case Annotation::Relationship::SUPERCLASS_OF: printer << space << ":> "; break;
       case Annotation::Relationship::ANNOTATION: printer << space << ":: "; break;
@@ -944,7 +1000,11 @@ CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
       stmt.declaration.print(printer, true);
       return printer;
     case Statement::Type::ASSIGNMENT:
-      printer << stmt.assignment.variable << glue << " = " << stmt.assignment.value << glue << ";";
+      printer << stmt.assignment.variable << glue << space;
+      if (stmt.assignment.compoundOp) {
+        printer << *stmt.assignment.compoundOp << glue;
+      }
+      printer << "= " << stmt.assignment.value << glue << ";";
       break;
 
     case Statement::Type::UNION:

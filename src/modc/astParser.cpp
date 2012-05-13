@@ -41,6 +41,8 @@ using ast::Declaration;
 using ast::ParameterDeclaration;
 using ast::Statement;
 using ast::Annotation;
+using ast::Visibility;
+using ast::ListElement;
 
 using tokens::Token;
 using tokens::TokenSequence;
@@ -78,8 +80,11 @@ auto endOfInput = parser::endOfInput<TokenParserInput>();
 
 typedef parser::Parser<TokenParserInput, Expression> ExpressionParser;
 extern const ExpressionParser generalExpression;
+typedef parser::Parser<TokenParserInput, ListElement> ListElementParser;
+extern const ListElementParser listElement;
 typedef parser::Parser<TokenParserInput, Declaration> DeclarationParser;
 extern const DeclarationParser generalDeclaration;
+extern const DeclarationParser forRange;
 typedef parser::Parser<TokenParserInput, ParameterDeclaration> ParameterDeclarationParser;
 extern const ParameterDeclarationParser parameterDeclaration;
 typedef parser::Parser<TokenParserInput, Statement> StatementParser;
@@ -318,19 +323,22 @@ const ExpressionParser atomicExpression = oneOf(
         [](Loc l, string&& name) { return Expression::fromVariable(l, move(name)); }),
 
     // Parenthesized expression or tuple.
-    transform(parenthesizedList(generalExpression),
-        [](Loc l, vector<Expression>&& expressions) {
-          if (expressions.size() == 1) {
-            return expressions[0];
+    transform(parenthesizedList(listElement),
+        [](Loc l, vector<ListElement>&& elements) {
+          if (elements.size() == 1 &&
+              elements[0].ranges.empty() &&
+              !elements[0].condition &&
+              !elements[0].name) {
+            return move(elements[0].value);
           } else {
-            return Expression::fromTuple(l, move(expressions));
+            return Expression::fromTuple(l, move(elements));
           }
         }),
 
     // Array literal
-    transform(bracketedList(generalExpression),
-        [](Loc l, vector<Expression>&& expressions) {
-          return Expression::fromLiteralArray(l, move(expressions));
+    transform(bracketedList(listElement),
+        [](Loc l, vector<ListElement>&& elements) {
+          return Expression::fromLiteralArray(l, move(elements));
         }),
 
     // Import
@@ -361,12 +369,18 @@ parser::Parser<TokenParserInput, Expression::FunctionCall::Parameter> functionCa
           return Expression::FunctionCall::Parameter(style, move(exp));
         });
 
+auto thisStyleAllowance = oneOfKeywordsTo<StyleAllowance>({
+    std::make_pair(".", StyleAllowance::IMMUTABLE_REFERENCE),
+    std::make_pair(".&", StyleAllowance::MUTABLE_REFERENCE),
+    std::make_pair("->", StyleAllowance::MOVE)});
+
 parser::Parser<TokenParserInput, std::function<Expression(Expression&&)>> suffix = oneOf(
     // Member access
-    transform(sequence(keyword("."), identifier),
-        [](Loc l, string&& name) -> std::function<Expression(Expression&&)> {
-          return std::bind([l](string& name, Expression&& seed) {
-            return Expression::fromMemberAccess(l, move(seed), move(name));
+    transform(sequence(thisStyleAllowance, identifier),
+        [](Loc l, StyleAllowance thisStyleAllowance, string&& name)
+            -> std::function<Expression(Expression&&)> {
+          return std::bind([l, thisStyleAllowance](string& name, Expression&& seed) {
+            return Expression::fromMemberAccess(l, move(seed), move(name), thisStyleAllowance);
           }, move(name), _1);
         }),
 
@@ -436,7 +450,7 @@ const ExpressionParser binaryOpParser(const ExpressionParser& next,
 }
 
 // If you add new operators, please make sure to update operator<< in ast.cc.
-const ExpressionParser multiplyExpression = binaryOpParser(prefixedExpression, {"*", "/", "%"});
+const ExpressionParser multiplyExpression = binaryOpParser(prefixedExpression, {"*","/","//","%"});
 const ExpressionParser addExpression      = binaryOpParser(multiplyExpression, {"+", "-"});
 const ExpressionParser shiftExpression    = binaryOpParser(addExpression     , {"<<", ">>"});
 const ExpressionParser orderExpression    = binaryOpParser(shiftExpression   , {"<",">","<=",">="});
@@ -446,6 +460,9 @@ const ExpressionParser bitxorExpression   = binaryOpParser(bitandExpression  , {
 const ExpressionParser bitorExpression    = binaryOpParser(bitxorExpression  , {"|"});
 const ExpressionParser andExpression      = binaryOpParser(bitorExpression   , {"&&"});
 const ExpressionParser orExpression       = binaryOpParser(andExpression     , {"||"});
+
+auto assignmentOp = oneOfKeywords({"=", "*=", "/=", "//=", "%=", "+=", "-=", "<<=", ">>=",
+                                   "&=", "^=", "|=", "&&=", "||="});
 
 auto ternarySuffix = transform(
     sequence(keyword("?"), generalExpression, keyword(":"), generalExpression),
@@ -464,6 +481,22 @@ const ExpressionParser generalExpression = transform(
       }
     });
 
+const ListElementParser listElement = transform(
+    sequence(optional(sequence(keyword("for"), parenthesizedList(forRange))),
+             optional(sequence(keyword("if"), generalExpression)),
+             optional(sequence(identifier, keyword("="))),
+             generalExpression),
+    [] (Loc l,
+        Maybe<vector<Declaration>>&& ranges,
+        Maybe<Expression>&& condition,
+        Maybe<string>&& name,
+        Expression&& value) {
+      if (!ranges) {
+        ranges = vector<Declaration>();
+      }
+      return ListElement(move(*ranges), move(condition), move(name), move(value));
+    });
+
 // =======================================================================================
 // Declaration parser!
 
@@ -471,9 +504,10 @@ auto kind = oneOfKeywordsTo<Declaration::Kind>({
     std::make_pair("var", Declaration::Kind::VARIABLE),
     std::make_pair("env", Declaration::Kind::ENVIRONMENT),
     std::make_pair("func", Declaration::Kind::FUNCTION),
-    std::make_pair("constructor", Declaration::Kind::CONSTRUCTOR),
-    std::make_pair("destructor", Declaration::Kind::DESTRUCTOR),
-    std::make_pair("conversion", Declaration::Kind::CONVERSION),
+    std::make_pair("ctor", Declaration::Kind::CONSTRUCTOR),
+    std::make_pair("dtor", Declaration::Kind::DESTRUCTOR),
+    std::make_pair("conv", Declaration::Kind::CONVERSION),
+    std::make_pair("operator", Declaration::Kind::OPERATOR),
     std::make_pair("class", Declaration::Kind::CLASS),
     std::make_pair("interface", Declaration::Kind::INTERFACE),
     std::make_pair("enum", Declaration::Kind::ENUM)});
@@ -489,6 +523,20 @@ auto relationship = oneOfKeywordsTo<Annotation::Relationship>({
     std::make_pair("<:", Annotation::Relationship::SUBCLASS_OF),
     std::make_pair(":>", Annotation::Relationship::SUPERCLASS_OF),
     std::make_pair("::", Annotation::Relationship::ANNOTATION)});
+
+auto visibilityType = oneOfKeywordsTo<Visibility::Type>({
+    std::make_pair("public", Visibility::Type::PUBLIC),
+    std::make_pair("private", Visibility::Type::PRIVATE)});
+
+auto visibility = transform(
+    sequence(visibilityType, optional(parenthesizedList(generalExpression))),
+    [](Loc l, Visibility::Type type, Maybe<vector<Expression>>&& friends) {
+      if (friends) {
+        return Visibility(type, move(*friends));
+      } else {
+        return Visibility(type, vector<Expression>());
+      }
+    });
 
 auto annotation = transform(sequence(relationship, optional(generalExpression)),
     [](Loc l, Annotation::Relationship relationship, Maybe<Expression>&& param) {
@@ -519,7 +567,7 @@ const DeclarationParser declaration = transform(
       if (type) {
         result.type = *type;
       } else if (kind == Declaration::Kind::FUNCTION) {
-        result.type = Expression::fromTuple(Location(), vector<Expression>());
+        result.type = Expression::fromTuple(Location(), vector<ListElement>());
       }
       result.annotations = move(annotations);
       return move(result);
@@ -554,6 +602,38 @@ const DeclarationParser implicitVarDeclaration = transform(
       return move(result);
     });
 
+// E.g. "for (i < n)".
+const DeclarationParser quickRangeDeclaration = transform(
+    sequence(located(identifier),
+             optional(parenthesizedList(generalExpression)),
+             sequence(keyword("<"), optional(generalExpression))),
+    [] (Loc l,
+        Located<string>&& name,
+        Maybe<vector<Expression>>&& parameters,
+        Maybe<Expression>&& range) {
+      Declaration result(l, Declaration::Kind::VARIABLE);
+      result.name = move(name);
+      if (parameters) {
+        result.parameters = vector<ParameterDeclaration>();
+        result.parameters->reserve(parameters->size());
+        for (auto& param: *parameters) {
+          result.parameters->push_back(ParameterDeclaration::fromConstant(
+              param.location, move(param)));
+        }
+      }
+      result.annotations.push_back(Annotation(Annotation::Relationship::LESS_THAN, move(range)));
+      return move(result);
+    });
+
+template <typename SubParser>
+DeclarationParser visible(SubParser&& subParser) {
+  return transform(sequence(optional(visibility), std::forward<SubParser>(subParser)),
+      [](Loc l, Maybe<Visibility>&& visibility, Declaration&& decl) {
+        decl.visibility = move(visibility);
+        return move(decl);
+      });
+}
+
 // -------------------------------------------------------------------
 
 // A parameter can be either a declaration or a constant.
@@ -561,7 +641,7 @@ const DeclarationParser implicitVarDeclaration = transform(
 // The only declaration kinds that remotely make sense as parameters are "var" and "class".
 // TODO:  Do we actually want to allow "class" here, or just use vars with type "Type"?
 const ParameterDeclarationParser parameterDeclaration = oneOf(
-    transform(sequence(oneOf(declaration, implicitVarDeclaration),
+    transform(sequence(visible(oneOf(declaration, implicitVarDeclaration)),
           optional(sequence(keyword("="), generalExpression))),
       [](Loc l, Declaration&& declaration, Maybe<Expression>&& definition){
       if (definition) {
@@ -597,15 +677,20 @@ StatementParser blank = transform(endOfInput,
 
 // Convert a declaration parser into a statement parser.
 StatementParser declarationStatement(const DeclarationParser& parser) {
-  return transform(parser, [](Loc l, Declaration&& declaration) {
+  return transform(visible(parser), [](Loc l, Declaration&& declaration) {
     return Statement::fromDeclaration(l, move(declaration));
   });
 }
 
 StatementParser assignmentStatement = transform(
-    sequence(generalExpression, keyword("="), generalExpression),
-    [](Loc l, Expression&& variable, Expression&& value) {
-      return Statement::fromAssignment(l, move(variable), move(value));
+    sequence(generalExpression, assignmentOp, generalExpression),
+    [](Loc l, Expression&& variable, string&& op, Expression&& value) {
+      op.erase(op.size() - 1);
+      if (op.empty()) {
+        return Statement::fromAssignment(l, move(variable), nullptr, move(value));
+      } else {
+        return Statement::fromAssignment(l, move(variable), move(op), move(value));
+      }
     });
 
 StatementParser unionStatement = transform(keyword("union"),
@@ -626,10 +711,14 @@ StatementParser elseStatement(const StatementParser& generalStatement) {
       });
 }
 
+const DeclarationParser forRange =
+    oneOf(declaration, implicitVarDeclaration, quickRangeDeclaration);
+
 StatementParser forStatement(const StatementParser& generalStatement) {
-  return transform(sequence(keyword("for"),
-                            parenthesizedList(oneOf(declaration, implicitVarDeclaration)),
-                            generalStatement),
+  return transform(sequence(
+          keyword("for"),
+          parenthesizedList(forRange),
+          generalStatement),
       [](Loc l, vector<Declaration>&& declarations, Statement&& body) {
         return Statement::fromFor(l, move(declarations), move(body));
       });
@@ -660,7 +749,7 @@ StatementParser returnStatement = transform(
       if (expression) {
         return Statement::fromReturn(l, move(*expression));
       } else {
-        return Statement::fromReturn(l, Expression::fromTuple(l.last(0), vector<Expression>()));
+        return Statement::fromReturn(l, Expression::fromTuple(l.last(0), vector<ListElement>()));
       }
     });
 
@@ -786,6 +875,7 @@ bool attachBlock(Declaration& declaration, const vector<TokenStatement>& block) 
     case Declaration::Kind::DESTRUCTOR:
     case Declaration::Kind::CONVERSION:
     case Declaration::Kind::DEFAULT_CONVERSION:
+    case Declaration::Kind::OPERATOR:
       attachBlock(declaration.definition->block, block, StatementContext::IMPERATIVE);
       return true;
 

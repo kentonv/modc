@@ -31,6 +31,18 @@ using std::vector;
 int main(int argc, char* argv[]) {
   std::string text, line;
 
+  bool executable = false;
+
+  if (std::getline(std::cin, line)) {
+    if (line.substr(0, 3) == "#!/" || line.substr(0, 4) == "#! /") {
+      executable = true;
+      cout << line << '\n';
+    } else {
+      text += line;
+      text += '\n';
+    }
+  }
+
   while (std::getline(std::cin, line)) {
     text += line;
     text += '\n';
@@ -43,8 +55,11 @@ int main(int argc, char* argv[]) {
   modc::CodePrinter printer(100);
 
   for (auto& tokenStatement: tokenStatements) {
-    // TODO:  Detect imperative top-level scope.
-    printer << modc::astParser::parseDeclarative(tokenStatement);
+    if (executable) {
+      printer << modc::astParser::parseImperative(tokenStatement);
+    } else {
+      printer << modc::astParser::parseDeclarative(tokenStatement);
+    }
   }
 
   std::cout << printer.getText();
