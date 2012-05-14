@@ -1,0 +1,259 @@
+#! /usr/bin/env modc exec
+
+# This is %C.  You're a hacker.  You don't want to read documentation, you want to see code.  So,
+# this intro is code.
+#
+# We do, however, need to cover some ground rules.
+#
+# 1.  There is no garbage collection in %C.
+# 2.  There is NO GARBAGE COLLECTION in %C.
+# 3.  %C is faster and more memory efficient than C++.  Not just in contrived benchmarks.  Always.
+# 4.  Segfaults and buffer overruns are so 1990.  But runtime null- and bounds-checking is slow.
+#     %C catches these problems at compile time.
+# 5.  Boilerplate is evil.
+
+# Two quick notes:
+# -   Because this file started with "#! /", it is executable.  It has no main() function -- the
+#     entire file is the main function.  On the other hand, %C files that do not begin with "#! /"
+#     define importable modules.
+# -   Most of the examples below are enclosed in blocks (curly braces).  This is so that the names
+#     defined in the block only exist within that block, and do not affect subsequent examples.
+
+# ====================================================================
+# Hello world!
+{
+  var cli = import "/modc/cli.modc";
+  cli.out.write("Hello World!");
+}
+
+# ====================================================================
+# Variables.
+{
+  # Define i with inferred type.
+  var i = 4;
+  assert(i + 1 == 5);
+  i = 9;
+  assert(i + 1 == 10);
+
+  # Declare j without initializing.  Must specify type.  Must initialize before first use.
+  var j: Integer;
+
+  if (i > 4) {
+    j = 1;
+  } else {
+    j = 2;
+  }
+
+  assert(j == 1);
+
+  # Define k with explicit type.
+  var k: Integer = 123;
+  assert(k == 123);
+}
+
+# ====================================================================
+# A function.
+{
+  func fib(n: Integer): Integer {
+    var a = 0;
+    var b = 1;
+
+    for (i < n) {
+      var c = a + b;
+      (a, b) = (b, c);
+    }
+    return a;
+  }
+
+  # Array comprehension.
+  assert([for (i < 10) fib(i)] == [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]);
+}
+
+# ====================================================================
+# A simple class.
+{
+  class Counter {
+    # Private member variable.  (Note that default visibility is module-private.)
+    private var value: Integer;
+
+    # Named constructor.
+    ctor create(i: Integer) {
+      return (value = i);
+    }
+
+    # Non-mutating ("const") method.
+    func get(): Integer {
+      return value;
+    }
+
+    # & = function modifies this.
+    func &increment() {
+      ++value;
+    }
+  }
+
+  # Call named constructor.
+  var counter = Counter.create(2);
+
+  # Mutating method calls must use &.
+  counter.&increment();
+  counter.&increment();
+  assert(counter.get() == 4);
+
+  # & = pass by mutable (non-const) reference.
+  func incrementBy(counter&: Counter, amount: Integer) {
+    for (i < amount) {
+      counter.&increment();
+    }
+  }
+
+  # Must use & to indicate counter may be modified.
+  incrementBy(&counter, 6);
+  assert(counter.get() == 10);
+
+  # @ = pass by immutable ("const") reference.
+  func isEven(counter@: Counter): Boolean {
+    return counter.get() % 2 == 0;
+  }
+
+  # No need to use @ at call site.
+  assert(isEven(counter));
+  counter.&increment();
+  assert(!isEven(counter));
+}
+
+# ====================================================================
+# A class with overloaded operators.
+{
+  class Point {
+    var x: Integer;
+    var y: Integer;
+
+    # Implicit constructor from tuple
+    ctor(x: Integer, y: Integer) {
+      return (x = x, y = y);
+    }
+
+    # Addition / subtraction of points
+    operator(this + other, other: Point): Point {
+      return (x + other.x, y + other.y);
+    }
+    operator(this - other, other: Point): Point {
+      return (x - other.x, y - other.y);
+    }
+
+    # Scale, with factor on right
+    operator(this * factor, factor: Integer): Point {
+      return (x * factor, y * factor);
+    }
+
+    # Scale, with factor on left
+    operator(factor * this, factor: Integer): Point {
+      return (x * factor, y * factor);
+    }
+
+    # Dot product
+    operator(this * other, other: Point): Integer {
+      return x * other.x + y * other.y;
+    }
+
+    # Negation
+    operator(-this): Point {
+      return (-x, -y);
+    }
+  }
+
+  var p: Point = (1, 2);
+
+  assert(p.x == 1);
+  assert(p.y == 2);
+  assert(p == (1, 2));  # Right-hand side implicitly converted to Point.
+
+  assert(p + (3, 4) == (4, 6));
+  assert(p * 2 == (2, 4));
+  assert(p * (2, 3) == 8);
+}
+
+# ====================================================================
+# A class with implicit conversions.
+{
+  class Rational {
+    var numerator: Integer;
+    var denominator: Integer;
+
+    # Implicit constructor from Integer.
+    ctor(i: Integer) {
+      return (numerator = i, denominator = 0);
+    }
+
+    # Implicit conversion to double.
+    conv: Double {
+      return numerator / denominator;
+    }
+
+    func floor(): Integer {
+      # // is integer division.
+      return numerator // denominator;
+    }
+
+    operator(this + other, other: Rational) {
+      return (numerator = numerator * other.denominator + other.numerator * denominator,
+          denominator = denominator * other.denominator);
+    }
+
+    operator(this / other, other: Rational) {
+      return (numerator = numerator * other.denominator, denominator = denominator *
+          other.numerator);
+    }
+  }
+
+  var x: Rational = 3;
+  x /= 2;
+  assert(x.numerator == 3);
+  assert(x.denominator == 2);
+
+  var y: Double = x;
+  assert(y == 1.5);
+
+  assert(x.floor() == 1);
+}
+
+# ====================================================================
+# A class with properties.
+{
+  class TimePeriod {
+    var seconds: Double;
+
+    ctor fromSeconds(seconds: Double) {
+      return (seconds = seconds);
+    }
+
+    var minutes {
+      ctor(value: Double) {
+        seconds = value * 60;
+      }
+      conv: Double {
+        return seconds / 60;
+      }
+    }
+
+    var hours {
+      ctor(value: Double) {
+        seconds = value * 3600;
+      }
+      conv: Double {
+        return seconds / 3600;
+      }
+    }
+  }
+
+  var t = TimePeriod.fromSeconds(90);
+  assert(t.minutes == 1.5);
+
+  t.minutes = 2.5;
+  assert(t.seconds == 150);
+
+  t.hours = 2;
+  assert(t.minutes == 60);
+  assert(t.seconds == 7200);
+}

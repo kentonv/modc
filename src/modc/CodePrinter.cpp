@@ -15,147 +15,309 @@
 // limitations under the License.
 
 #include "CodePrinter.h"
+#include "base/Debug.h"
+#include <assert.h>
 
 namespace modc {
 
-static string::size_type countChars(const string& text) {
+using std::move;
+
+static string::size_type countChars(string::const_iterator begin, string::const_iterator end) {
+  while (begin < end && *begin == ' ') {
+    ++begin;
+  }
+  while (begin < end && *end == ' ') {
+    --end;
+  }
+
   string::size_type result = 0;
-  for (char c : text) {
+  while (begin < end) {
     // Don't count UTF-8 inner bytes.
-    if ((c & 0xC0) != 0x80) {
+    if ((*begin++ & 0xC0) != 0x80) {
       ++result;
     }
   }
+
   return result;
 }
 
 static const int INDENT_WIDTH = 2;
 static const int WRAP_INDENT_WIDTH = 4;
 
-CodePrinter::CodePrinter(string::size_type lineWidth)
-    : lineWidth(lineWidth), indentLevel(0), lineStart(0), indentedLineStart(0),
+CodePrinter::CodePrinter(std::ostream& out, string::size_type lineWidth)
+    : out(out), lineWidth(lineWidth), indentLevel(0),
       nextWriteStartsNewStatement(false), nextWriteCanBreak(true) {}
 CodePrinter::~CodePrinter() {}
 
-void CodePrinter::startNewLine(int leadingSpaceCount) {
-  buffer.erase(buffer.find_last_not_of(' ') + 1);
-  buffer += '\n';
-  lineStart = buffer.size();
-  buffer.append(leadingSpaceCount, ' ');
-  indentedLineStart = buffer.size();
-}
-
-void CodePrinter::nextStatement() {
-  if (nextWriteStartsNewStatement) {
-    flushUnbreakable();
-  }
-  nextWriteStartsNewStatement = true;
-}
-
-void CodePrinter::wrapLine() {
-  startNewLine(indentLevel * INDENT_WIDTH + WRAP_INDENT_WIDTH);
-}
-
-void CodePrinter::enterBlock() {
-  ++indentLevel;
-}
-
-void CodePrinter::leaveBlock() {
-  bool newStatement = nextWriteStartsNewStatement;
-  nextWriteStartsNewStatement = false;
-  flushUnbreakable();
-  nextWriteStartsNewStatement = newStatement;
-  --indentLevel;
-}
-
-void CodePrinter::extendLineIfEquals(const char* text) {
-  if (!nextWriteStartsNewStatement) {
-    return;
-  }
-
-  nextWriteStartsNewStatement = false;
-  flushUnbreakable();
-
-  if (buffer.substr(indentedLineStart) != text) {
-    startNewLine(indentLevel * INDENT_WIDTH);
-  }
-}
-
-void CodePrinter::advanceToColumn(string::size_type column) {
-  flushUnbreakable();
-  if (buffer.size() - lineStart < column) {
-    buffer.append(column - (buffer.size() - lineStart), ' ');
-  }
-}
-
-void CodePrinter::flushUnbreakable() {
-  if (!unbreakableText.empty()) {
-    string::size_type length = countChars(unbreakableText);
-    string::size_type last_nonspace = unbreakableText.find_last_not_of(' ') + 1;
-
-    if (buffer.size() == indentedLineStart) {
-      // We're at the beginning of a line, so don't wrap even if there is not enough space!
-      if (last_nonspace == 0) {
-        // Don't add spaces at the beginning of a line.
-        return;
-      }
-    } else if (buffer.size() + last_nonspace > lineStart + lineWidth) {
-      // Not enough space on current line.  Wrap.
-      wrapLine();
-    }
-
-    buffer += unbreakableText;
-    unbreakableText.clear();
-  }
-
-  if (nextWriteStartsNewStatement) {
-    nextWriteStartsNewStatement = false;
-    startNewLine(indentLevel * INDENT_WIDTH);
-  }
-}
-
 CodePrinter& CodePrinter::operator<<(const string& text) {
-  if (nextWriteCanBreak) flushUnbreakable();
-
-  unbreakableText += text;
-
+  if (nextWriteCanBreak) {
+    bool trailingSpace = !lineBuffer.empty() && lineBuffer.back() == ' ';
+    breakablePoints.push_back(lineBuffer.size() - trailingSpace);
+  }
   nextWriteCanBreak = true;
 
+  lineBuffer += text;
   return *this;
 }
 
-namespace {
-
-inline void ensureTrailingSpace(string& str) {
-  if (str.back() != ' ') {
-    str.push_back(' ');
-  }
-}
-
-inline void ensureNoTrailingSpace(string& str) {
-  if (str.back() == ' ') {
-    str.pop_back();
-  }
-}
-
-}
-
 CodePrinter& CodePrinter::operator<<(Space) {
-  if (!unbreakableText.empty()) {
-    ensureTrailingSpace(unbreakableText);
-  } else if (buffer.size() > indentedLineStart) {
-    ensureTrailingSpace(buffer);
+  if (!lineBuffer.empty() && lineBuffer.back() != ' ') {
+    lineBuffer += ' ';
   }
   return *this;
 }
 
 CodePrinter& CodePrinter::operator<<(NoSpace) {
-  if (!unbreakableText.empty()) {
-    ensureNoTrailingSpace(unbreakableText);
-  } else if (buffer.size() > indentedLineStart) {
-    ensureNoTrailingSpace(buffer);
+  if (!lineBuffer.empty() && lineBuffer.back() == ' ') {
+    lineBuffer.erase(lineBuffer.size() - 1);
   }
   return *this;
 }
+
+CodePrinter& CodePrinter::operator<<(EndStatement) {
+  while (!currentGroups.empty()) {
+    DEBUG_ERROR << "Mismatched start-group.";
+    *this << endGroup;
+  }
+
+  if (breakablePoints.empty() || breakablePoints.back() < lineBuffer.size()) {
+    breakablePoints.push_back(lineBuffer.size());
+  }
+
+  string::size_type availableSpace = lineWidth - indentLevel * INDENT_WIDTH;
+  layoutLine(availableSpace, availableSpace, lineBuffer.begin(), lineBuffer.end(),
+             groups.begin(), groups.end());
+
+  nextWriteCanBreak = true;
+  return *this;
+}
+
+CodePrinter& CodePrinter::operator<<(StartBlock) {
+  ++indentLevel;
+  return *this;
+}
+
+CodePrinter& CodePrinter::operator<<(EndBlock) {
+  --indentLevel;
+  return *this;
+}
+
+CodePrinter& CodePrinter::operator<<(Breakable marker) {
+  return *this;
+}
+
+CodePrinter& CodePrinter::operator<<(StartSubExpression) {
+  return *this;
+}
+
+CodePrinter& CodePrinter::operator<<(EndSubExpression) {
+  return *this;
+}
+
+CodePrinter& CodePrinter::operator<<(StartParameters marker) {
+  return *this;
+}
+
+CodePrinter& CodePrinter::operator<<(NextParameter) {
+  return *this;
+}
+
+CodePrinter& CodePrinter::operator<<(EndParameters) {
+  return *this;
+}
+
+CodePrinter& CodePrinter::operator<<(StartGroup) {
+  currentGroups.push_back(groups.size());
+  groups.emplace_back();
+  groups.back().startBreak = breakablePoints.size();
+  return *this;
+}
+
+CodePrinter& CodePrinter::operator<<(EndGroup) {
+  if (currentGroups.empty()) {
+    DEBUG_ERROR << "Mismatched end-group.";
+    return *this;
+  }
+
+  bool isPastLastBreak = lineBuffer.size() > (breakablePoints.empty() ? 0 : breakablePoints.back());
+
+  Group& group = groups[currentGroups.back()];
+  group.endBreak = breakablePoints.size() + isPastLastBreak;
+
+  currentGroups.pop_back();
+
+  return *this;
+}
+
+class CodePrinter::GroupIterator {
+public:
+  GroupIterator(vector<Group>::const_iterator pos, vector<Group>::const_iterator end)
+      : pos(pos), end(end) {}
+
+  const Group& operator*() { return *pos; }
+  const Group* operator->() { return pos.operator->(); }
+
+  bool nextIsBefore(int chunk) {
+    return pos < end && pos->startBreak < chunk;
+  }
+
+  void advanceTo(int chunk) {
+    while (nextIsBefore(chunk)) {
+      ++pos;
+    }
+  }
+
+private:
+  vector<Group>::const_iterator pos;
+  vector<Group>::const_iterator end;
+};
+
+class CodePrinter::LayoutEngine {
+public:
+
+  void layout(int beginChunk, int endChunk);
+
+private:
+  string buffer;
+
+  int lineWidth;
+  int indentAmount;
+  int usedOnLine;
+
+  vector<Group>::const_iterator groupPos;
+  vector<Group>::const_iterator groupEnd;
+
+  void addToLine(int chunk);
+  bool tryAddToLine(int beginChunk, int endChunk);
+  bool haveSpaceFor(int chunk);
+  bool haveSpaceOnNewLineFor(int chunk);
+
+  bool startNewLineWithIndent(int newIndentAmount) {
+    if (indentAmount == newIndentAmount && usedOnLine == 0) {
+      // Already on a fresh line.
+      return false;
+    } else {
+      indentAmount = newIndentAmount;
+      buffer += '\n';
+      buffer.append(indentAmount, ' ');
+      return true;
+    }
+  }
+
+  void startNewIndentedLine() {
+    startNewLineWithIndent(indentAmount + WRAP_INDENT_WIDTH);
+  }
+
+  bool nextGroupIsBefore(int chunk) {
+    return groupPos < groupEnd && groupPos->endBreak <= chunk;
+  }
+
+  void advanceGroupTo(int chunk) {
+    while (nextGroupIsBefore(chunk)) {
+      ++groupPos;
+    }
+  }
+
+  const Group& nextGroup() { return *groupPos; }
+};
+
+void CodePrinter::LayoutEngine::layout(int beginChunk, int endChunk) {
+  while (true) {
+    if (tryAddToLine(beginChunk, endChunk)) {
+      return;
+    }
+
+    // Write the prefix (stuff before any groups), wrapping as needed.
+    int prefixEndChunk;
+    if (nextGroupIsBefore(endChunk)) {
+      prefixEndChunk = nextGroup().startBreak;
+    } else {
+      prefixEndChunk = endChunk;
+    }
+
+    while (beginChunk < prefixEndChunk) {
+      if (!haveSpaceFor(beginChunk)) {
+        startNewIndentedLine();
+        if (tryAddToLine(beginChunk, endChunk)) {
+          return;
+        }
+      }
+      addToLine(beginChunk);
+      ++beginChunk;
+    }
+
+    startNewIndentedLine();
+    int oldIndentAmount = indentAmount;
+
+    // Write consecutive groups.
+    while (nextGroupIsBefore(endChunk) && beginChunk == nextGroup().startBreak) {
+      if (!tryAddToLine(nextGroup().startBreak, nextGroup().endBreak)) {
+        if (!startNewLineWithIndent(oldIndentAmount) ||
+            !tryAddToLine(nextGroup().startBreak, nextGroup().endBreak)) {
+          layout(nextGroup().startBreak, nextGroup().endBreak);
+          startNewLineWithIndent(oldIndentAmount);
+        }
+      }
+
+      beginChunk = groupPos->endBreak;
+    }
+
+    if (beginChunk == endChunk) {
+      return;
+    }
+
+    startNewLineWithIndent(oldIndentAmount);
+  }
+
+
+  // if (enough space for all text) {
+  //   write all text
+  // } else {
+  //   // write prefix
+  //   while (begin break < first group start) {
+  //     if (not at line start and not enough space for first chunk) {
+  //       write line break
+  //       lineWidth -= WRAP_INDENT_WIDTH
+  //       availableSpace = lineWidth
+  //     }
+  //     write first chunk
+  //     increment begin break
+  //   }
+  //   if (everything else would fit on next line) {
+  //     put it there
+  //   } else if (only one group) {
+  //     recurse into that group, but with endBreak = our endBreak, so that it includes our
+  //         suffix as if part of its own.
+  //   } else {
+  //     for earch group {
+  //       if the group doesn't fit on the current line, start a new one
+  //       if the group now fits on the current line, write it
+  //       otherwise {
+  //         recurse to write the group, with endBreak = start of next group or our own end break
+  //         start a new line
+  //       }
+  //     }
+  //   }
+  // }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 }  // namespace modc

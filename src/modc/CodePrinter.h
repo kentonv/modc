@@ -18,40 +18,61 @@
 #define KENTONSCODE_MODC_CODEPRINTER_H_
 
 #include <string>
+#include <vector>
+#include <utility>
+#include <iosfwd>
 
 namespace modc {
 
 using std::string;
+using std::vector;
 
-class Glue {};
-static Glue glue __attribute__((unused));
-class EndStatement {};
-static EndStatement endStatement __attribute__((unused));
-class StartBlock {};
-static StartBlock startBlock __attribute__((unused));
-class EndBlock {};
-static EndBlock endBlock __attribute__((unused));
-class Space {};
+struct Space {};
 static Space space __attribute__((unused));
-class NoSpace {};
+struct NoSpace {};
 static NoSpace noSpace __attribute__((unused));
+
+struct EndStatement {};
+static EndStatement endStatement __attribute__((unused));
+struct StartBlock {};
+static StartBlock startBlock __attribute__((unused));
+struct EndBlock {};
+static EndBlock endBlock __attribute__((unused));
+
+struct Breakable {
+  int priority;
+
+  explicit Breakable(int priority): priority(priority) {}
+};
+inline Breakable breakable(int priority) { return Breakable(priority); }
+struct StartSubExpression {};
+static StartSubExpression startSubExpression __attribute__((unused));
+struct EndSubExpression {};
+static EndSubExpression endSubExpression __attribute__((unused));
+
+struct StartParameters {
+  int chainPriority;
+
+  explicit StartParameters(int chainPriority): chainPriority(chainPriority) {}
+};
+inline StartParameters startParameters(int chainPriority) { return StartParameters(chainPriority); }
+struct NextParameter {};
+static NextParameter nextParameter __attribute__((unused));
+struct EndParameters {};
+static EndParameters endParameters __attribute__((unused));
+
+// breakableStartParams(priority)
+// breakableNextParam
+// end parameters
+
+// breakable(priority)
+// startSubExpression
+// endSubExpression
 
 class CodePrinter {
 public:
-  CodePrinter(string::size_type lineWidth);
+  CodePrinter(std::ostream& out, string::size_type lineWidth);
   ~CodePrinter();
-
-  const string& getText() { flushUnbreakable(); return buffer; }
-
-  // Begin new statement.
-  void nextStatement();
-
-  // Begin new line of current statement (usually automatic).
-  void wrapLine();
-
-  // Modify indent level and call nextStatement().
-  void enterBlock();
-  void leaveBlock();
 
   // If the previous line matches exactly the given text (not including indent), and nothing has
   // been printed yet on the current line, go back to the previous line.  Useful for making "else"
@@ -62,29 +83,48 @@ public:
   void advanceToColumn(string::size_type column);
 
   CodePrinter& operator<<(const string& text);
-  CodePrinter& operator<<(Glue) { nextWriteCanBreak = false; return *this; }
+
   CodePrinter& operator<<(Space);
   CodePrinter& operator<<(NoSpace);
 
-  CodePrinter& operator<<(EndStatement) { nextStatement(); return *this; }
-  CodePrinter& operator<<(StartBlock) { enterBlock(); return *this; }
-  CodePrinter& operator<<(EndBlock) { leaveBlock(); return *this; }
+  CodePrinter& operator<<(EndStatement);
+  CodePrinter& operator<<(StartBlock);
+  CodePrinter& operator<<(EndBlock);
+
+  CodePrinter& operator<<(Breakable marker);
+  CodePrinter& operator<<(StartSubExpression);
+  CodePrinter& operator<<(EndSubExpression);
+  CodePrinter& operator<<(StartParameters marker);
+  CodePrinter& operator<<(NextParameter);
+  CodePrinter& operator<<(EndParameters);
 
 private:
+  std::ostream& out;
   const string::size_type lineWidth;
-  string buffer;
-  string unbreakableText;
 
   int indentLevel;
-  string::size_type lineStart;
-  string::size_type indentedLineStart;
-
   bool nextWriteStartsNewStatement;
   bool nextWriteCanBreak;
 
-  void startNewLine(int leadingSpaceCount);
+  string lineBuffer;
 
-  void flushUnbreakable();
+  enum BreakType {
+    START_PARAMS,
+  };
+
+  struct BreakPoint {
+    string::const_iterator pos;
+    bool isStartParameters:1;
+    unsigned int depth:31;
+    int priority;
+    int endIndex;
+    int textLength;
+  };
+
+  vector<BreakPoint> breakPoints;
+  vector<int> breakPointStack;
+
+  class LayoutEngine;
 };
 
 }  // namespace modc

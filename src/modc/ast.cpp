@@ -27,7 +27,7 @@
 #include "parser.h"
 #include "base/Debug.h"
 #include "CodePrinter.h"
-
+#if 0
 namespace modc {
 namespace ast {
 
