@@ -60,3 +60,21 @@ func manyParams4(thisIsTheFirstParam: ItHasALongType(with, many, parameters, 5, 
     : Integer {
   body();
 }
+
+func complicated() {
+  foooooooo.fooooooooooooo(bar, baz).fooooooooooo[12].fooooooo(
+      baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaar(baaaaaaaaaaaz, quuuuuuuuuuux), baaaaaaaz,
+      quuuuuuuuuux, coooooooooooooooooooooorge,
+      graaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaault.gaaaaaaaaaaaaaaaaaaaaaaaaarply
+          .waaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaldo(
+              blaaaaaaaaaaaaaaaaaaaaaaah, blaaaaaaaaaaaaaaaaaaaaaaaaaah),
+      fooooooooooooo);
+  foooooooo.fooooooooooooo(bar, baz).fooooooooooo[12]
+      .fooooooo(baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaar(baaaaaaaaaaaz, quuuuuuuuuuux),
+          baaaaaaaz, quuuuuuuuuux, coooooooooooooooooooooorge,
+          graaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaault.gaaaaaaaaaaaaaaaaaaaaaaaaarply
+              .waaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaldo(
+                  blaaaaaaaaaaaaaaaaaaaaaaah, blaaaaaaaaaaaaaaaaaaaaaaaaaah),
+          fooooooooooooo)
+      .blah();
+}

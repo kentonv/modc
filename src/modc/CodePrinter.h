@@ -19,14 +19,17 @@
 
 #include <string>
 #include <vector>
+#include <list>
 #include <utility>
 #include <iosfwd>
 #include <stdint.h>
+#include "base/OwnedPtr.h"
 
 namespace modc {
 
 using std::string;
 using std::vector;
+using std::list;
 using std::move;
 
 struct Space {};
@@ -71,9 +74,131 @@ static EndParameters endParameters __attribute__((unused));
 // startSubExpression
 // endSubExpression
 
+class Format {
+public:
+  constexpr Format(): bits(0) {}
+  static constexpr Format fromBit(int bit) {
+    return Format(1 << bit);
+  }
+
+  Format operator|(const Format& other) const { return Format(bits | other.bits); }
+  Format operator&(const Format& other) const { return Format(bits & other.bits); }
+  Format operator+(const Format& other) const { return Format(bits | other.bits); }
+  Format operator-(const Format& other) const { return Format(bits & ~other.bits); }
+
+  operator bool() { return bits != 0; }
+
+private:
+  uint32_t bits;
+
+  explicit constexpr Format(uint32_t bits): bits(bits) {}
+};
+
+namespace format {
+  constexpr Format KEYWORD = Format::fromBit(0);
+  constexpr Format OPERATOR = Format::fromBit(1);
+  constexpr Format BRACKET = Format::fromBit(2);
+  constexpr Format LITERAL = Format::fromBit(3);
+
+  constexpr Format LOCAL = Format::fromBit(4);
+  constexpr Format MEMBER = Format::fromBit(5);
+  constexpr Format GLOBAL = Format::fromBit(6);
+}
+
+class FormattedCode {
+public:
+  struct Piece {
+    Format format;
+    string text;
+
+    Piece(Format format, string&& text): format(format), text(move(text)) {}
+  };
+
+  typedef list<Piece>::iterator iterator;
+  typedef list<Piece>::const_iterator const_iterator;
+
+  FormattedCode();
+  ~FormattedCode();
+
+  void append(string&& text);
+  void append(string&& text, Format format);
+  void ensureTrailingSpace();
+  void stripTrailingSpace();
+  iterator beforeTrailingSpace();
+  iterator afterLeadingSpace();
+
+  void pushFormat(Format format) { savedFormats.push_back(currentFormat); currentFormat = format; }
+  void popFormat() { currentFormat = savedFormats.back(); savedFormats.pop_back(); }
+
+  iterator begin() { return pieces.begin(); }
+  iterator end() { auto end = pieces.end(); --end; return end; }
+  const_iterator begin() const { return pieces.begin(); }
+  const_iterator end() const { auto end = pieces.end(); --end; return end; }
+  bool empty() const { return begin() == end(); }
+  void clear() { pieces.erase(begin(), end()); }
+
+  Piece& back() { auto end = pieces.end(); --end; --end; return *end; }
+  Piece& front() { return pieces.front(); }
+
+  void splice(FormattedCode& other, iterator begin, iterator end) {
+    pieces.splice(this->end(), other.pieces, begin, end);
+  }
+
+  string toString() const;
+
+private:
+  Format currentFormat;
+  vector<Format> savedFormats;
+
+  list<Piece> pieces;
+};
+
+struct FormattedLine {
+  int indentLevel;
+  FormattedCode code;
+};
+
+typedef unsigned int TextWidth;
+
+class FormattedCodeWriter {
+public:
+  virtual ~FormattedCodeWriter();
+
+  struct Metrics {
+    TextWidth availableWidth;
+    TextWidth spaceWidth;
+    TextWidth indentWidth;
+    TextWidth blockIndentWidth;
+    TextWidth forceWrapFirstParameterThreshold;
+  };
+
+  virtual void writeStatement(int blockLevel, vector<FormattedLine>&& lines) = 0;
+  virtual void writeBlankLine() = 0;
+  virtual TextWidth getWidth(FormattedCode::const_iterator begin,
+                             FormattedCode::const_iterator end) = 0;
+  virtual Metrics getMetrics(int blockLevel) = 0;
+};
+
+class TextCodeWriter: public FormattedCodeWriter {
+public:
+  TextCodeWriter(std::ostream& out, FormattedCodeWriter::Metrics metrics);
+  ~TextCodeWriter();
+
+  // implements FormattedCodeWriter ------------------------------------------------------
+
+  void writeStatement(int blockLevel, vector<FormattedLine>&& lines);
+  void writeBlankLine();
+  TextWidth getWidth(FormattedCode::const_iterator begin, FormattedCode::const_iterator end);
+  Metrics getMetrics(int blockLevel);
+
+private:
+  std::ostream& out;
+  FormattedCodeWriter::Metrics metrics;
+};
+
 class CodePrinter {
 public:
-  CodePrinter(std::ostream& out, string::size_type lineWidth);
+  CodePrinter(FormattedCodeWriter& out);
   ~CodePrinter();
 
   // If the previous line matches exactly the given text (not including indent), and nothing has
@@ -82,7 +207,8 @@ public:
   void extendLineIfEquals(const char* text);
 
   CodePrinter& operator<<(const char* literalText);
-  CodePrinter& operator<<(const string& text);
+  CodePrinter& operator<<(const string& text) { return *this << string(text); }
+  CodePrinter& operator<<(string&& text);
 
   CodePrinter& operator<<(Space);
   CodePrinter& operator<<(NoSpace);
@@ -99,39 +225,38 @@ public:
   CodePrinter& operator<<(EndParameters);
 
 private:
-  std::ostream& out;
-  const string::size_type lineWidth;
+  FormattedCodeWriter& out;
 
   int indentLevel;
   bool nextWriteStartsNewStatement;
 
-  string lineBuffer;
+  FormattedCode lineBuffer;
 
   struct BreakPoint {
-    int pos;
-    bool isCall:1;
-    unsigned int priority:31;
+    FormattedCode::iterator pos;
+    bool isCall;
+    unsigned int priority;
 
     int realPriority() const {
       return isCall ? ((priority | 255) + 1) : priority;
     }
 
-    BreakPoint(int pos, bool isCall, unsigned int priority)
+    BreakPoint(FormattedCode::iterator pos, bool isCall, unsigned int priority)
         : pos(pos), isCall(isCall), priority(priority) {}
   };
 
   vector<BreakPoint> breakPoints;
 
   struct Group {
-    string::const_iterator begin;
-    string::const_iterator end;
+    FormattedCode::iterator begin;
+    FormattedCode::iterator end;
     unsigned int width;
     bool isCall:1;
     unsigned int priority:31;
     vector<Group> children;
 
-    Group(string::const_iterator begin, string::const_iterator end, string::size_type width,
-          bool isCall, unsigned int priority, vector<Group>&& children)
+    Group(FormattedCode::iterator begin, FormattedCode::iterator end,
+          unsigned int width, bool isCall, unsigned int priority, vector<Group>&& children)
         : begin(begin), end(end), width(width), isCall(isCall), priority(priority),
           children(move(children)) {}
 
@@ -150,7 +275,7 @@ private:
 
   void addBreakPoint(bool isCall, unsigned int priority);
   Group collectGroup(vector<BreakPoint>::const_iterator& iter, int priority,
-                     string::const_iterator begin);
+                     FormattedCode::iterator begin);
   void applyPendingEndStatement();
 
   class LayoutEngine;

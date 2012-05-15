@@ -140,6 +140,7 @@ constexpr CharClass QUOTE = allOf("\"'`");
 constexpr CharClass DELIMITER = allOf(",;");
 constexpr CharClass OPENER = allOf("{[(");
 constexpr CharClass CLOSER = allOf("}])");
+constexpr CharClass BRACKET = OPENER + CLOSER;
 
 constexpr CharClass SKIPPABLE = ANY - allOf("{};");
 

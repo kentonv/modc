@@ -16,6 +16,7 @@
 
 #include <iostream>
 #include <string>
+#include <string.h>
 #include "tokens.h"
 #include "astParser.h"
 #include "ast.h"
@@ -52,7 +53,16 @@ int main(int argc, char* argv[]) {
   auto tokenStatements = parser.parse(text);
 
   // TODO:  Make line width configurable.
-  modc::CodePrinter printer(std::cout, 100);
+  modc::FormattedCodeWriter::Metrics metrics;
+  memset(&metrics, 0, sizeof(metrics));
+  metrics.availableWidth = 100;
+  metrics.spaceWidth = 1;
+  metrics.indentWidth = 4;
+  metrics.blockIndentWidth = 2;
+  metrics.forceWrapFirstParameterThreshold = 16;
+
+  modc::TextCodeWriter writer(std::cout, metrics);
+  modc::CodePrinter printer(writer);
 
   for (auto& tokenStatement: tokenStatements) {
     if (executable) {

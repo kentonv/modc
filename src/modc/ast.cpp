@@ -849,16 +849,16 @@ void Expression::print(CodePrinter& printer, int minPriority) const {
 
 CodePrinter& operator<<(CodePrinter& printer, const ListElement& element) {
   if (!element.ranges.empty()) {
-    printer << "for (" << element.ranges << ") ";
+    printer << "for (" << element.ranges << ") " << breakable(1);
   }
   if (element.condition) {
-    printer << "if (" << *element.condition << ") ";
+    printer << "if (" << *element.condition << ") " << breakable(1);
   }
   if (element.name) {
     printer << *element.name << " = ";
   }
 
-  printer << element.value;
+  printer << startSubExpression << element.value;
 
   return printer;
 }
@@ -924,20 +924,20 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
 
   if (kind == Kind::FUNCTION) {
     if (!type) {
-      printer << breakable(1) << ": ";
+      printer << breakable(5) << ": ";
     } else if (type->getType() == Expression::Type::TUPLE && type->tuple.empty()) {
       // empty tuple return -- nothing to print
     } else {
-      printer << breakable(1) << ": " << *type;
+      printer << breakable(5) << ": " << *type;
     }
   } else {
     if (type) {
-      printer << breakable(1) << ": " << *type;
+      printer << breakable(5) << ": " << *type;
     }
   }
 
   for (auto& ann: annotations) {
-    printer << breakable(1);
+    printer << breakable(5);
     switch (ann.relationship) {
       case Annotation::Relationship::LESS_THAN: printer << space << "< "; break;
       case Annotation::Relationship::SUBCLASS_OF: printer << space << "<: "; break;
@@ -953,7 +953,7 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
   if (definition) {
     switch (definition->getType()) {
       case Declaration::Definition::Type::EXPRESSION:
-        printer << space << "= " << breakable(1) << definition->expression;
+        printer << space << "= " << breakable(5) << definition->expression;
         if (asStatement) {
           printer << ";" << endStatement;
         }
@@ -1103,7 +1103,7 @@ CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
   }
 
   if (stmt.comment) {
-    printer << space << breakable(1) << "# " << stmt.comment->value;
+    printer << space << "# " << stmt.comment->value;
   }
 
   printer << endStatement;

@@ -16,9 +16,9 @@
 
 #include "CodePrinter.h"
 #include "base/Debug.h"
-#include "base/OwnedPtr.h"
 #include <assert.h>
 #include "Maybe.h"
+#include "chars.h"
 #include <limits>
 #include <ostream>
 
@@ -26,64 +26,180 @@ namespace modc {
 
 using std::move;
 
-static string::size_type countChars(string::const_iterator begin, string::const_iterator end) {
-  string::size_type result = 0;
-  while (begin < end) {
-    // Don't count UTF-8 inner bytes.
-    if ((*begin++ & 0xC0) != 0x80) {
-      ++result;
-    }
-  }
+// =======================================================================================
 
+FormattedCode::FormattedCode() {
+  pieces.emplace_back(currentFormat, string());
+}
+FormattedCode::~FormattedCode() {}
+
+void FormattedCode::append(string&& text) {
+  pieces.back() = Piece(currentFormat, move(text));
+  pieces.emplace_back(currentFormat, string());
+}
+void FormattedCode::append(string&& text, Format format) {
+  pieces.back() = Piece(currentFormat + format, move(text));
+  pieces.emplace_back(currentFormat, string());
+}
+void FormattedCode::ensureTrailingSpace() {
+  if (!empty() && back().text != " ") {
+    append(" ");
+  }
+}
+void FormattedCode::stripTrailingSpace() {
+  if (!empty() && back().text == " ") {
+    pieces.pop_back();
+  }
+}
+FormattedCode::iterator FormattedCode::beforeTrailingSpace() {
+  if (!empty() && back().text == " ") {
+    FormattedCode::iterator result = end();
+    --result;
+    return result;
+  } else {
+    return end();
+  }
+}
+FormattedCode::iterator FormattedCode::afterLeadingSpace() {
+  if (!empty() && front().text == " ") {
+    FormattedCode::iterator result = begin();
+    ++result;
+    return result;
+  } else {
+    return begin();
+  }
+}
+
+string FormattedCode::toString() const {
+  string result;
+  for (auto& piece: pieces) {
+    result += piece.text;
+  }
   return result;
 }
 
-static const unsigned int INDENT_WIDTH = 2;
-static const unsigned int WRAP_INDENT_WIDTH = 4;
-static const unsigned int FORCE_WRAP_FIRST_PARAMETER_THRESHOLD = 16;
+// =======================================================================================
 
-CodePrinter::CodePrinter(std::ostream& out, string::size_type lineWidth)
-    : out(out), lineWidth(lineWidth), indentLevel(0),
-      nextWriteStartsNewStatement(false), expressionDepth(1) {}
+FormattedCodeWriter::~FormattedCodeWriter() {}
+
+TextCodeWriter::TextCodeWriter(std::ostream& out, FormattedCodeWriter::Metrics metrics)
+    : out(out), metrics(metrics) {}
+TextCodeWriter::~TextCodeWriter() {}
+
+void TextCodeWriter::writeStatement(int blockLevel, vector<FormattedLine>&& lines) {
+  for (auto& line: lines) {
+    TextWidth indent = blockLevel * metrics.blockIndentWidth +
+        line.indentLevel * metrics.indentWidth;
+    for (TextWidth i = 0; i < indent; i++) {
+      out.put(' ');
+    }
+
+    for (auto& piece: line.code) {
+      out << piece.text;
+    }
+
+    out << '\n';
+  }
+}
+
+void TextCodeWriter::writeBlankLine() {
+  out << '\n';
+}
+
+TextWidth TextCodeWriter::getWidth(FormattedCode::const_iterator begin,
+                                   FormattedCode::const_iterator end) {
+  TextWidth result = 0;
+  for (auto iter = begin; iter != end; ++iter) {
+    for (unsigned char c: iter->text) {
+      // Don't count UTF-8 inner bytes.
+      if ((c & 0xC0) != 0x80) {
+        ++result;
+      }
+    }
+  }
+  return result;
+}
+
+FormattedCodeWriter::Metrics TextCodeWriter::getMetrics(int blockLevel) {
+  Metrics result = metrics;
+  result.availableWidth -= blockLevel * metrics.blockIndentWidth;
+  return result;
+}
+
+// =======================================================================================
+
+CodePrinter::CodePrinter(FormattedCodeWriter& out)
+    : out(out), indentLevel(0), nextWriteStartsNewStatement(false), expressionDepth(1) {}
 CodePrinter::~CodePrinter() {
   applyPendingEndStatement();
 }
 
 void CodePrinter::extendLineIfEquals(const char* text) {
-  if (lineBuffer == text) {
+  if (lineBuffer.toString() == text) {
     nextWriteStartsNewStatement = false;
   }
 }
 
 CodePrinter& CodePrinter::operator<<(const char* literalText) {
   applyPendingEndStatement();
+
   if (*literalText == ' ') {
     *this << space;
     ++literalText;
   }
-  lineBuffer += literalText;
+
+  while (*literalText != '\0') {
+    if (chars::LETTER.contains(*literalText)) {
+      const char* start = literalText;
+      while (chars::ALPHANUMERIC.contains(*literalText)) {
+        ++literalText;
+      }
+      lineBuffer.append(string(start, literalText), format::KEYWORD);
+    } else if (chars::DIGIT.contains(*literalText)) {
+      const char* start = literalText;
+      while (chars::ALPHANUMERIC.contains(*literalText)) {
+        ++literalText;
+      }
+      lineBuffer.append(string(start, literalText), format::LITERAL);
+    } else if (chars::OPERATOR.contains(*literalText)) {
+      const char* start = literalText;
+      while (chars::OPERATOR.contains(*literalText)) {
+        ++literalText;
+      }
+      lineBuffer.append(string(start, literalText), format::OPERATOR);
+    } else if (chars::BRACKET.contains(*literalText)) {
+      const char* start = literalText;
+      while (chars::BRACKET.contains(*literalText)) {
+        ++literalText;
+      }
+      lineBuffer.append(string(start, literalText), format::BRACKET);
+    } else {
+      lineBuffer.append(string(1, *literalText));
+      ++literalText;
+    }
+  }
+
   return *this;
 }
 
-CodePrinter& CodePrinter::operator<<(const string& text) {
+CodePrinter& CodePrinter::operator<<(string&& text) {
   applyPendingEndStatement();
-  lineBuffer += text;
+
+  if (!text.empty()) {
+    lineBuffer.append(move(text));
+  }
   return *this;
 }
 
 CodePrinter& CodePrinter::operator<<(Space) {
   applyPendingEndStatement();
-  if (!lineBuffer.empty() && lineBuffer.back() != ' ') {
-    lineBuffer += ' ';
-  }
+  lineBuffer.ensureTrailingSpace();
   return *this;
 }
 
 CodePrinter& CodePrinter::operator<<(NoSpace) {
   applyPendingEndStatement();
-  if (!lineBuffer.empty() && lineBuffer.back() == ' ') {
-    lineBuffer.erase(lineBuffer.size() - 1);
-  }
+  lineBuffer.stripTrailingSpace();
   return *this;
 }
 
@@ -106,8 +222,7 @@ CodePrinter& CodePrinter::operator<<(EndBlock) {
 }
 
 void CodePrinter::addBreakPoint(bool isCall, unsigned int priority) {
-  bool trailingSpace = !lineBuffer.empty() && lineBuffer.back() == ' ';
-  int pos = lineBuffer.size() - trailingSpace;
+  auto pos = lineBuffer.beforeTrailingSpace();
   priority += expressionDepth * 256;
 
   if (!breakPoints.empty() && breakPoints.back().pos == pos) {
@@ -152,90 +267,103 @@ CodePrinter& CodePrinter::operator<<(EndParameters) {
 
 class CodePrinter::LayoutEngine {
 public:
-  LayoutEngine(unsigned int lineWidth): lineWidth(lineWidth) {
-    lines.emplace_back(0);
-  }
+  LayoutEngine(FormattedCodeWriter::Metrics metrics, FormattedCode& lineBuffer)
+      : metrics(metrics), lineBuffer(lineBuffer) {}
 
-  void layout(const Group& group, int indentLevel);
+  vector<FormattedLine> layout(const Group& root) {
+    lines.clear();
+    currentLine.indentLevel = 0;
+    currentLine.code.clear();
+    currentLineWidth = 0;
 
-  void write(std::ostream& out, int outerIndentAmount) {
-    if (lines.back().text.empty()) {
-      lines.pop_back();
+    layout(root, 1);
+
+    if (!currentLine.code.empty()) {
+      lines.push_back(move(currentLine));
     }
-    for (auto& line: lines) {
-      out << string(outerIndentAmount + line.indentLevel * WRAP_INDENT_WIDTH, ' ')
-          << line.text << '\n';
-    }
+
+    return move(lines);
   }
 
 private:
-  const unsigned int lineWidth;
+  const FormattedCodeWriter::Metrics metrics;
+  FormattedCode& lineBuffer;
 
-  struct Line {
-    int indentLevel;
-    int width;
-    string text;
+  vector<FormattedLine> lines;
 
-    explicit Line(int indentLevel): indentLevel(indentLevel), width(0) {}
-  };
-  vector<Line> lines;
+  FormattedLine currentLine;
+  int currentLineWidth;
+
+  void layout(const Group& group, int indentLevel);
 
   void addToLine(const Group& group) {
-    assert(group.begin < group.end);
-    bool removedLeadingSpace = lines.back().text.empty() && *group.begin == ' ';
-    lines.back().text.append(group.begin + removedLeadingSpace, group.end);
-    lines.back().width += group.width - removedLeadingSpace;
+    tryAddToLine(group, true);
   }
 
-  bool tryAddToLine(const Group& group) {
-    if (group.children.empty() && lines.back().text.empty()) {
+  bool tryAddToLine(const Group& group, bool force = false) {
+    if (group.children.empty() && currentLine.code.empty()) {
       // We're on a fresh line and there's not enough space.  Write it anyway.
-      addToLine(group);
-      return true;
+      force = true;
     }
 
-    assert(group.begin < group.end);
-    bool removedLeadingSpace = lines.back().text.empty() && *group.begin == ' ';
-    unsigned int width = group.width - removedLeadingSpace;
-    if (lines.back().indentLevel * WRAP_INDENT_WIDTH + lines.back().width + width <= lineWidth) {
-      lines.back().text.append(group.begin + removedLeadingSpace, group.end);
-      lines.back().width += width;
+    auto begin = group.begin;
+    auto end = group.end;
+    assert(begin != end);
+
+    int width = group.width;
+    if (currentLine.code.empty() && begin->text == " ") {
+      ++begin;
+      width -= metrics.spaceWidth;
+    }
+
+    if (force || currentLine.indentLevel * metrics.indentWidth + currentLineWidth + width <=
+          metrics.availableWidth) {
+      currentLine.code.splice(lineBuffer, begin, end);
+      currentLineWidth += width;
       return true;
     } else {
       return false;
     }
   }
 
-  bool haveSpaceFor(string::const_iterator begin, string::const_iterator end, unsigned int width) {
-    bool removedLeadingSpace = lines.back().text.empty() && *begin == ' ';
-    width -= removedLeadingSpace;
-    return lines.back().indentLevel * WRAP_INDENT_WIDTH + lines.back().width + width <= lineWidth;
+  bool haveSpaceFor(FormattedCode::iterator begin, FormattedCode::iterator end,
+                    unsigned int width) {
+    assert(begin != end);
+    if (currentLine.code.empty() && begin->text == " ") {
+      ++begin;
+      width -= metrics.spaceWidth;
+    }
+
+    return currentLine.indentLevel * metrics.indentWidth + currentLineWidth + width
+        <= metrics.availableWidth;
   }
 
-  inline bool haveSpaceFor(const Group& group) {
-    return haveSpaceFor(group.begin, group.end, group.width);
-  }
-
-  bool haveSpaceOnNewLineFor(string::const_iterator begin, string::const_iterator end,
+  bool haveSpaceOnNewLineFor(FormattedCode::iterator begin, FormattedCode::iterator end,
                              unsigned int width, int indentLevel) {
-    bool removedLeadingSpace = *begin == ' ';
-    width -= removedLeadingSpace;
-    return indentLevel * WRAP_INDENT_WIDTH + width <= lineWidth;
+    assert(begin != end);
+    if (currentLine.code.empty() && begin->text == " ") {
+      width -= metrics.spaceWidth;
+    }
+
+    return currentLine.indentLevel * metrics.indentWidth + width <= metrics.availableWidth;
   }
 
   bool onFreshLine() {
-    return lines.back().text.empty();
+    return currentLine.code.empty();
   }
 
-  int lineWidthSoFar() {
-    return lines.back().width;
+  unsigned int lineWidthSoFar() {
+    return currentLineWidth;
   }
 
   void wrap(int newIndentLevel) {
-    if (lines.back().text.empty()) {
-      lines.back().indentLevel = newIndentLevel;
+    if (onFreshLine()) {
+      currentLine.indentLevel = newIndentLevel;
     } else {
-      lines.emplace_back(newIndentLevel);
+      lines.emplace_back(move(currentLine));
+      currentLine.code.clear();
+      currentLine.indentLevel = newIndentLevel;
+      currentLineWidth = 0;
     }
   }
 };
@@ -259,7 +387,7 @@ void CodePrinter::LayoutEngine::layout(const Group& group, int indentLevel) {
       if (group.isCall && &child == &group.children.front()) {
         if (haveSpaceOnNewLineFor(child.end, group.end, group.width - child.width, indentLevel) ||
             lineWidthSoFar() >
-                (indentLevel * WRAP_INDENT_WIDTH + FORCE_WRAP_FIRST_PARAMETER_THRESHOLD)) {
+                (indentLevel * metrics.indentWidth + metrics.forceWrapFirstParameterThreshold)) {
           wrap(indentLevel);
           haveWrapped = true;
         }
@@ -301,7 +429,7 @@ void CodePrinter::LayoutEngine::layout(const Group& group, int indentLevel) {
 
 CodePrinter::Group CodePrinter::collectGroup(
     vector<BreakPoint>::const_iterator& iter, int priority,
-    string::const_iterator begin) {
+    FormattedCode::iterator begin) {
   int groupPriority = std::numeric_limits<int>::max();
   bool isCall = false;
   unsigned int width;
@@ -330,8 +458,7 @@ CodePrinter::Group CodePrinter::collectGroup(
       } else if (iter->realPriority() < priorityOfChildren) {
         // Break point was lower-priority than our children so far, meaning those children are
         // actually grand children -- children of our first child.
-        Group child(begin, lineBuffer.begin() + iter->pos, width, isCall, groupPriority,
-                    move(children));
+        Group child(begin, iter->pos, width, isCall, groupPriority, move(children));
         children.clear();
         children.push_back(move(child));
         priorityOfChildren = iter->realPriority();
@@ -343,11 +470,10 @@ CodePrinter::Group CodePrinter::collectGroup(
       }
     }
   } else {
-    width = countChars(begin, lineBuffer.begin() + iter->pos);
+    width = out.getWidth(begin, iter->pos);
   }
 
-  return Group(begin, lineBuffer.begin() + iter->pos, width, isCall, groupPriority,
-               move(children));
+  return Group(begin, iter->pos, width, isCall, groupPriority, move(children));
 }
 
 void CodePrinter::applyPendingEndStatement() {
@@ -363,21 +489,21 @@ void CodePrinter::applyPendingEndStatement() {
   expressionDepth = 0;
 
   *this << breakable(0);
-  lineBuffer.resize(breakPoints.back().pos);
+
+  lineBuffer.stripTrailingSpace();
 
   vector<BreakPoint>::const_iterator iter = breakPoints.begin();
   Group root = collectGroup(iter, 0, lineBuffer.begin());
 
   assert(root.begin == lineBuffer.begin());
-  assert(root.end == lineBuffer.end());
-  assert(root.width == countChars(lineBuffer.begin(), lineBuffer.end()));
+  assert(root.end == breakPoints.back().pos);
+  assert(root.width == out.getWidth(lineBuffer.begin(), lineBuffer.end()));
 
   if (root.begin == root.end) {
-    out << '\n';
+    out.writeBlankLine();
   } else {
-    LayoutEngine layoutEngine(lineWidth - indentLevel * INDENT_WIDTH);
-    layoutEngine.layout(root, 1);
-    layoutEngine.write(out, indentLevel * INDENT_WIDTH);
+    LayoutEngine layoutEngine(out.getMetrics(indentLevel), lineBuffer);
+    out.writeStatement(indentLevel, layoutEngine.layout(root));
   }
 
   breakPoints.clear();
