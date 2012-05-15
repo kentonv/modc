@@ -167,7 +167,7 @@
 
   assert(p.x == 1);
   assert(p.y == 2);
-  assert(p == (1, 2));  # Right-hand side implicitly converted to Point.
+  assert(p == (1, 2)); # Right-hand side implicitly converted to Point.
 
   assert(p + (3, 4) == (4, 6));
   assert(p * 2 == (2, 4));
@@ -202,8 +202,8 @@
     }
 
     operator(this / other, other: Rational) {
-      return (numerator = numerator * other.denominator, denominator = denominator *
-          other.numerator);
+      return (numerator = numerator * other.denominator,
+          denominator = denominator * other.numerator);
     }
   }
 

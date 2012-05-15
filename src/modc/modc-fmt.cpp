@@ -52,7 +52,7 @@ int main(int argc, char* argv[]) {
   auto tokenStatements = parser.parse(text);
 
   // TODO:  Make line width configurable.
-  modc::CodePrinter printer(100);
+  modc::CodePrinter printer(std::cout, 100);
 
   for (auto& tokenStatement: tokenStatements) {
     if (executable) {
@@ -61,8 +61,6 @@ int main(int argc, char* argv[]) {
       printer << modc::astParser::parseDeclarative(tokenStatement);
     }
   }
-
-  std::cout << printer.getText();
 
   return 0;
 }

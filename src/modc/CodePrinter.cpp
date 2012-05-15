@@ -16,20 +16,17 @@
 
 #include "CodePrinter.h"
 #include "base/Debug.h"
+#include "base/OwnedPtr.h"
 #include <assert.h>
+#include "Maybe.h"
+#include <limits>
+#include <ostream>
 
 namespace modc {
 
 using std::move;
 
 static string::size_type countChars(string::const_iterator begin, string::const_iterator end) {
-  while (begin < end && *begin == ' ') {
-    ++begin;
-  }
-  while (begin < end && *end == ' ') {
-    --end;
-  }
-
   string::size_type result = 0;
   while (begin < end) {
     // Don't count UTF-8 inner bytes.
@@ -41,26 +38,41 @@ static string::size_type countChars(string::const_iterator begin, string::const_
   return result;
 }
 
-static const int INDENT_WIDTH = 2;
-static const int WRAP_INDENT_WIDTH = 4;
+static const unsigned int INDENT_WIDTH = 2;
+static const unsigned int WRAP_INDENT_WIDTH = 4;
+static const unsigned int FORCE_WRAP_FIRST_PARAMETER_THRESHOLD = 16;
 
 CodePrinter::CodePrinter(std::ostream& out, string::size_type lineWidth)
     : out(out), lineWidth(lineWidth), indentLevel(0),
-      nextWriteStartsNewStatement(false), nextWriteCanBreak(true) {}
-CodePrinter::~CodePrinter() {}
+      nextWriteStartsNewStatement(false), expressionDepth(1) {}
+CodePrinter::~CodePrinter() {
+  applyPendingEndStatement();
+}
+
+void CodePrinter::extendLineIfEquals(const char* text) {
+  if (lineBuffer == text) {
+    nextWriteStartsNewStatement = false;
+  }
+}
+
+CodePrinter& CodePrinter::operator<<(const char* literalText) {
+  applyPendingEndStatement();
+  if (*literalText == ' ') {
+    *this << space;
+    ++literalText;
+  }
+  lineBuffer += literalText;
+  return *this;
+}
 
 CodePrinter& CodePrinter::operator<<(const string& text) {
-  if (nextWriteCanBreak) {
-    bool trailingSpace = !lineBuffer.empty() && lineBuffer.back() == ' ';
-    breakablePoints.push_back(lineBuffer.size() - trailingSpace);
-  }
-  nextWriteCanBreak = true;
-
+  applyPendingEndStatement();
   lineBuffer += text;
   return *this;
 }
 
 CodePrinter& CodePrinter::operator<<(Space) {
+  applyPendingEndStatement();
   if (!lineBuffer.empty() && lineBuffer.back() != ' ') {
     lineBuffer += ' ';
   }
@@ -68,6 +80,7 @@ CodePrinter& CodePrinter::operator<<(Space) {
 }
 
 CodePrinter& CodePrinter::operator<<(NoSpace) {
+  applyPendingEndStatement();
   if (!lineBuffer.empty() && lineBuffer.back() == ' ') {
     lineBuffer.erase(lineBuffer.size() - 1);
   }
@@ -75,249 +88,302 @@ CodePrinter& CodePrinter::operator<<(NoSpace) {
 }
 
 CodePrinter& CodePrinter::operator<<(EndStatement) {
-  while (!currentGroups.empty()) {
-    DEBUG_ERROR << "Mismatched start-group.";
-    *this << endGroup;
-  }
-
-  if (breakablePoints.empty() || breakablePoints.back() < lineBuffer.size()) {
-    breakablePoints.push_back(lineBuffer.size());
-  }
-
-  string::size_type availableSpace = lineWidth - indentLevel * INDENT_WIDTH;
-  layoutLine(availableSpace, availableSpace, lineBuffer.begin(), lineBuffer.end(),
-             groups.begin(), groups.end());
-
-  nextWriteCanBreak = true;
+  applyPendingEndStatement();
+  nextWriteStartsNewStatement = true;
   return *this;
 }
 
 CodePrinter& CodePrinter::operator<<(StartBlock) {
+  applyPendingEndStatement();
   ++indentLevel;
   return *this;
 }
 
 CodePrinter& CodePrinter::operator<<(EndBlock) {
+  applyPendingEndStatement();
   --indentLevel;
   return *this;
 }
 
+void CodePrinter::addBreakPoint(bool isCall, unsigned int priority) {
+  bool trailingSpace = !lineBuffer.empty() && lineBuffer.back() == ' ';
+  int pos = lineBuffer.size() - trailingSpace;
+  priority += expressionDepth * 256;
+
+  if (!breakPoints.empty() && breakPoints.back().pos == pos) {
+    breakPoints.back().isCall = breakPoints.back().isCall || isCall;
+    breakPoints.back().priority = std::min(breakPoints.back().priority, priority);
+  } else {
+    breakPoints.emplace_back(pos, isCall, priority);
+  }
+}
+
 CodePrinter& CodePrinter::operator<<(Breakable marker) {
+  applyPendingEndStatement();
+  addBreakPoint(false, marker.priority);
   return *this;
 }
 
 CodePrinter& CodePrinter::operator<<(StartSubExpression) {
+  applyPendingEndStatement();
+  ++expressionDepth;
   return *this;
 }
 
 CodePrinter& CodePrinter::operator<<(EndSubExpression) {
+  applyPendingEndStatement();
+  --expressionDepth;
   return *this;
 }
 
 CodePrinter& CodePrinter::operator<<(StartParameters marker) {
-  return *this;
+  applyPendingEndStatement();
+  addBreakPoint(true, marker.chainPriority);
+  return *this << startSubExpression;
 }
 
 CodePrinter& CodePrinter::operator<<(NextParameter) {
-  return *this;
+  return *this << breakable(0);
 }
 
 CodePrinter& CodePrinter::operator<<(EndParameters) {
-  return *this;
+  return *this << endSubExpression;
 }
-
-CodePrinter& CodePrinter::operator<<(StartGroup) {
-  currentGroups.push_back(groups.size());
-  groups.emplace_back();
-  groups.back().startBreak = breakablePoints.size();
-  return *this;
-}
-
-CodePrinter& CodePrinter::operator<<(EndGroup) {
-  if (currentGroups.empty()) {
-    DEBUG_ERROR << "Mismatched end-group.";
-    return *this;
-  }
-
-  bool isPastLastBreak = lineBuffer.size() > (breakablePoints.empty() ? 0 : breakablePoints.back());
-
-  Group& group = groups[currentGroups.back()];
-  group.endBreak = breakablePoints.size() + isPastLastBreak;
-
-  currentGroups.pop_back();
-
-  return *this;
-}
-
-class CodePrinter::GroupIterator {
-public:
-  GroupIterator(vector<Group>::const_iterator pos, vector<Group>::const_iterator end)
-      : pos(pos), end(end) {}
-
-  const Group& operator*() { return *pos; }
-  const Group* operator->() { return pos.operator->(); }
-
-  bool nextIsBefore(int chunk) {
-    return pos < end && pos->startBreak < chunk;
-  }
-
-  void advanceTo(int chunk) {
-    while (nextIsBefore(chunk)) {
-      ++pos;
-    }
-  }
-
-private:
-  vector<Group>::const_iterator pos;
-  vector<Group>::const_iterator end;
-};
 
 class CodePrinter::LayoutEngine {
 public:
+  LayoutEngine(unsigned int lineWidth): lineWidth(lineWidth) {
+    lines.emplace_back(0);
+  }
 
-  void layout(int beginChunk, int endChunk);
+  void layout(const Group& group, int indentLevel);
+
+  void write(std::ostream& out, int outerIndentAmount) {
+    if (lines.back().text.empty()) {
+      lines.pop_back();
+    }
+    for (auto& line: lines) {
+      out << string(outerIndentAmount + line.indentLevel * WRAP_INDENT_WIDTH, ' ')
+          << line.text << '\n';
+    }
+  }
 
 private:
-  string buffer;
+  const unsigned int lineWidth;
 
-  int lineWidth;
-  int indentAmount;
-  int usedOnLine;
+  struct Line {
+    int indentLevel;
+    int width;
+    string text;
 
-  vector<Group>::const_iterator groupPos;
-  vector<Group>::const_iterator groupEnd;
+    explicit Line(int indentLevel): indentLevel(indentLevel), width(0) {}
+  };
+  vector<Line> lines;
 
-  void addToLine(int chunk);
-  bool tryAddToLine(int beginChunk, int endChunk);
-  bool haveSpaceFor(int chunk);
-  bool haveSpaceOnNewLineFor(int chunk);
+  void addToLine(const Group& group) {
+    assert(group.begin < group.end);
+    bool removedLeadingSpace = lines.back().text.empty() && *group.begin == ' ';
+    lines.back().text.append(group.begin + removedLeadingSpace, group.end);
+    lines.back().width += group.width - removedLeadingSpace;
+  }
 
-  bool startNewLineWithIndent(int newIndentAmount) {
-    if (indentAmount == newIndentAmount && usedOnLine == 0) {
-      // Already on a fresh line.
-      return false;
-    } else {
-      indentAmount = newIndentAmount;
-      buffer += '\n';
-      buffer.append(indentAmount, ' ');
+  bool tryAddToLine(const Group& group) {
+    if (group.children.empty() && lines.back().text.empty()) {
+      // We're on a fresh line and there's not enough space.  Write it anyway.
+      addToLine(group);
       return true;
     }
-  }
 
-  void startNewIndentedLine() {
-    startNewLineWithIndent(indentAmount + WRAP_INDENT_WIDTH);
-  }
-
-  bool nextGroupIsBefore(int chunk) {
-    return groupPos < groupEnd && groupPos->endBreak <= chunk;
-  }
-
-  void advanceGroupTo(int chunk) {
-    while (nextGroupIsBefore(chunk)) {
-      ++groupPos;
+    assert(group.begin < group.end);
+    bool removedLeadingSpace = lines.back().text.empty() && *group.begin == ' ';
+    unsigned int width = group.width - removedLeadingSpace;
+    if (lines.back().indentLevel * WRAP_INDENT_WIDTH + lines.back().width + width <= lineWidth) {
+      lines.back().text.append(group.begin + removedLeadingSpace, group.end);
+      lines.back().width += width;
+      return true;
+    } else {
+      return false;
     }
   }
 
-  const Group& nextGroup() { return *groupPos; }
+  bool haveSpaceFor(string::const_iterator begin, string::const_iterator end, unsigned int width) {
+    bool removedLeadingSpace = lines.back().text.empty() && *begin == ' ';
+    width -= removedLeadingSpace;
+    return lines.back().indentLevel * WRAP_INDENT_WIDTH + lines.back().width + width <= lineWidth;
+  }
+
+  inline bool haveSpaceFor(const Group& group) {
+    return haveSpaceFor(group.begin, group.end, group.width);
+  }
+
+  bool haveSpaceOnNewLineFor(string::const_iterator begin, string::const_iterator end,
+                             unsigned int width, int indentLevel) {
+    bool removedLeadingSpace = *begin == ' ';
+    width -= removedLeadingSpace;
+    return indentLevel * WRAP_INDENT_WIDTH + width <= lineWidth;
+  }
+
+  bool onFreshLine() {
+    return lines.back().text.empty();
+  }
+
+  int lineWidthSoFar() {
+    return lines.back().width;
+  }
+
+  void wrap(int newIndentLevel) {
+    if (lines.back().text.empty()) {
+      lines.back().indentLevel = newIndentLevel;
+    } else {
+      lines.emplace_back(newIndentLevel);
+    }
+  }
 };
 
-void CodePrinter::LayoutEngine::layout(int beginChunk, int endChunk) {
-  while (true) {
-    if (tryAddToLine(beginChunk, endChunk)) {
-      return;
-    }
-
-    // Write the prefix (stuff before any groups), wrapping as needed.
-    int prefixEndChunk;
-    if (nextGroupIsBefore(endChunk)) {
-      prefixEndChunk = nextGroup().startBreak;
-    } else {
-      prefixEndChunk = endChunk;
-    }
-
-    while (beginChunk < prefixEndChunk) {
-      if (!haveSpaceFor(beginChunk)) {
-        startNewIndentedLine();
-        if (tryAddToLine(beginChunk, endChunk)) {
-          return;
-        }
-      }
-      addToLine(beginChunk);
-      ++beginChunk;
-    }
-
-    startNewIndentedLine();
-    int oldIndentAmount = indentAmount;
-
-    // Write consecutive groups.
-    while (nextGroupIsBefore(endChunk) && beginChunk == nextGroup().startBreak) {
-      if (!tryAddToLine(nextGroup().startBreak, nextGroup().endBreak)) {
-        if (!startNewLineWithIndent(oldIndentAmount) ||
-            !tryAddToLine(nextGroup().startBreak, nextGroup().endBreak)) {
-          layout(nextGroup().startBreak, nextGroup().endBreak);
-          startNewLineWithIndent(oldIndentAmount);
-        }
-      }
-
-      beginChunk = groupPos->endBreak;
-    }
-
-    if (beginChunk == endChunk) {
-      return;
-    }
-
-    startNewLineWithIndent(oldIndentAmount);
+void CodePrinter::LayoutEngine::layout(const Group& group, int indentLevel) {
+  if (tryAddToLine(group)) {
+    return;
   }
 
+  if (group.children.empty()) {
+    wrap(indentLevel);
+    addToLine(group);
+    return;
+  }
 
-  // if (enough space for all text) {
-  //   write all text
-  // } else {
-  //   // write prefix
-  //   while (begin break < first group start) {
-  //     if (not at line start and not enough space for first chunk) {
-  //       write line break
-  //       lineWidth -= WRAP_INDENT_WIDTH
-  //       availableSpace = lineWidth
-  //     }
-  //     write first chunk
-  //     increment begin break
-  //   }
-  //   if (everything else would fit on next line) {
-  //     put it there
-  //   } else if (only one group) {
-  //     recurse into that group, but with endBreak = our endBreak, so that it includes our
-  //         suffix as if part of its own.
-  //   } else {
-  //     for earch group {
-  //       if the group doesn't fit on the current line, start a new one
-  //       if the group now fits on the current line, write it
-  //       otherwise {
-  //         recurse to write the group, with endBreak = start of next group or our own end break
-  //         start a new line
-  //       }
-  //     }
-  //   }
-  // }
+  bool haveWrapped = false;
+  for (auto& child: group.children) {
+    if (tryAddToLine(child)) {
+      // If this is a call and all the parameters would fit on the next line, prefer to wrap now
+      // so that all parameters get put together.  Otherwise we'll wrap between parameters.
+      if (group.isCall && &child == &group.children.front()) {
+        if (haveSpaceOnNewLineFor(child.end, group.end, group.width - child.width, indentLevel) ||
+            lineWidthSoFar() >
+                (indentLevel * WRAP_INDENT_WIDTH + FORCE_WRAP_FIRST_PARAMETER_THRESHOLD)) {
+          wrap(indentLevel);
+          haveWrapped = true;
+        }
+      }
+    } else {
+      // If all of:
+      // - We've already wrapped previously OR this is the last child.
+      // - The child ends with a parameter list.
+      // - We can fit everything before said parameter list on this line.
+      // Then:  Go ahead and put everything except the parameter list on this line, and wrap
+      //   the parameter list.
+      if (haveWrapped || &child == &group.children.back()) {
+        const Group* trailingCall = child.trailingCall();
+        if (trailingCall != nullptr) {
+          int funcWidth = child.width - trailingCall->width + trailingCall->children.front().width;
+          if (haveSpaceFor(child.begin, trailingCall->children.front().end, funcWidth)) {
+            layout(child, indentLevel + haveWrapped);
+            wrap(indentLevel);
+            haveWrapped = true;
+            continue;
+          }
+        }
+      }
+
+      // OK, just put the child on the next line.
+      if (!onFreshLine()) {
+        wrap(indentLevel);
+      }
+      haveWrapped = true;
+      if (!tryAddToLine(child)) {
+        // Child too big for one line.  Make sure to wrap after the end of the child because we
+        // don't want
+        layout(child, indentLevel + 1);
+        wrap(indentLevel);
+      }
+    }
+  }
 }
 
+CodePrinter::Group CodePrinter::collectGroup(
+    vector<BreakPoint>::const_iterator& iter, int priority,
+    string::const_iterator begin) {
+  int groupPriority = std::numeric_limits<int>::max();
+  bool isCall = false;
+  unsigned int width;
+  vector<Group> children;
 
+  if (iter->realPriority() > priority) {
+    int priorityOfChildren = iter->realPriority();
+    groupPriority = iter->priority;
+    isCall = iter->isCall;
 
+    children.push_back(collectGroup(iter, priorityOfChildren, begin));
+    width = children.back().width;
 
+    while (true) {
+      assert(!children.empty());
+      ++iter;
 
+      // Read next child.
+      children.push_back(collectGroup(iter, priorityOfChildren, children.back().end));
+      width += children.back().width;
 
+      // Where did the child end?
+      if (iter->realPriority() <= priority) {
+        // At a break point that ends this group!
+        break;
+      } else if (iter->realPriority() < priorityOfChildren) {
+        // Break point was lower-priority than our children so far, meaning those children are
+        // actually grand children -- children of our first child.
+        Group child(begin, lineBuffer.begin() + iter->pos, width, isCall, groupPriority,
+                    move(children));
+        children.clear();
+        children.push_back(move(child));
+        priorityOfChildren = iter->realPriority();
+        groupPriority = iter->priority;
+        isCall = iter->isCall;
+      } else {
+        // Break point priority priority was our child priority.  More coming.
+        assert(iter->realPriority() == priorityOfChildren);
+      }
+    }
+  } else {
+    width = countChars(begin, lineBuffer.begin() + iter->pos);
+  }
 
+  return Group(begin, lineBuffer.begin() + iter->pos, width, isCall, groupPriority,
+               move(children));
+}
 
+void CodePrinter::applyPendingEndStatement() {
+  if (!nextWriteStartsNewStatement) {
+    return;
+  }
 
+  nextWriteStartsNewStatement = false;
 
+  if (expressionDepth < 1) {
+    DEBUG_ERROR << "Unmatched endSubExpression.";
+  }
+  expressionDepth = 0;
 
+  *this << breakable(0);
+  lineBuffer.resize(breakPoints.back().pos);
 
+  vector<BreakPoint>::const_iterator iter = breakPoints.begin();
+  Group root = collectGroup(iter, 0, lineBuffer.begin());
 
+  assert(root.begin == lineBuffer.begin());
+  assert(root.end == lineBuffer.end());
+  assert(root.width == countChars(lineBuffer.begin(), lineBuffer.end()));
 
+  if (root.begin == root.end) {
+    out << '\n';
+  } else {
+    LayoutEngine layoutEngine(lineWidth - indentLevel * INDENT_WIDTH);
+    layoutEngine.layout(root, 1);
+    layoutEngine.write(out, indentLevel * INDENT_WIDTH);
+  }
 
+  breakPoints.clear();
+  lineBuffer.clear();
 
-
-
-
+  expressionDepth = 1;
+}
 
 }  // namespace modc

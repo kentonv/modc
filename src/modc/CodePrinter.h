@@ -21,11 +21,13 @@
 #include <vector>
 #include <utility>
 #include <iosfwd>
+#include <stdint.h>
 
 namespace modc {
 
 using std::string;
 using std::vector;
+using std::move;
 
 struct Space {};
 static Space space __attribute__((unused));
@@ -40,9 +42,9 @@ struct EndBlock {};
 static EndBlock endBlock __attribute__((unused));
 
 struct Breakable {
-  int priority;
+  uint8_t priority;
 
-  explicit Breakable(int priority): priority(priority) {}
+  explicit Breakable(uint8_t priority): priority(priority) {}
 };
 inline Breakable breakable(int priority) { return Breakable(priority); }
 struct StartSubExpression {};
@@ -51,9 +53,9 @@ struct EndSubExpression {};
 static EndSubExpression endSubExpression __attribute__((unused));
 
 struct StartParameters {
-  int chainPriority;
+  uint8_t chainPriority;
 
-  explicit StartParameters(int chainPriority): chainPriority(chainPriority) {}
+  explicit StartParameters(uint8_t chainPriority): chainPriority(chainPriority) {}
 };
 inline StartParameters startParameters(int chainPriority) { return StartParameters(chainPriority); }
 struct NextParameter {};
@@ -79,9 +81,7 @@ public:
   // appear after a closing brace.
   void extendLineIfEquals(const char* text);
 
-  // Advance to the given column if not already past it.
-  void advanceToColumn(string::size_type column);
-
+  CodePrinter& operator<<(const char* literalText);
   CodePrinter& operator<<(const string& text);
 
   CodePrinter& operator<<(Space);
@@ -104,25 +104,54 @@ private:
 
   int indentLevel;
   bool nextWriteStartsNewStatement;
-  bool nextWriteCanBreak;
 
   string lineBuffer;
 
-  enum BreakType {
-    START_PARAMS,
-  };
-
   struct BreakPoint {
-    string::const_iterator pos;
-    bool isStartParameters:1;
-    unsigned int depth:31;
-    int priority;
-    int endIndex;
-    int textLength;
+    int pos;
+    bool isCall:1;
+    unsigned int priority:31;
+
+    int realPriority() const {
+      return isCall ? ((priority | 255) + 1) : priority;
+    }
+
+    BreakPoint(int pos, bool isCall, unsigned int priority)
+        : pos(pos), isCall(isCall), priority(priority) {}
   };
 
   vector<BreakPoint> breakPoints;
-  vector<int> breakPointStack;
+
+  struct Group {
+    string::const_iterator begin;
+    string::const_iterator end;
+    unsigned int width;
+    bool isCall:1;
+    unsigned int priority:31;
+    vector<Group> children;
+
+    Group(string::const_iterator begin, string::const_iterator end, string::size_type width,
+          bool isCall, unsigned int priority, vector<Group>&& children)
+        : begin(begin), end(end), width(width), isCall(isCall), priority(priority),
+          children(move(children)) {}
+
+    const Group* trailingCall() const {
+      if (isCall) {
+        return this;
+      } else if (children.empty()) {
+        return nullptr;
+      } else {
+        return children.back().trailingCall();
+      }
+    }
+  };
+
+  int expressionDepth;
+
+  void addBreakPoint(bool isCall, unsigned int priority);
+  Group collectGroup(vector<BreakPoint>::const_iterator& iter, int priority,
+                     string::const_iterator begin);
+  void applyPendingEndStatement();
 
   class LayoutEngine;
 };

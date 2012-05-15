@@ -1,0 +1,62 @@
+func frob(s: String, i: Integer = 123): String {
+  # This is a comment!
+  if (s.length < i) {
+    return s; # Comments can go after lines.
+  } else {
+    return s.interval(0, i);
+  } # Also after blocks.
+}
+
+func ops(i: Integer) {
+  i - i - (i - i) - i;
+  i * i + i * i;
+  i * (i + i) * i;
+  ++i++;
+  (++i)++;
+  ++i.foo;
+  (++i).foo;
+  i ? i : i ? i : i;
+  (i ? i : i) ? i : i;
+}
+
+class Frobber :: cool(x) {
+  func foo(i: Integer): Double :: dumb(y) {
+    return i * 0.5 + 1e30;
+  }
+}
+
+func manyParams0(thisIsTheFirstParam: ItHasALongType(with, many, parameters, 5, 6),
+    thisIsTheSecond: ItAlsoHasAType, here.is.a.constant.parameter(
+        foo, foo, foo, bar, bar, bar, baz, qux, quux, corge, grault, garply, waldo, waldo, waldo,
+        waldo)) {
+  body();
+}
+
+func manyParams1(thisIsTheFirstParam: ItHasALongType(with, many, parameters, 5, 6),
+    here.is.a.constant(foo, foo, foo, bar, bar, bar, baz, qux, quux, corge, grault, garply, waldo,
+        waldo, waldo, waldo)) {
+  body();
+}
+
+func manyParams2(thisIsTheFirstParam: ItHasALongType(with, many, parameters, 5, 6),
+    thisIsTheSecond: ItAlsoHasAType, here.is.a.constant.parameter(
+        foo, foo, foo, bar, bar, bar, baz, qux, quux, corge, grault, garply, waldo, waldo, waldo,
+        waldo),
+    oneMore: Integer) {
+  body();
+}
+
+func manyParams3(thisIsTheFirstParam: ItHasALongType(with, many, parameters, 5, 6),
+    thisIsTheSecond: ItAlsoHasAType, here.is.a.constant.parameter(
+        foo, foo, foo, bar, bar, bar, baz, qux, quux, corge, grault, garply, waldo, waldo, waldo),
+    oneMore: Integer) {
+  body();
+}
+
+func manyParams4(thisIsTheFirstParam: ItHasALongType(with, many, parameters, 5, 6),
+        thisIsTheSecond: ItAlsoHasAType, here.is.a.constant.parameter(
+            foo, foo, foo, bar, bar, bar, baz, qux, quux, corge, grault, garply, waldo, waldo),
+        oneMore: Integer)
+    : Integer {
+  body();
+}
