@@ -1,0 +1,884 @@
+<html>
+<head>
+  <style type='text/css'>
+    .error { color: #c00; }
+    .code { font-family: monospace; }
+    .comment { color: #444; font-style: italic; }
+    .keyword { font-weight: bold; color: #008; }
+    .keysymbol { font-weight: bold; }
+    .bracket { font-weight: bold; }
+    .delimiter { font-weight: bold; }
+    .operator { font-weight: bold; }
+    .literal { color: #00f; }
+    .declaration { border-left: 1px solid #ccc;
+                   border-right: 1px solid #ccc; }
+  </style>
+</head>
+
+<body>
+<div class='code'>
+<div class='statement'><span class='comment'>#! /usr/bin/env modc exec</span></div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;This&nbsp;is&nbsp;%C.&nbsp;&nbsp;You're&nbsp;a&nbsp;hacker.&nbsp;&nbsp;You&nbsp;don't&nbsp;want&nbsp;to&nbsp;read&nbsp;documentation,&nbsp;you&nbsp;want&nbsp;to&nbsp;see&nbsp;code.&nbsp;&nbsp;So,<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;this&nbsp;intro&nbsp;is&nbsp;code.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;We&nbsp;do,&nbsp;however,&nbsp;need&nbsp;to&nbsp;cover&nbsp;some&nbsp;ground&nbsp;rules.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;1.&nbsp;&nbsp;There&nbsp;is&nbsp;no&nbsp;garbage&nbsp;collection&nbsp;in&nbsp;%C.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;2.&nbsp;&nbsp;There&nbsp;is&nbsp;NO&nbsp;GARBAGE&nbsp;COLLECTION&nbsp;in&nbsp;%C.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;3.&nbsp;&nbsp;%C&nbsp;programs&nbsp;cannot&nbsp;segfault&nbsp;or&nbsp;overrun&nbsp;buffers.&nbsp;&nbsp;These&nbsp;problems&nbsp;are&nbsp;detected&nbsp;at&nbsp;compile&nbsp;time,<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;with&nbsp;no&nbsp;overhead&nbsp;at&nbsp;run&nbsp;time.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;4.&nbsp;&nbsp;%C&nbsp;is&nbsp;faster&nbsp;and&nbsp;more&nbsp;memory&nbsp;efficient&nbsp;than&nbsp;C++.&nbsp;&nbsp;Not&nbsp;just&nbsp;in&nbsp;contrived&nbsp;benchmarks.&nbsp;&nbsp;Always.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;5.&nbsp;&nbsp;Boilerplate&nbsp;is&nbsp;evil.<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;Two&nbsp;quick&nbsp;notes:<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;-&nbsp;&nbsp;&nbsp;Because&nbsp;this&nbsp;file&nbsp;started&nbsp;with&nbsp;"#!&nbsp;/",&nbsp;it&nbsp;is&nbsp;executable.&nbsp;&nbsp;It&nbsp;has&nbsp;no&nbsp;main()&nbsp;function&nbsp;--&nbsp;the<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;entire&nbsp;file&nbsp;is&nbsp;the&nbsp;main&nbsp;function.&nbsp;&nbsp;On&nbsp;the&nbsp;other&nbsp;hand,&nbsp;%C&nbsp;files&nbsp;that&nbsp;do&nbsp;not&nbsp;begin&nbsp;with&nbsp;"#!&nbsp;/"<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;define&nbsp;importable&nbsp;modules.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;-&nbsp;&nbsp;&nbsp;Most&nbsp;of&nbsp;the&nbsp;examples&nbsp;below&nbsp;are&nbsp;enclosed&nbsp;in&nbsp;{}&nbsp;blocks.&nbsp;&nbsp;This&nbsp;is&nbsp;so&nbsp;that&nbsp;the&nbsp;names&nbsp;defined&nbsp;in<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;the&nbsp;block&nbsp;only&nbsp;exist&nbsp;within&nbsp;that&nbsp;block,&nbsp;and&nbsp;do&nbsp;not&nbsp;affect&nbsp;subsequent&nbsp;examples.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;-&nbsp;&nbsp;&nbsp;If&nbsp;you&nbsp;are&nbsp;looking&nbsp;at&nbsp;the&nbsp;HTML&nbsp;version&nbsp;of&nbsp;this&nbsp;code,&nbsp;you&nbsp;will&nbsp;notice&nbsp;light&nbsp;gray&nbsp;borders&nbsp;to<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;the&nbsp;left&nbsp;and&nbsp;right&nbsp;of&nbsp;some&nbsp;identifiers.&nbsp;&nbsp;This&nbsp;indicates&nbsp;that&nbsp;the&nbsp;identifier&nbsp;is&nbsp;declaring&nbsp;a<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;new&nbsp;name.&nbsp;&nbsp;All&nbsp;other&nbsp;identifiers&nbsp;are&nbsp;referencing&nbsp;already-defined&nbsp;names.<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;====================================================================<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;Hello&nbsp;world!<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>cli</span>&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='keyword'>import</span>&nbsp;<span class='literal'>"/modc/cli.modc"</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span>cli<span class='keysymbol'>.</span>out<span class='keysymbol'>.</span>write<span class='bracket'>(</span><span class='literal'>"Hello&nbsp;World!"</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;====================================================================<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;Variables.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Define&nbsp;i&nbsp;with&nbsp;inferred&nbsp;type.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>i</span>&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='literal'>4</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>i&nbsp;<span class='operator'>+</span>&nbsp;<span class='literal'>1</span>&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>5</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span>i&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='literal'>9</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>i&nbsp;<span class='operator'>+</span>&nbsp;<span class='literal'>1</span>&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>10</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Declare&nbsp;j&nbsp;without&nbsp;initializing.&nbsp;&nbsp;Must&nbsp;specify&nbsp;type.&nbsp;&nbsp;Must&nbsp;initialize&nbsp;before&nbsp;first&nbsp;use.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>j</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>if</span>&nbsp;<span class='bracket'>(</span>i&nbsp;<span class='operator'>&gt;</span>&nbsp;<span class='literal'>4</span><span class='bracket'>)</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span>j&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='literal'>1</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='bracket'>}</span>&nbsp;<span class='keyword'>else</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span>j&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='literal'>2</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>j&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>1</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Define&nbsp;k&nbsp;with&nbsp;explicit&nbsp;type.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>k</span><span class='keysymbol'>:</span>&nbsp;Integer&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='literal'>123</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>k&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>123</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;====================================================================<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;A&nbsp;function.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>func</span>&nbsp;<span class='declaration'>fib</span><span class='bracket'>(</span><span class='declaration'>n</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='bracket'>)</span><span class='keysymbol'>:</span>&nbsp;Integer&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>a</span>&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='literal'>0</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>b</span>&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='literal'>1</span><span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>for</span>&nbsp;<span class='bracket'>(</span><span class='declaration'>i</span>&nbsp;<span class='keysymbol'>&lt;</span>&nbsp;n<span class='bracket'>)</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>c</span>&nbsp;<span class='keysymbol'>=</span>&nbsp;a&nbsp;<span class='operator'>+</span>&nbsp;b<span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>(</span>a<span class='delimiter'>,</span>&nbsp;b<span class='bracket'>)</span>&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='bracket'>(</span>b<span class='delimiter'>,</span>&nbsp;c<span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;a<span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Array&nbsp;comprehension.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>([</span><span class='keyword'>for</span>&nbsp;<span class='bracket'>(</span><span class='declaration'>i</span>&nbsp;<span class='keysymbol'>&lt;</span>&nbsp;<span class='literal'>10</span><span class='bracket'>)</span>&nbsp;fib<span class='bracket'>(</span>i<span class='bracket'>)]</span>&nbsp;<span class='operator'>==</span>&nbsp;<span class='bracket'>[</span><span class='literal'>0</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>1</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>1</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>2</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>3</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>5</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>8</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>13</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>21</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>34</span><span class='bracket'>])</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;====================================================================<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;A&nbsp;simple&nbsp;class.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>class</span>&nbsp;<span class='declaration'>Counter</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Private&nbsp;member&nbsp;variable.&nbsp;&nbsp;(Note&nbsp;that&nbsp;default&nbsp;visibility&nbsp;is&nbsp;module-private.)<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>private</span>&nbsp;<span class='keyword'>var</span>&nbsp;<span class='declaration'>value</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Named&nbsp;constructor.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>ctor</span>&nbsp;<span class='declaration'>create</span><span class='bracket'>(</span><span class='declaration'>i</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='bracket'>)</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;<span class='bracket'>(</span>value&nbsp;<span class='keysymbol'>=</span>&nbsp;i<span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Non-mutating&nbsp;("const")&nbsp;method.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>func</span>&nbsp;<span class='declaration'>get</span><span class='bracket'>()</span><span class='keysymbol'>:</span>&nbsp;Integer&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;value<span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='comment'>#&nbsp;&amp;&nbsp;=&nbsp;function&nbsp;modifies&nbsp;this.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>func</span>&nbsp;<span class='keysymbol'>&amp;</span><span class='declaration'>increment</span><span class='bracket'>()</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='operator'>++</span>value<span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Call&nbsp;named&nbsp;constructor.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>counter</span>&nbsp;<span class='keysymbol'>=</span>&nbsp;Counter<span class='keysymbol'>.</span>create<span class='bracket'>(</span><span class='literal'>2</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Mutating&nbsp;method&nbsp;calls&nbsp;must&nbsp;use&nbsp;&amp;.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span>counter<span class='keysymbol'>.&amp;</span>increment<span class='bracket'>()</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span>counter<span class='keysymbol'>.&amp;</span>increment<span class='bracket'>()</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>counter<span class='keysymbol'>.</span>get<span class='bracket'>()</span>&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>4</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='comment'>#&nbsp;&amp;&nbsp;=&nbsp;pass&nbsp;by&nbsp;mutable&nbsp;(non-const)&nbsp;reference.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>func</span>&nbsp;<span class='declaration'>incrementBy</span><span class='bracket'>(</span><span class='declaration'>counter</span><span class='keysymbol'>&amp;:</span>&nbsp;Counter<span class='delimiter'>,</span>&nbsp;<span class='declaration'>amount</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='bracket'>)</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>for</span>&nbsp;<span class='bracket'>(</span><span class='declaration'>i</span>&nbsp;<span class='keysymbol'>&lt;</span>&nbsp;amount<span class='bracket'>)</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>counter<span class='keysymbol'>.&amp;</span>increment<span class='bracket'>()</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Must&nbsp;use&nbsp;&amp;&nbsp;to&nbsp;indicate&nbsp;counter&nbsp;may&nbsp;be&nbsp;modified.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span>incrementBy<span class='bracket'>(</span><span class='keysymbol'>&amp;</span>counter<span class='delimiter'>,</span>&nbsp;<span class='literal'>6</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>counter<span class='keysymbol'>.</span>get<span class='bracket'>()</span>&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>10</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='comment'>#&nbsp;@&nbsp;=&nbsp;pass&nbsp;by&nbsp;immutable&nbsp;("const")&nbsp;reference.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>func</span>&nbsp;<span class='declaration'>isEven</span><span class='bracket'>(</span><span class='declaration'>counter</span><span class='keysymbol'>@:</span>&nbsp;Counter<span class='bracket'>)</span><span class='keysymbol'>:</span>&nbsp;Boolean&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;counter<span class='keysymbol'>.</span>get<span class='bracket'>()</span>&nbsp;<span class='operator'>%</span>&nbsp;<span class='literal'>2</span>&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>0</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='comment'>#&nbsp;No&nbsp;need&nbsp;to&nbsp;use&nbsp;@&nbsp;at&nbsp;call&nbsp;site.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>isEven<span class='bracket'>(</span>counter<span class='bracket'>))</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span>counter<span class='keysymbol'>.&amp;</span>increment<span class='bracket'>()</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span><span class='operator'>!</span>isEven<span class='bracket'>(</span>counter<span class='bracket'>))</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;====================================================================<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;A&nbsp;class&nbsp;with&nbsp;overloaded&nbsp;operators.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>class</span>&nbsp;<span class='declaration'>Point</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>x</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>y</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Implicit&nbsp;constructor&nbsp;from&nbsp;tuple<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>ctor</span><span class='bracket'>(</span><span class='declaration'>x</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='delimiter'>,</span>&nbsp;<span class='declaration'>y</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='bracket'>)</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;<span class='bracket'>(</span>x&nbsp;<span class='keysymbol'>=</span>&nbsp;x<span class='delimiter'>,</span>&nbsp;y&nbsp;<span class='keysymbol'>=</span>&nbsp;y<span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Addition&nbsp;/&nbsp;subtraction&nbsp;of&nbsp;points<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>operator</span><span class='bracket'>(</span>this&nbsp;<span class='operator'>+</span>&nbsp;other<span class='delimiter'>,</span>&nbsp;<span class='declaration'>other</span><span class='keysymbol'>:</span>&nbsp;Point<span class='bracket'>)</span><span class='keysymbol'>:</span>&nbsp;Point&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;<span class='bracket'>(</span>x&nbsp;<span class='operator'>+</span>&nbsp;other<span class='keysymbol'>.</span>x<span class='delimiter'>,</span>&nbsp;y&nbsp;<span class='operator'>+</span>&nbsp;other<span class='keysymbol'>.</span>y<span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>operator</span><span class='bracket'>(</span>this&nbsp;<span class='operator'>-</span>&nbsp;other<span class='delimiter'>,</span>&nbsp;<span class='declaration'>other</span><span class='keysymbol'>:</span>&nbsp;Point<span class='bracket'>)</span><span class='keysymbol'>:</span>&nbsp;Point&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;<span class='bracket'>(</span>x&nbsp;<span class='operator'>-</span>&nbsp;other<span class='keysymbol'>.</span>x<span class='delimiter'>,</span>&nbsp;y&nbsp;<span class='operator'>-</span>&nbsp;other<span class='keysymbol'>.</span>y<span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Scale,&nbsp;with&nbsp;factor&nbsp;on&nbsp;right<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>operator</span><span class='bracket'>(</span>this&nbsp;<span class='operator'>*</span>&nbsp;factor<span class='delimiter'>,</span>&nbsp;<span class='declaration'>factor</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='bracket'>)</span><span class='keysymbol'>:</span>&nbsp;Point&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;<span class='bracket'>(</span>x&nbsp;<span class='operator'>*</span>&nbsp;factor<span class='delimiter'>,</span>&nbsp;y&nbsp;<span class='operator'>*</span>&nbsp;factor<span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Scale,&nbsp;with&nbsp;factor&nbsp;on&nbsp;left<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>operator</span><span class='bracket'>(</span>factor&nbsp;<span class='operator'>*</span>&nbsp;this<span class='delimiter'>,</span>&nbsp;<span class='declaration'>factor</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='bracket'>)</span><span class='keysymbol'>:</span>&nbsp;Point&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;<span class='bracket'>(</span>x&nbsp;<span class='operator'>*</span>&nbsp;factor<span class='delimiter'>,</span>&nbsp;y&nbsp;<span class='operator'>*</span>&nbsp;factor<span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Dot&nbsp;product<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>operator</span><span class='bracket'>(</span>this&nbsp;<span class='operator'>*</span>&nbsp;other<span class='delimiter'>,</span>&nbsp;<span class='declaration'>other</span><span class='keysymbol'>:</span>&nbsp;Point<span class='bracket'>)</span><span class='keysymbol'>:</span>&nbsp;Integer&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;x&nbsp;<span class='operator'>*</span>&nbsp;other<span class='keysymbol'>.</span>x&nbsp;<span class='operator'>+</span>&nbsp;y&nbsp;<span class='operator'>*</span>&nbsp;other<span class='keysymbol'>.</span>y<span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Negation<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>operator</span><span class='bracket'>(</span><span class='operator'>-</span>this<span class='bracket'>)</span><span class='keysymbol'>:</span>&nbsp;Point&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;<span class='bracket'>(</span><span class='operator'>-</span>x<span class='delimiter'>,</span>&nbsp;<span class='operator'>-</span>y<span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>p</span><span class='keysymbol'>:</span>&nbsp;Point&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='bracket'>(</span><span class='literal'>1</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>2</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>p<span class='keysymbol'>.</span>x&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>1</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>p<span class='keysymbol'>.</span>y&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>2</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>p&nbsp;<span class='operator'>==</span>&nbsp;<span class='bracket'>(</span><span class='literal'>1</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>2</span><span class='bracket'>))</span><span class='delimiter'>;</span><span class='comment'>&nbsp;#&nbsp;Right-hand&nbsp;side&nbsp;implicitly&nbsp;converted&nbsp;to&nbsp;Point.<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>p&nbsp;<span class='operator'>+</span>&nbsp;<span class='bracket'>(</span><span class='literal'>3</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>4</span><span class='bracket'>)</span>&nbsp;<span class='operator'>==</span>&nbsp;<span class='bracket'>(</span><span class='literal'>4</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>6</span><span class='bracket'>))</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>p&nbsp;<span class='operator'>*</span>&nbsp;<span class='literal'>2</span>&nbsp;<span class='operator'>==</span>&nbsp;<span class='bracket'>(</span><span class='literal'>2</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>4</span><span class='bracket'>))</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>p&nbsp;<span class='operator'>*</span>&nbsp;<span class='bracket'>(</span><span class='literal'>2</span><span class='delimiter'>,</span>&nbsp;<span class='literal'>3</span><span class='bracket'>)</span>&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>8</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;====================================================================<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;A&nbsp;class&nbsp;with&nbsp;implicit&nbsp;conversions.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>class</span>&nbsp;<span class='declaration'>Rational</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>numerator</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>denominator</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Implicit&nbsp;constructor&nbsp;from&nbsp;Integer.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>ctor</span><span class='bracket'>(</span><span class='declaration'>i</span><span class='keysymbol'>:</span>&nbsp;Integer<span class='bracket'>)</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;<span class='bracket'>(</span>numerator&nbsp;<span class='keysymbol'>=</span>&nbsp;i<span class='delimiter'>,</span>&nbsp;denominator&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='literal'>0</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Implicit&nbsp;conversion&nbsp;to&nbsp;double.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>conv</span><span class='keysymbol'>:</span>&nbsp;Double&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;numerator&nbsp;<span class='operator'>/</span>&nbsp;denominator<span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>func</span>&nbsp;<span class='declaration'>floor</span><span class='bracket'>()</span><span class='keysymbol'>:</span>&nbsp;Integer&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='comment'>#&nbsp;//&nbsp;is&nbsp;integer&nbsp;division.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;numerator&nbsp;<span class='operator'>//</span>&nbsp;denominator<span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>operator</span><span class='bracket'>(</span>this&nbsp;<span class='operator'>+</span>&nbsp;other<span class='delimiter'>,</span>&nbsp;<span class='declaration'>other</span><span class='keysymbol'>:</span>&nbsp;Rational<span class='bracket'>)</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;<span class='bracket'>(</span>numerator&nbsp;<span class='keysymbol'>=</span>&nbsp;numerator&nbsp;<span class='operator'>*</span>&nbsp;other<span class='keysymbol'>.</span>denominator&nbsp;<span class='operator'>+</span>&nbsp;other<span class='keysymbol'>.</span>numerator&nbsp;<span class='operator'>*</span>&nbsp;denominator<span class='delimiter'>,<br>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></span>denominator&nbsp;<span class='keysymbol'>=</span>&nbsp;denominator&nbsp;<span class='operator'>*</span>&nbsp;other<span class='keysymbol'>.</span>denominator<span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>operator</span><span class='bracket'>(</span>this&nbsp;<span class='operator'>/</span>&nbsp;other<span class='delimiter'>,</span>&nbsp;<span class='declaration'>other</span><span class='keysymbol'>:</span>&nbsp;Rational<span class='bracket'>)</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;<span class='bracket'>(</span>numerator&nbsp;<span class='keysymbol'>=</span>&nbsp;numerator&nbsp;<span class='operator'>*</span>&nbsp;other<span class='keysymbol'>.</span>denominator<span class='delimiter'>,<br>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></span>denominator&nbsp;<span class='keysymbol'>=</span>&nbsp;denominator&nbsp;<span class='operator'>*</span>&nbsp;other<span class='keysymbol'>.</span>numerator<span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>x</span><span class='keysymbol'>:</span>&nbsp;Rational&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='literal'>3</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span>x&nbsp;<span class='operator'>/</span><span class='keysymbol'>=</span>&nbsp;<span class='literal'>2</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>x<span class='keysymbol'>.</span>numerator&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>3</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>x<span class='keysymbol'>.</span>denominator&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>2</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>y</span><span class='keysymbol'>:</span>&nbsp;Double&nbsp;<span class='keysymbol'>=</span>&nbsp;x<span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>y&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>1.5</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>x<span class='keysymbol'>.</span>floor<span class='bracket'>()</span>&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>1</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;====================================================================<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;A&nbsp;class&nbsp;with&nbsp;properties.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>class</span>&nbsp;<span class='declaration'>TimePeriod</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>seconds</span><span class='keysymbol'>:</span>&nbsp;Double<span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>ctor</span>&nbsp;<span class='declaration'>fromSeconds</span><span class='bracket'>(</span><span class='declaration'>seconds</span><span class='keysymbol'>:</span>&nbsp;Double<span class='bracket'>)</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;<span class='bracket'>(</span>seconds&nbsp;<span class='keysymbol'>=</span>&nbsp;seconds<span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>minutes</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>ctor</span><span class='bracket'>(</span><span class='declaration'>value</span><span class='keysymbol'>:</span>&nbsp;Double<span class='bracket'>)</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>seconds&nbsp;<span class='keysymbol'>=</span>&nbsp;value&nbsp;<span class='operator'>*</span>&nbsp;<span class='literal'>60</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>default</span>&nbsp;<span class='keyword'>conv</span><span class='keysymbol'>:</span>&nbsp;Double&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;seconds&nbsp;<span class='operator'>/</span>&nbsp;<span class='literal'>60</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>hours</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>ctor</span><span class='bracket'>(</span><span class='declaration'>value</span><span class='keysymbol'>:</span>&nbsp;Double<span class='bracket'>)</span>&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>seconds&nbsp;<span class='keysymbol'>=</span>&nbsp;value&nbsp;<span class='operator'>*</span>&nbsp;<span class='literal'>3600</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>default</span>&nbsp;<span class='keyword'>conv</span><span class='keysymbol'>:</span>&nbsp;Double&nbsp;<span class='bracket'>{<br>
+</div>
+<div class='block'>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='keyword'>return</span>&nbsp;seconds&nbsp;<span class='operator'>/</span>&nbsp;<span class='literal'>3600</span><span class='delimiter'>;<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='bracket'>}<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>t</span>&nbsp;<span class='keysymbol'>=</span>&nbsp;TimePeriod<span class='keysymbol'>.</span>fromSeconds<span class='bracket'>(</span><span class='literal'>90</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>t<span class='keysymbol'>.</span>minutes&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>1.5</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span>t<span class='keysymbol'>.</span>minutes&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='literal'>2.5</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>t<span class='keysymbol'>.</span>seconds&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>150</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span>t<span class='keysymbol'>.</span>hours&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='literal'>2</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>t<span class='keysymbol'>.</span>minutes&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>60</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>t<span class='keysymbol'>.</span>seconds&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>7200</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+<br>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Note&nbsp;that&nbsp;m's&nbsp;inferred&nbsp;type&nbsp;is&nbsp;Double&nbsp;because&nbsp;t.minutes&nbsp;declares&nbsp;a&nbsp;default&nbsp;conversion&nbsp;to<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='comment'>#&nbsp;Double.<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>m</span>&nbsp;<span class='keysymbol'>=</span>&nbsp;t<span class='keysymbol'>.</span>minutes<span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span>m&nbsp;<span class='operator'>+</span><span class='keysymbol'>=</span>&nbsp;<span class='literal'>12</span><span class='delimiter'>;<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>m&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>72</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+</div>
+</div>
+</body>
+</html>
+</div>
+
+<div class='statement'>
+<span class='wrap-indent'></span><span class='bracket'>}<br>
+</div>
