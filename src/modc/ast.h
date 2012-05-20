@@ -463,6 +463,7 @@ public:
     CONTINUE,
 
     ASSERT,
+    DEBUG,
 
     BLANK
   };
@@ -509,8 +510,10 @@ public:
   struct Assert {
     Expression condition;
     vector<Expression> debugInfo;
+    bool isFatal;
 
-    VALUE_TYPE2(Assert, Expression&&, condition, vector<Expression>&&, debugInfo);
+    VALUE_TYPE3(Assert, Expression&&, condition, vector<Expression>&&, debugInfo,
+                bool, isFatal);
   };
 
   union {
@@ -535,7 +538,8 @@ public:
     Maybe<string> break_;
     Maybe<string> continue_;
 
-    Assert assert_;
+    Assert assert_;  // Needs trailing underscore because of assert() macro.  :(
+    vector<Expression> debug;
   };
 
   // Comment appearing after the end of the statement, on the same line.
@@ -569,6 +573,9 @@ public:
 
   static Statement fromAssert(Location location, Expression&& condition,
                               vector<Expression>&& debugInfo);
+  static Statement fromExpect(Location location, Expression&& condition,
+                              vector<Expression>&& debugInfo);
+  static Statement fromDebug(Location location, vector<Expression>&& debugInfo);
 
   static Statement fromBlank(Location location);
 

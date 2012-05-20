@@ -789,6 +789,26 @@ StatementParser assertStatement = transform(
       }
     });
 
+StatementParser expectStatement = transform(
+    sequence(keyword("expect"), parenthesizedList(generalExpression)),
+    [](Loc l, vector<Expression>&& params) {
+      if (params.empty()) {
+        return Statement::fromExpect(l,
+            Expression::fromError(l, errors::error(l, "Missing expect condition.")),
+            vector<Expression>());
+      } else {
+        Expression condition = move(params[0]);
+        params.erase(params.begin(), params.begin() + 1);
+        return Statement::fromExpect(l, move(condition), move(params));
+      }
+    });
+
+StatementParser debugStatement = transform(
+    sequence(keyword("debug"), parenthesizedList(generalExpression)),
+    [](Loc l, vector<Expression>&& params) {
+      return Statement::fromDebug(l, move(params));
+    });
+
 const StatementParser imperativeLineStatement = oneOf(
     assignmentStatement,
     declarationStatement(declarationMaybeAssignment),
@@ -801,6 +821,8 @@ const StatementParser imperativeLineStatement = oneOf(
     returnStatement,
     breakContinueStatement,
     assertStatement,
+    expectStatement,
+    debugStatement,
     blank);
 
 const StatementParser imperativeBlockStatement = oneOf(
@@ -821,6 +843,8 @@ const StatementParser declarativeLineStatement = oneOf(
     whileStatement(declarativeLineStatement),
     loopStatement(declarativeLineStatement),
     assertStatement,
+    expectStatement,
+    debugStatement,
     blank);
 
 const StatementParser declarativeBlockStatement = oneOf(
@@ -922,6 +946,7 @@ bool attachBlock(Statement& statement, const vector<TokenStatement>& block) {
     case Statement::Type::CONTINUE:
     case Statement::Type::BLANK:
     case Statement::Type::ASSERT:
+    case Statement::Type::DEBUG:
       return false;
 
     case Statement::Type::DECLARATION:
@@ -964,6 +989,7 @@ void attachComment(Statement& statement, const Maybe<Located<string>>& comment) 
       case Statement::Type::PARALLEL:
       case Statement::Type::UNION:
       case Statement::Type::ASSERT:
+      case Statement::Type::DEBUG:
         statement.comment = comment;
         break;
 

@@ -12,7 +12,7 @@
 # 4.  %C is faster and more memory efficient than C++.  Not just in contrived benchmarks.  Always.
 # 5.  Boilerplate is evil.
 
-# Two quick notes:
+# Some quick notes:
 # -   Because this file started with "#! /", it is executable.  It has no main() function -- the
 #     entire file is the main function.  On the other hand, %C files that do not begin with "#! /"
 #     define importable modules.
@@ -25,7 +25,7 @@
 # ====================================================================
 # Hello world!
 {
-  var cli = import "/modc/cli.modc";
+  var cli@ = import "/modc/cli.modc";
   cli.out.write("Hello World!");
 }
 
@@ -257,7 +257,7 @@
   assert(t.seconds == 150);
 
   t.hours = 2;
-  assert(t.minutes == 60);
+  assert(t.minutes == 120);
   assert(t.seconds == 7200);
 
   # Note that m's inferred type is Double because t.minutes declares a default conversion to

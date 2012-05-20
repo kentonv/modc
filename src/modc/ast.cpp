@@ -427,7 +427,8 @@ ParameterDeclaration ParameterDeclaration::fromVariable(Location location,
   HANDLE(RETURN, return_, Expression) \
   HANDLE(BREAK, break_, Maybe<string>) \
   HANDLE(CONTINUE, continue_, Maybe<string>) \
-  HANDLE(ASSERT, assert_, Assert)
+  HANDLE(ASSERT, assert_, Assert) \
+  HANDLE(DEBUG, debug, vector<Expression>)
 
 Statement::Statement(Statement&& other)
     : comment(other.comment), location(other.location), type(other.type) {
@@ -601,7 +602,20 @@ Statement Statement::fromContinue(Location location, Maybe<string>&& loopName) {
 Statement Statement::fromAssert(Location location, Expression&& condition,
                                 vector<Expression>&& debugInfo) {
   Statement result(location, Type::ASSERT);
-  new (&result.assert_) Assert(move(condition), move(debugInfo));
+  new (&result.assert_) Assert(move(condition), move(debugInfo), true);
+  return result;
+}
+
+Statement Statement::fromExpect(Location location, Expression&& condition,
+                                vector<Expression>&& debugInfo) {
+  Statement result(location, Type::ASSERT);
+  new (&result.assert_) Assert(move(condition), move(debugInfo), false);
+  return result;
+}
+
+Statement Statement::fromDebug(Location location, vector<Expression>&& debugInfo) {
+  Statement result(location, Type::DEBUG);
+  new (&result.debug) vector<Expression>(move(debugInfo));
   return result;
 }
 
@@ -1123,11 +1137,20 @@ CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
       break;
 
     case Statement::Type::ASSERT:
-      printer << "assert(" << stmt.assert_.condition;
+      if (stmt.assert_.isFatal) {
+        printer << "assert(";
+      } else {
+        printer << "expect(";
+      }
+      printer << stmt.assert_.condition;
       if (!stmt.assert_.debugInfo.empty()) {
         printer << ", " << stmt.assert_.debugInfo;
       }
       printer << ");";
+      break;
+
+    case Statement::Type::DEBUG:
+      printer << "debug(" << stmt.debug << ");";
       break;
 
     case Statement::Type::BLANK:
