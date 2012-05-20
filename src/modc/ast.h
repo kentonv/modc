@@ -338,7 +338,6 @@ struct Declaration {
     CONSTRUCTOR,
     DESTRUCTOR,
     CONVERSION,
-    DEFAULT_CONVERSION,  // TODO:  Combine with CONVERSION somehow?
     OPERATOR,
 
     CLASS,
@@ -351,6 +350,7 @@ struct Declaration {
 
   Maybe<Visibility> visibility;
 
+  bool isDefault;
   Kind kind;
   Style thisStyle;
   Style style;
@@ -462,6 +462,8 @@ public:
     BREAK,
     CONTINUE,
 
+    ASSERT,
+
     BLANK
   };
 
@@ -504,6 +506,13 @@ public:
     VALUE_TYPE2(Loop, Maybe<string>&&, name, Statement&&, body);
   };
 
+  struct Assert {
+    Expression condition;
+    vector<Expression> debugInfo;
+
+    VALUE_TYPE2(Assert, Expression&&, condition, vector<Expression>&&, debugInfo);
+  };
+
   union {
     std::vector<errors::Error> error;
 
@@ -525,6 +534,8 @@ public:
     Expression return_;  // if not returning a value, expression will be empty tuple.
     Maybe<string> break_;
     Maybe<string> continue_;
+
+    Assert assert_;
   };
 
   // Comment appearing after the end of the statement, on the same line.
@@ -555,6 +566,9 @@ public:
   static Statement fromReturn(Location location, Expression&& value);
   static Statement fromBreak(Location location, Maybe<string>&& loopName);
   static Statement fromContinue(Location location, Maybe<string>&& loopName);
+
+  static Statement fromAssert(Location location, Expression&& condition,
+                              vector<Expression>&& debugInfo);
 
   static Statement fromBlank(Location location);
 

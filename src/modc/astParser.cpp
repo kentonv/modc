@@ -544,7 +544,8 @@ auto annotation = transform(sequence(relationship, optional(generalExpression)),
     });
 
 const DeclarationParser declaration = transform(
-    sequence(kind,
+    sequence(optional(keyword("default")),
+             kind,
              optional(aliasQualifier),
              optional(located(identifier)),
              optional(parenthesizedList(parameterDeclaration)),
@@ -552,6 +553,7 @@ const DeclarationParser declaration = transform(
              optional(sequence(keyword(":"), optional(generalExpression))),
              repeated(annotation)),
     [] (Loc l,
+        bool isDefault,
         Declaration::Kind kind,
         Maybe<Style>&& thisStyle,
         Maybe<Located<string>>&& name,
@@ -560,6 +562,7 @@ const DeclarationParser declaration = transform(
         Maybe<Maybe<Expression>>&& type,
         vector<Annotation>&& annotations) {
       Declaration result(l, kind);
+      result.isDefault = isDefault;
       result.thisStyle = thisStyle ? *thisStyle : Style::VALUE;
       result.style = style ? *style : Style::VALUE;
       result.name = move(name);
@@ -753,7 +756,6 @@ StatementParser returnStatement = transform(
       }
     });
 
-
 auto breakOrContinue = oneOfKeywordsTo<bool>({
     std::make_pair("break", true),
     std::make_pair("continue", false)});
@@ -773,6 +775,20 @@ StatementParser breakContinueStatement = transform(
       return result;
     });
 
+StatementParser assertStatement = transform(
+    sequence(keyword("assert"), parenthesizedList(generalExpression)),
+    [](Loc l, vector<Expression>&& params) {
+      if (params.empty()) {
+        return Statement::fromAssert(l,
+            Expression::fromError(l, errors::error(l, "Missing assert condition.")),
+            vector<Expression>());
+      } else {
+        Expression condition = move(params[0]);
+        params.erase(params.begin(), params.begin() + 1);
+        return Statement::fromAssert(l, move(condition), move(params));
+      }
+    });
+
 const StatementParser imperativeLineStatement = oneOf(
     assignmentStatement,
     declarationStatement(declarationMaybeAssignment),
@@ -784,6 +800,7 @@ const StatementParser imperativeLineStatement = oneOf(
     loopStatement(imperativeLineStatement),
     returnStatement,
     breakContinueStatement,
+    assertStatement,
     blank);
 
 const StatementParser imperativeBlockStatement = oneOf(
@@ -803,6 +820,7 @@ const StatementParser declarativeLineStatement = oneOf(
     forStatement(declarativeLineStatement),
     whileStatement(declarativeLineStatement),
     loopStatement(declarativeLineStatement),
+    assertStatement,
     blank);
 
 const StatementParser declarativeBlockStatement = oneOf(
@@ -874,7 +892,6 @@ bool attachBlock(Declaration& declaration, const vector<TokenStatement>& block) 
     case Declaration::Kind::CONSTRUCTOR:
     case Declaration::Kind::DESTRUCTOR:
     case Declaration::Kind::CONVERSION:
-    case Declaration::Kind::DEFAULT_CONVERSION:
     case Declaration::Kind::OPERATOR:
       attachBlock(declaration.definition->block, block, StatementContext::IMPERATIVE);
       return true;
@@ -904,6 +921,7 @@ bool attachBlock(Statement& statement, const vector<TokenStatement>& block) {
     case Statement::Type::BREAK:
     case Statement::Type::CONTINUE:
     case Statement::Type::BLANK:
+    case Statement::Type::ASSERT:
       return false;
 
     case Statement::Type::DECLARATION:
@@ -945,6 +963,7 @@ void attachComment(Statement& statement, const Maybe<Located<string>>& comment) 
       case Statement::Type::BLOCK:
       case Statement::Type::PARALLEL:
       case Statement::Type::UNION:
+      case Statement::Type::ASSERT:
         statement.comment = comment;
         break;
 

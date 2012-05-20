@@ -32,48 +32,6 @@ using std::vector;
 using std::list;
 using std::move;
 
-struct Space {};
-static Space space __attribute__((unused));
-struct NoSpace {};
-static NoSpace noSpace __attribute__((unused));
-
-struct EndStatement {};
-static EndStatement endStatement __attribute__((unused));
-struct StartBlock {};
-static StartBlock startBlock __attribute__((unused));
-struct EndBlock {};
-static EndBlock endBlock __attribute__((unused));
-
-struct Breakable {
-  uint8_t priority;
-
-  explicit Breakable(uint8_t priority): priority(priority) {}
-};
-inline Breakable breakable(int priority) { return Breakable(priority); }
-struct StartSubExpression {};
-static StartSubExpression startSubExpression __attribute__((unused));
-struct EndSubExpression {};
-static EndSubExpression endSubExpression __attribute__((unused));
-
-struct StartParameters {
-  uint8_t chainPriority;
-
-  explicit StartParameters(uint8_t chainPriority): chainPriority(chainPriority) {}
-};
-inline StartParameters startParameters(int chainPriority) { return StartParameters(chainPriority); }
-struct NextParameter {};
-static NextParameter nextParameter __attribute__((unused));
-struct EndParameters {};
-static EndParameters endParameters __attribute__((unused));
-
-// breakableStartParams(priority)
-// breakableNextParam
-// end parameters
-
-// breakable(priority)
-// startSubExpression
-// endSubExpression
-
 class Format {
 public:
   constexpr Format(): bits(0) {}
@@ -81,12 +39,47 @@ public:
     return Format(1 << bit);
   }
 
-  Format operator|(const Format& other) const { return Format(bits | other.bits); }
-  Format operator&(const Format& other) const { return Format(bits & other.bits); }
-  Format operator+(const Format& other) const { return Format(bits | other.bits); }
+  Format operator|(const Format& other) const { return Format(bits |  other.bits); }
+  Format operator&(const Format& other) const { return Format(bits &  other.bits); }
+  Format operator+(const Format& other) const { return Format(bits |  other.bits); }
   Format operator-(const Format& other) const { return Format(bits & ~other.bits); }
 
-  operator bool() { return bits != 0; }
+  Format& operator|=(const Format& other) { bits |=  other.bits; return *this; }
+  Format& operator&=(const Format& other) { bits &=  other.bits; return *this; }
+  Format& operator+=(const Format& other) { bits |=  other.bits; return *this; }
+  Format& operator-=(const Format& other) { bits &= ~other.bits; return *this; }
+
+  bool isSupersetOf(const Format& other) const { return (bits & other.bits) == other.bits; }
+
+  bool operator==(const Format& other) const { return bits == other.bits; }
+  bool operator!=(const Format& other) const { return bits != other.bits; }
+  bool operator<=(const Format& other) const { return bits <= other.bits; }
+  bool operator>=(const Format& other) const { return bits >= other.bits; }
+  bool operator< (const Format& other) const { return bits <  other.bits; }
+  bool operator> (const Format& other) const { return bits >  other.bits; }
+
+  class iterator {
+  public:
+    iterator& operator++() {
+      remainingBits &= remainingBits - 1;
+      return *this;
+    }
+    Format operator*() {
+      return Format(((remainingBits ^ (remainingBits - 1)) + 1) >> 1);
+    }
+
+    bool operator==(const iterator& other) const { return remainingBits == other.remainingBits; }
+    bool operator!=(const iterator& other) const { return remainingBits != other.remainingBits; }
+
+  private:
+    friend class Format;
+    iterator(uint32_t remainingBits): remainingBits(remainingBits) {}
+
+    uint32_t remainingBits;
+  };
+
+  iterator begin() { return iterator(bits); }
+  iterator end() { return iterator(0); }
 
 private:
   uint32_t bits;
@@ -95,14 +88,22 @@ private:
 };
 
 namespace format {
-  constexpr Format KEYWORD = Format::fromBit(0);
-  constexpr Format OPERATOR = Format::fromBit(1);
-  constexpr Format BRACKET = Format::fromBit(2);
-  constexpr Format LITERAL = Format::fromBit(3);
+  constexpr Format ERROR = Format::fromBit(0);
+  constexpr Format COMMENT = Format::fromBit(1);
 
-  constexpr Format LOCAL = Format::fromBit(4);
-  constexpr Format MEMBER = Format::fromBit(5);
-  constexpr Format GLOBAL = Format::fromBit(6);
+  constexpr Format KEYWORD = Format::fromBit(2);
+  constexpr Format KEYSYMBOL = Format::fromBit(3);
+  constexpr Format OPERATOR = Format::fromBit(4);
+  constexpr Format BRACKET = Format::fromBit(5);
+  constexpr Format DELIMITER = Format::fromBit(6);
+  constexpr Format LITERAL = Format::fromBit(7);
+
+  constexpr Format LOCAL = Format::fromBit(8);
+  constexpr Format MEMBER = Format::fromBit(9);
+  constexpr Format GLOBAL = Format::fromBit(10);
+
+  // If this identifier is defining a name, rather than referencing one.
+  constexpr Format DECLARATION = Format::fromBit(11);
 }
 
 class FormattedCode {
@@ -120,15 +121,11 @@ public:
   FormattedCode();
   ~FormattedCode();
 
-  void append(string&& text);
   void append(string&& text, Format format);
-  void ensureTrailingSpace();
+  void ensureTrailingSpace(Format format);
   void stripTrailingSpace();
   iterator beforeTrailingSpace();
   iterator afterLeadingSpace();
-
-  void pushFormat(Format format) { savedFormats.push_back(currentFormat); currentFormat = format; }
-  void popFormat() { currentFormat = savedFormats.back(); savedFormats.pop_back(); }
 
   iterator begin() { return pieces.begin(); }
   iterator end() { auto end = pieces.end(); --end; return end; }
@@ -147,9 +144,6 @@ public:
   string toString() const;
 
 private:
-  Format currentFormat;
-  vector<Format> savedFormats;
-
   list<Piece> pieces;
 };
 
@@ -196,10 +190,108 @@ private:
   FormattedCodeWriter::Metrics metrics;
 };
 
+class HtmlCodeWriter: public FormattedCodeWriter {
+public:
+  HtmlCodeWriter(std::ostream& out, FormattedCodeWriter::Metrics metrics);
+  ~HtmlCodeWriter();
+
+  // implements FormattedCodeWriter ------------------------------------------------------
+
+  void writeStatement(int blockLevel, vector<FormattedLine>&& lines);
+  void writeBlankLine();
+  TextWidth getWidth(FormattedCode::const_iterator begin, FormattedCode::const_iterator end);
+  Metrics getMetrics(int blockLevel);
+
+private:
+  std::ostream& out;
+  FormattedCodeWriter::Metrics metrics;
+
+  int currentBlockLevel;
+};
+
+// =======================================================================================
+
+struct Space {};
+static Space space __attribute__((unused));
+struct NoSpace {};
+static NoSpace noSpace __attribute__((unused));
+
+struct EndStatement {};
+static EndStatement endStatement __attribute__((unused));
+struct StartBlock {};
+static StartBlock startBlock __attribute__((unused));
+struct EndBlock {};
+static EndBlock endBlock __attribute__((unused));
+
+struct Breakable {
+  uint8_t priority;
+
+  explicit Breakable(uint8_t priority): priority(priority) {}
+};
+inline Breakable breakable(int priority) { return Breakable(priority); }
+struct StartSubExpression {};
+static StartSubExpression startSubExpression __attribute__((unused));
+struct EndSubExpression {};
+static EndSubExpression endSubExpression __attribute__((unused));
+
+struct StartParameters {
+  uint8_t chainPriority;
+
+  explicit StartParameters(uint8_t chainPriority): chainPriority(chainPriority) {}
+};
+inline StartParameters startParameters(int chainPriority) { return StartParameters(chainPriority); }
+struct NextParameter {};
+static NextParameter nextParameter __attribute__((unused));
+struct EndParameters {};
+static EndParameters endParameters __attribute__((unused));
+
+struct Formatted {
+  Format format;
+  string text;
+
+  Formatted(Format format, string&& text): format(format), text(move(text)) {}
+};
+inline Formatted formatted(Format format, const string& text) {
+  return Formatted(format, string(text));
+}
+inline Formatted formatted(Format format, string&& text) {
+  return Formatted(format, move(text));
+}
+
 class CodePrinter {
 public:
   CodePrinter(FormattedCodeWriter& out);
   ~CodePrinter();
+
+  class FormatScope {
+  public:
+    FormatScope(FormatScope& other) = delete;
+    FormatScope(const FormatScope& other) = delete;
+    FormatScope(FormatScope&& other): printer(other.printer), old(other.old), disabled(false) {
+      other.disabled = true;
+    }
+    ~FormatScope() {
+      printer.currentFormat = old;
+    }
+  private:
+    friend class CodePrinter;
+    FormatScope(CodePrinter& printer, Format old): printer(printer), old(old), disabled(false) {}
+
+    CodePrinter& printer;
+    Format old;
+    bool disabled;
+  };
+
+  FormatScope addFormat(Format format) {
+    Format old = currentFormat;
+    currentFormat += format;
+    return FormatScope(*this, old);
+  }
+  FormatScope removeFormat(Format format) {
+    Format old = currentFormat;
+    currentFormat -= format;
+    return FormatScope(*this, old);
+  }
 
   // If the previous line matches exactly the given text (not including indent), and nothing has
   // been printed yet on the current line, go back to the previous line.  Useful for making "else"
@@ -209,6 +301,7 @@ public:
   CodePrinter& operator<<(const char* literalText);
   CodePrinter& operator<<(const string& text) { return *this << string(text); }
   CodePrinter& operator<<(string&& text);
+  CodePrinter& operator<<(Formatted&& formatted);
 
   CodePrinter& operator<<(Space);
   CodePrinter& operator<<(NoSpace);
@@ -231,6 +324,8 @@ private:
   bool nextWriteStartsNewStatement;
 
   FormattedCode lineBuffer;
+
+  Format currentFormat;
 
   struct BreakPoint {
     FormattedCode::iterator pos;

@@ -231,7 +231,8 @@ ListElement ListElement::fromError(Location location, vector<errors::Error>&& er
 // Declaration
 
 Declaration::Declaration(Location location, Kind kind)
-    : kind(kind), thisStyle(Style::VALUE), style(Style::VALUE), location(location) {}
+    : isDefault(false), kind(kind), thisStyle(Style::VALUE), style(Style::VALUE),
+      location(location) {}
 Declaration::~Declaration() {}
 
 bool Declaration::operator==(const Declaration& other) const {
@@ -425,7 +426,8 @@ ParameterDeclaration ParameterDeclaration::fromVariable(Location location,
   HANDLE(PARALLEL, parallel, vector<Statement>) \
   HANDLE(RETURN, return_, Expression) \
   HANDLE(BREAK, break_, Maybe<string>) \
-  HANDLE(CONTINUE, continue_, Maybe<string>)
+  HANDLE(CONTINUE, continue_, Maybe<string>) \
+  HANDLE(ASSERT, assert_, Assert)
 
 Statement::Statement(Statement&& other)
     : comment(other.comment), location(other.location), type(other.type) {
@@ -596,6 +598,13 @@ Statement Statement::fromContinue(Location location, Maybe<string>&& loopName) {
   return result;
 }
 
+Statement Statement::fromAssert(Location location, Expression&& condition,
+                                vector<Expression>&& debugInfo) {
+  Statement result(location, Type::ASSERT);
+  new (&result.assert_) Assert(move(condition), move(debugInfo));
+  return result;
+}
+
 Statement Statement::fromBlank(Location location) {
   return Statement(location, Type::BLANK);
 }
@@ -633,7 +642,7 @@ CodePrinter& operator<<(CodePrinter& printer, const vector<T>& vec) {
 }
 
 CodePrinter& operator<<(CodePrinter& printer, const errors::Error& error) {
-  return printer << "(" << error.message << ")";
+  return printer << string("(") << error.message << string(")");
 }
 
 vector<vector<string>> operators = {
@@ -740,9 +749,11 @@ void Expression::print(CodePrinter& printer, int minPriority) const {
   }
 
   switch (getType()) {
-    case Expression::Type::ERROR:
-      printer << "{{EXPRESSION ERROR: " << error << "}}";
+    case Expression::Type::ERROR: {
+      auto formatScope = printer.addFormat(format::ERROR);
+      printer << string("{{EXPRESSION ERROR: ") << error << string("}}");
       break;
+    }
 
     case Expression::Type::VARIABLE:
       printer << variable;
@@ -753,7 +764,7 @@ void Expression::print(CodePrinter& printer, int minPriority) const {
       break;
 
     case Expression::Type::LITERAL_INT:
-      printer << google::protobuf::SimpleItoa(literalInt);
+      printer << formatted(format::LITERAL, google::protobuf::SimpleItoa(literalInt));
       break;
     case Expression::Type::LITERAL_DOUBLE: {
       string result = google::protobuf::SimpleDtoa(literalDouble);
@@ -766,13 +777,15 @@ void Expression::print(CodePrinter& printer, int minPriority) const {
           result.erase(pos, 1);
         }
       }
-      printer << result;
+      printer << formatted(format::LITERAL, result);
       break;
     }
-    case Expression::Type::LITERAL_STRING:
+    case Expression::Type::LITERAL_STRING: {
       // TODO:  Split on line breaks.
-      printer << "\"" << google::protobuf::CEscape(literalString) << "\"";
+      auto formatScope = printer.addFormat(format::LITERAL);
+      printer << string("\"") << google::protobuf::CEscape(literalString) << string("\"");
       break;
+    }
     case Expression::Type::LITERAL_ARRAY:
       // Expressions in the list never need parenthesization.
       printer << "[" << literalArray << "]";
@@ -782,7 +795,7 @@ void Expression::print(CodePrinter& printer, int minPriority) const {
       // Left side can have equal priority to expression.
       binaryOperator.left->print(printer, pri);
 
-      printer << space << binaryOperator.op << breakable(pri) << space;
+      printer << space << formatted(format::OPERATOR, binaryOperator.op) << breakable(pri) << space;
 
       // Right side must have higher priority.
       binaryOperator.right->print(printer, pri + 1);
@@ -790,13 +803,13 @@ void Expression::print(CodePrinter& printer, int minPriority) const {
       break;
     }
     case Expression::Type::PREFIX_OPERATOR: {
-      printer << prefixOperator.op;
+      printer << formatted(format::OPERATOR, prefixOperator.op);
       prefixOperator.operand->print(printer, pri);
       break;
     }
     case Expression::Type::POSTFIX_OPERATOR:
       postfixOperator.operand->print(printer, pri);
-      printer << postfixOperator.op;
+      printer << formatted(format::OPERATOR, postfixOperator.op);
       break;
     case Expression::Type::TERNARY_OPERATOR:
       // The middle part doesn't need parenthesization, but the ends might.  The ternary operator
@@ -832,9 +845,12 @@ void Expression::print(CodePrinter& printer, int minPriority) const {
       printer << memberAccess.member;
       break;
 
-    case Expression::Type::IMPORT:
-      printer << "import \"" << google::protobuf::CEscape(import) << "\"";
+    case Expression::Type::IMPORT: {
+      printer << "import ";
+      auto formatScope = printer.addFormat(format::LITERAL);
+      printer << string("\"") << google::protobuf::CEscape(import) << string("\"");
       break;
+    }
 
     case Expression::Type::LAMBDA:
       printer << "(" << lambda.parameters << ")" << lambda.style << " => " << breakable(pri);
@@ -886,13 +902,19 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
     printer << *visibility;
   }
 
+  if (isDefault) {
+    printer << "default ";
+  }
+
   switch (kind) {
-    case Kind::ERROR:
-      printer << "{{DECLARATION ERROR: " << definition->expression.error << "}}";
+    case Kind::ERROR: {
+      auto formatScope = printer.addFormat(format::ERROR);
+      printer << string("{{DECLARATION ERROR: ") << definition->expression.error << string("}}");
       if (asStatement) {
         printer << ";" << endStatement;
       }
       return;
+    }
 
     case Kind::VARIABLE: if (asStatement) { printer << "var "; } break;
     case Kind::ENVIRONMENT: printer << "env "; break;
@@ -901,7 +923,6 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
     case Kind::CONSTRUCTOR: printer << "ctor "; break;
     case Kind::DESTRUCTOR:  printer << "dtor "; break;
     case Kind::CONVERSION:  printer << "conv "; break;
-    case Kind::DEFAULT_CONVERSION: printer << "default conv "; break;
     case Kind::OPERATOR:    printer << "operator "; break;
 
     case Kind::CLASS:       printer << "class "; break;
@@ -994,7 +1015,11 @@ CodePrinter& operator<<(CodePrinter& printer, const ParameterDeclaration& param)
 CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
   switch (stmt.getType()) {
     case Statement::Type::ERROR:
-      printer << "{{STATEMENT ERROR: " << stmt.error << "}};";
+      {
+        auto formatScope = printer.addFormat(format::ERROR);
+        printer << string("{{STATEMENT ERROR: ") << stmt.error << string("}}");
+      }
+      printer << ";";
       break;
 
     case Statement::Type::EXPRESSION:
@@ -1014,7 +1039,7 @@ CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
     case Statement::Type::ASSIGNMENT:
       printer << stmt.assignment.variable << space;
       if (stmt.assignment.compoundOp) {
-        printer << *stmt.assignment.compoundOp;
+        printer << formatted(format::OPERATOR, *stmt.assignment.compoundOp);
       }
       printer << "= " << breakable(0) << stmt.assignment.value << ";";
       break;
@@ -1097,12 +1122,21 @@ CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
       printer << ";";
       break;
 
+    case Statement::Type::ASSERT:
+      printer << "assert(" << stmt.assert_.condition;
+      if (!stmt.assert_.debugInfo.empty()) {
+        printer << ", " << stmt.assert_.debugInfo;
+      }
+      printer << ");";
+      break;
+
     case Statement::Type::BLANK:
       // Nothing.
       break;
   }
 
   if (stmt.comment) {
+    auto formatScope = printer.addFormat(format::COMMENT);
     printer << space << "# " << stmt.comment->value;
   }
 

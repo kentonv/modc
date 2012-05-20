@@ -29,7 +29,48 @@ using std::cerr;
 using std::endl;
 using std::vector;
 
+const char* htmlHeader =
+    "<html>\n"
+    "<head>\n"
+    "  <style type='text/css'>\n"
+    "    .error { color: #c00; }\n"
+    "    .code { font-family: monospace; }\n"
+    "    .comment { color: #444; font-style: italic; }\n"
+    "    .keyword { font-weight: bold; color: #008; }\n"
+    "    .keysymbol { font-weight: bold; }\n"
+    "    .bracket { font-weight: bold; }\n"
+    "    .delimiter { font-weight: bold; }\n"
+    "    .operator { font-weight: bold; }\n"
+    "    .literal { color: #00f; }\n"
+    "  </style>\n"
+    "</head>\n"
+    "\n"
+    "<body>\n"
+    "<div class='code'>\n";
+
+const char* htmlFooter =
+    "</div>\n"
+    "</body>\n"
+    "</html>\n";
+
 int main(int argc, char* argv[]) {
+  bool html = false;
+
+  for (int i = 1; i < argc; i++) {
+    std::string arg = argv[i];
+
+    if (arg == "--html") {
+      html = true;
+    } else {
+      cerr << "Unknown arg: " << arg;
+      return 1;
+    }
+  }
+
+  if (html) {
+    cout << htmlHeader;
+  }
+
   std::string text, line;
 
   bool executable = false;
@@ -37,7 +78,11 @@ int main(int argc, char* argv[]) {
   if (std::getline(std::cin, line)) {
     if (line.substr(0, 3) == "#!/" || line.substr(0, 4) == "#! /") {
       executable = true;
-      cout << line << '\n';
+      if (html) {
+        cout << "<div class='statement'><span class='comment'>" << line << "</span></div>\n";
+      } else {
+        cout << line << '\n';
+      }
     } else {
       text += line;
       text += '\n';
@@ -61,8 +106,14 @@ int main(int argc, char* argv[]) {
   metrics.blockIndentWidth = 2;
   metrics.forceWrapFirstParameterThreshold = 16;
 
-  modc::TextCodeWriter writer(std::cout, metrics);
-  modc::CodePrinter printer(writer);
+  ekam::OwnedPtr<modc::FormattedCodeWriter> writer;
+  if (html) {
+    writer = ekam::newOwned<modc::HtmlCodeWriter>(std::cout, metrics);
+  } else {
+    writer = ekam::newOwned<modc::TextCodeWriter>(std::cout, metrics);
+  }
+
+  modc::CodePrinter printer(*writer);
 
   for (auto& tokenStatement: tokenStatements) {
     if (executable) {
@@ -70,6 +121,10 @@ int main(int argc, char* argv[]) {
     } else {
       printer << modc::astParser::parseDeclarative(tokenStatement);
     }
+  }
+
+  if (html) {
+    cout << htmlFooter;
   }
 
   return 0;

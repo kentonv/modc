@@ -21,6 +21,7 @@
 #include "chars.h"
 #include <limits>
 #include <ostream>
+#include <map>
 
 namespace modc {
 
@@ -29,21 +30,17 @@ using std::move;
 // =======================================================================================
 
 FormattedCode::FormattedCode() {
-  pieces.emplace_back(currentFormat, string());
+  pieces.emplace_back(Format(), string());
 }
 FormattedCode::~FormattedCode() {}
 
-void FormattedCode::append(string&& text) {
-  pieces.back() = Piece(currentFormat, move(text));
-  pieces.emplace_back(currentFormat, string());
-}
 void FormattedCode::append(string&& text, Format format) {
-  pieces.back() = Piece(currentFormat + format, move(text));
-  pieces.emplace_back(currentFormat, string());
+  pieces.back() = Piece(format, move(text));
+  pieces.emplace_back(Format(), string());
 }
-void FormattedCode::ensureTrailingSpace() {
+void FormattedCode::ensureTrailingSpace(Format format) {
   if (!empty() && back().text != " ") {
-    append(" ");
+    append(" ", format);
   }
 }
 void FormattedCode::stripTrailingSpace() {
@@ -82,6 +79,20 @@ string FormattedCode::toString() const {
 
 FormattedCodeWriter::~FormattedCodeWriter() {}
 
+static TextWidth getFixedWidth(FormattedCode::const_iterator begin,
+                               FormattedCode::const_iterator end) {
+  TextWidth result = 0;
+  for (auto iter = begin; iter != end; ++iter) {
+    for (unsigned char c: iter->text) {
+      // Don't count UTF-8 inner bytes.
+      if ((c & 0xC0) != 0x80) {
+        ++result;
+      }
+    }
+  }
+  return result;
+}
+
 TextCodeWriter::TextCodeWriter(std::ostream& out, FormattedCodeWriter::Metrics metrics)
     : out(out), metrics(metrics) {}
 TextCodeWriter::~TextCodeWriter() {}
@@ -108,19 +119,123 @@ void TextCodeWriter::writeBlankLine() {
 
 TextWidth TextCodeWriter::getWidth(FormattedCode::const_iterator begin,
                                    FormattedCode::const_iterator end) {
-  TextWidth result = 0;
-  for (auto iter = begin; iter != end; ++iter) {
-    for (unsigned char c: iter->text) {
-      // Don't count UTF-8 inner bytes.
-      if ((c & 0xC0) != 0x80) {
-        ++result;
-      }
-    }
-  }
-  return result;
+  return getFixedWidth(begin, end);
 }
 
 FormattedCodeWriter::Metrics TextCodeWriter::getMetrics(int blockLevel) {
+  Metrics result = metrics;
+  result.availableWidth -= blockLevel * metrics.blockIndentWidth;
+  return result;
+}
+
+// ---------------------------------------------------------------------------------------
+
+static std::map<Format, string> makeFormatClasses() {
+  std::map<Format, string> result;
+  result[format::ERROR] = "error";
+  result[format::COMMENT] = "comment";
+
+  result[format::KEYWORD] = "keyword";
+  result[format::KEYSYMBOL] = "keysymbol";
+  result[format::OPERATOR] = "operator";
+  result[format::BRACKET] = "bracket";
+  result[format::DELIMITER] = "delimiter";
+  result[format::LITERAL] = "literal";
+
+  result[format::LOCAL] = "local";
+  result[format::MEMBER] = "member";
+  result[format::GLOBAL] = "global";
+
+  return result;
+}
+
+static const std::map<Format, string> FORMAT_CLASSES = makeFormatClasses();
+
+HtmlCodeWriter::HtmlCodeWriter(std::ostream& out, FormattedCodeWriter::Metrics metrics)
+    : out(out), metrics(metrics), currentBlockLevel(0) {}
+HtmlCodeWriter::~HtmlCodeWriter() {}
+
+void HtmlCodeWriter::writeStatement(int blockLevel, vector<FormattedLine>&& lines) {
+  if (blockLevel != currentBlockLevel) {
+    while (blockLevel < currentBlockLevel) {
+      out << "</div>\n";
+      --currentBlockLevel;
+    }
+    while (blockLevel > currentBlockLevel) {
+      out << "<div class='block'>\n";
+      ++currentBlockLevel;
+    }
+    out << '\n';
+  }
+
+  Format format;
+  Format ignoredFormats;
+  vector<Format> oldFormats;
+
+  out << "<div class='statement'>\n";
+
+  for (auto& line: lines) {
+    out << "<span class='wrap-indent'>";
+    TextWidth indent = blockLevel * metrics.blockIndentWidth +
+        line.indentLevel * metrics.indentWidth;
+    for (TextWidth i = 0; i < indent; i++) {
+      out << "&nbsp;";
+    }
+    out << "</span>";
+
+    for (auto& piece: line.code) {
+      Format newFormat = piece.format - ignoredFormats;
+
+      if (newFormat != format) {
+        // Close out old spans.
+        while (!piece.format.isSupersetOf(format)) {
+          format = oldFormats.back();
+          oldFormats.pop_back();
+          out << "</span>";
+        }
+
+        // Open new spans.
+        for (Format formatPart: (newFormat - format)) {
+          auto cls = FORMAT_CLASSES.find(formatPart);
+          if (cls == FORMAT_CLASSES.end()) {
+            ignoredFormats += formatPart;
+            newFormat -= formatPart;
+          } else {
+            oldFormats.push_back(format);
+            format += formatPart;
+            out << "<span class='" << cls->second << "'>";
+          }
+        }
+      }
+
+      // Write the text.
+      for (char c: piece.text) {
+        switch (c) {
+          case ' ': out << "&nbsp;"; break;
+          case '&': out << "&amp;"; break;
+          case '<': out << "&lt;"; break;
+          case '>': out << "&gt;"; break;
+          default: out.put(c); break;
+        }
+      }
+    }
+
+    out << "<br>\n";
+  }
+
+  out << "</div>\n";
+}
+
+void HtmlCodeWriter::writeBlankLine() {
+  out << "<br>\n";
+}
+
+TextWidth HtmlCodeWriter::getWidth(FormattedCode::const_iterator begin,
+                                   FormattedCode::const_iterator end) {
+  return getFixedWidth(begin, end);
+}
+
+FormattedCodeWriter::Metrics HtmlCodeWriter::getMetrics(int blockLevel) {
   Metrics result = metrics;
   result.availableWidth -= blockLevel * metrics.blockIndentWidth;
   return result;
@@ -154,27 +269,33 @@ CodePrinter& CodePrinter::operator<<(const char* literalText) {
       while (chars::ALPHANUMERIC.contains(*literalText)) {
         ++literalText;
       }
-      lineBuffer.append(string(start, literalText), format::KEYWORD);
+      lineBuffer.append(string(start, literalText), currentFormat + format::KEYWORD);
     } else if (chars::DIGIT.contains(*literalText)) {
       const char* start = literalText;
       while (chars::ALPHANUMERIC.contains(*literalText)) {
         ++literalText;
       }
-      lineBuffer.append(string(start, literalText), format::LITERAL);
-    } else if (chars::OPERATOR.contains(*literalText)) {
+      lineBuffer.append(string(start, literalText), currentFormat + format::LITERAL);
+    } else if (chars::DELIMITER.contains(*literalText)) {
       const char* start = literalText;
-      while (chars::OPERATOR.contains(*literalText)) {
+      while (chars::DELIMITER.contains(*literalText)) {
         ++literalText;
       }
-      lineBuffer.append(string(start, literalText), format::OPERATOR);
+      lineBuffer.append(string(start, literalText), currentFormat + format::DELIMITER);
     } else if (chars::BRACKET.contains(*literalText)) {
       const char* start = literalText;
       while (chars::BRACKET.contains(*literalText)) {
         ++literalText;
       }
-      lineBuffer.append(string(start, literalText), format::BRACKET);
+      lineBuffer.append(string(start, literalText), currentFormat + format::BRACKET);
+    } else if (chars::OPERATOR.contains(*literalText)) {
+      const char* start = literalText;
+      while (chars::OPERATOR.contains(*literalText)) {
+        ++literalText;
+      }
+      lineBuffer.append(string(start, literalText), currentFormat + format::KEYSYMBOL);
     } else {
-      lineBuffer.append(string(1, *literalText));
+      lineBuffer.append(string(1, *literalText), currentFormat);
       ++literalText;
     }
   }
@@ -186,14 +307,23 @@ CodePrinter& CodePrinter::operator<<(string&& text) {
   applyPendingEndStatement();
 
   if (!text.empty()) {
-    lineBuffer.append(move(text));
+    lineBuffer.append(move(text), currentFormat);
+  }
+  return *this;
+}
+
+CodePrinter& CodePrinter::operator<<(Formatted&& formatted) {
+  applyPendingEndStatement();
+
+  if (!formatted.text.empty()) {
+    lineBuffer.append(move(formatted.text), currentFormat + formatted.format);
   }
   return *this;
 }
 
 CodePrinter& CodePrinter::operator<<(Space) {
   applyPendingEndStatement();
-  lineBuffer.ensureTrailingSpace();
+  lineBuffer.ensureTrailingSpace(currentFormat);
   return *this;
 }
 

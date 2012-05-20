@@ -7,17 +7,17 @@
 #
 # 1.  There is no garbage collection in %C.
 # 2.  There is NO GARBAGE COLLECTION in %C.
-# 3.  %C is faster and more memory efficient than C++.  Not just in contrived benchmarks.  Always.
-# 4.  Segfaults and buffer overruns are so 1990.  But runtime null- and bounds-checking is slow.
-#     %C catches these problems at compile time.
+# 3.  %C programs cannot segfault or overrun buffers.  These problems are detected at compile time,
+#     with no overhead at run time.
+# 4.  %C is faster and more memory efficient than C++.  Not just in contrived benchmarks.  Always.
 # 5.  Boilerplate is evil.
 
 # Two quick notes:
 # -   Because this file started with "#! /", it is executable.  It has no main() function -- the
 #     entire file is the main function.  On the other hand, %C files that do not begin with "#! /"
 #     define importable modules.
-# -   Most of the examples below are enclosed in blocks (curly braces).  This is so that the names
-#     defined in the block only exist within that block, and do not affect subsequent examples.
+# -   Most of the examples below are enclosed in {} blocks.  This is so that the names defined in
+#     the block only exist within that block, and do not affect subsequent examples.
 
 # ====================================================================
 # Hello world!
@@ -232,7 +232,7 @@
       ctor(value: Double) {
         seconds = value * 60;
       }
-      conv: Double {
+      default conv: Double {
         return seconds / 60;
       }
     }
@@ -241,7 +241,7 @@
       ctor(value: Double) {
         seconds = value * 3600;
       }
-      conv: Double {
+      default conv: Double {
         return seconds / 3600;
       }
     }
@@ -256,4 +256,10 @@
   t.hours = 2;
   assert(t.minutes == 60);
   assert(t.seconds == 7200);
+
+  # Note that m's inferred type is Double because t.minutes declares a default conversion to
+  # Double.
+  var m = t.minutes;
+  m += 12;
+  assert(m == 72);
 }

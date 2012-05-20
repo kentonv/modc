@@ -37,7 +37,10 @@ fi
 
 echo newOutput "${1}.formatted"
 read OUTPUT
+echo newOutput "${1}.html"
+read HTML_OUTPUT
 
 $MODC_FMT < $INPUT > $OUTPUT
+$MODC_FMT --html < $INPUT > $HTML_OUTPUT
 
 diff -u $INPUT $OUTPUT >&2 && echo passed
