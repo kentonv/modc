@@ -932,7 +932,7 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
 
   printer << thisStyle;
   if (name) {
-    printer << name->value;
+    printer << formatted(format::DECLARATION, name->value);
   } else {
     printer << noSpace;
   }

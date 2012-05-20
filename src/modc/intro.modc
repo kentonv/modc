@@ -18,6 +18,9 @@
 #     define importable modules.
 # -   Most of the examples below are enclosed in {} blocks.  This is so that the names defined in
 #     the block only exist within that block, and do not affect subsequent examples.
+# -   If you are looking at the HTML version of this code, you will notice light gray borders to
+#     the left and right of some identifiers.  This indicates that the identifier is declaring a
+#     new name.  All other identifiers are referencing already-defined names.
 
 # ====================================================================
 # Hello world!

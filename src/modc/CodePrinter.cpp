@@ -146,6 +146,8 @@ static std::map<Format, string> makeFormatClasses() {
   result[format::MEMBER] = "member";
   result[format::GLOBAL] = "global";
 
+  result[format::DECLARATION] = "declaration";
+
   return result;
 }
 

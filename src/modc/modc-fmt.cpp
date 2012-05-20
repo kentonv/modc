@@ -42,6 +42,8 @@ const char* htmlHeader =
     "    .delimiter { font-weight: bold; }\n"
     "    .operator { font-weight: bold; }\n"
     "    .literal { color: #00f; }\n"
+    "    .declaration { border-left: 1px solid #ccc;\n"
+    "                   border-right: 1px solid #ccc; }\n"
     "  </style>\n"
     "</head>\n"
     "\n"
