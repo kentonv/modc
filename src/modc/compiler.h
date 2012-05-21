@@ -41,13 +41,81 @@ class Thing;
 class ThingDescriptor;
 class Binding;
 
-class CxxCode {
+struct CxxExpression {
+  class Piece;
+
+  enum class Priority {
+    UNKNOWN,
+    COMMA,
+    THROW,
+    ASSIGNMENT,
+    TERNARY,
+    LOGICAL_OR,
+    LOGICAL_AND,
+    BITWISE_OR,
+    BITWISE_XOR,
+    BITWISE_AND,
+    EQUALITY,
+    COMPARISON,
+    SHIFT,
+    ADDITION,
+    MULTIPLICATION,
+    POINTER_TO_MEMBER,
+    PREFIX,
+    SUFFIX,
+    SCOPE
+  };
+
+  vector<Piece> pieces;
+  Priority priority;
+  bool isPointer;
+
+  CxxExpression& append(const char* text);
+  CxxExpression& append(string&& text);
+  CxxExpression& append(const string& text);
+  CxxExpression& append(CxxExpression&& subExpression);
+  CxxExpression& appendAsPointer(CxxExpression&& subExpression);
+  CxxExpression& appendMemberAccess(CxxExpression&& subExpression, const string& memberName);
+  CxxExpression& appendBreak();
+
+  CxxExpression(Priority priority, bool isPointer): priority(priority), isPointer(isPointer) {}
+  CxxExpression(string&& raw): priority(Priority::UNKNOWN), isPointer(false) { append(raw); }
+  VALUE_TYPE3(CxxExpression, vector<Piece>&&, pieces, Priority, priority, bool, isPointer);
+};
+
+struct CxxStatement {
+  CxxExpression code;
+
+  struct Block;
+  vector<Block> blocks;
+
+  CxxStatement(CxxExpression&& code): code(move(code)) {}
+  VALUE_TYPE2(CxxStatement, CxxExpression&&, code, vector<Block>&&, blocks);
+
+  static CxxStatement addSemicolon(CxxExpression&& code);
+};
+
+struct CxxStatement::Block {
+  vector<CxxStatement> statements;
+  CxxExpression trailingLine;
+
+  Block();
+  VALUE_TYPE2(Block, vector<CxxStatement>&&, statements, CxxExpression&&, trailingLine);
+};
+
+class CxxExpression::Piece {
 public:
-  virtual ~CxxCode();
+  UNION_TYPE_BOILERPLATE(Piece);
 
-  virtual void write(CodePrinter& printer) = 0;
+  enum class Type {
+    TEXT,
+    SUB_EXPRESSION
+  };
 
-  // TODO:  Collect forward declarations.
+  union {
+    string text;
+    CxxExpression subExpression;
+  };
 };
 
 class Type {
@@ -75,6 +143,8 @@ public:
     OBJECT,
     TUPLE
   };
+
+  Type getType() { return type; }
 
   struct Object {
     Type type;
@@ -158,7 +228,7 @@ public:
     Interface interface;
     Enum enum_;
 
-    OwnedPtr<CxxCode> code;
+    CxxExpression cxxExpression;
     MetaConstant metaConstant;
   };
 
@@ -166,7 +236,7 @@ public:
 
   static Thing fromValue(Value&& value);
 
-  static Thing fromCxxExpression(OwnedPtr<CxxCode> code);
+  static Thing fromCxxExpression(CxxExpression&& code);
 };
 
 class ThingDescriptor {
@@ -198,7 +268,7 @@ public:
   virtual Maybe<const Thing&> getValue() = 0;
   // Returns the binding's current assigned value, if it is known at compile time.
 
-  virtual OwnedPtr<CxxCode> getReferenceCode() = 0;
+  virtual CxxExpression getReferenceCode() = 0;
 
   class MutableHandle;
   virtual OwnedPtr<MutableHandle> useMutably(errors::Location location) = 0;
@@ -287,8 +357,8 @@ public:
   void error(const errors::Error& err);
 };
 
-OwnedPtr<CxxCode> compileImperative(Context& context, Scope& scope,
-                                    const vector<ast::Statement>& statements);
+vector<CxxStatement> compileImperative(Context& context, Scope& scope,
+                                       const vector<ast::Statement>& statements);
 
 }  // namespace compiler
 }  // namespace modc

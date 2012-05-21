@@ -26,21 +26,10 @@ using std::move;
 using ast::Expression;
 using ast::Statement;
 
-
-
-class CxxBinaryOperator: public CxxCode {
-public:
-
-  ~CxxBinaryOperator() {}
-
-  void
-
-  // implements CxxCode ----------------------------------------------
-
-  void write(CodePrinter& printer) {
-
-  }
-};
+Thing applyBinaryOperator(Thing&& left, ast::BinaryOperator op, Thing&& right);
+Thing applyPrefixOperator(ast::PrefixOperator op, Thing&& operand);
+Thing applyPostfixOperator(Thing&& operand, ast::PostfixOperator op);
+Thing applyTernaryOperator(Thing&& condition, Thing&& trueClause, Thing&& falseClause);
 
 Thing compileExpression(Context& context, Scope& scope, const Expression& expression) {
   switch (expression.getType()) {
@@ -58,6 +47,8 @@ Thing compileExpression(Context& context, Scope& scope, const Expression& expres
                                     expression.variable));
         return Thing::fromError();
       }
+
+      // TODO:  useMutably, useImutably, getValue(), ...?
 
       return Thing::fromCxxExpression(binding->getReferenceCode());
     }
@@ -82,25 +73,46 @@ Thing compileExpression(Context& context, Scope& scope, const Expression& expres
       break;
 
     case Expression::Type::BINARY_OPERATOR:
-      // TODO:  Chain left-hand side of same priority.
-      break;
+      return applyBinaryOperator(
+          compileExpression(context, scope, *expression.binaryOperator.left),
+          expression.binaryOperator.op,
+          compileExpression(context, scope, *expression.binaryOperator.right));
+
+    case Expression::Type::PREFIX_OPERATOR:
+      return applyPrefixOperator(
+          expression.prefixOperator.op,
+          compileExpression(context, scope, *expression.prefixOperator.operand));
+
+    case Expression::Type::POSTFIX_OPERATOR:
+      return applyPostfixOperator(
+          compileExpression(context, scope, *expression.postfixOperator.operand),
+          expression.postfixOperator.op);
+
+    case Expression::Type::TERNARY_OPERATOR: {
+      Thing condition = compileExpression(context, scope, *expression.ternaryOperator.condition);
+      if (condition.getType() == Thing::Type::VALUE &&
+          condition.value.getType() == Value::Type::BOOLEAN) {
+        // TODO:  Type-check the branch we don't take.
+        // TODO:  Error if condition wasn't based on meta parameters.
+        if (condition.value.boolean) {
+          return compileExpression(context, scope, *expression.ternaryOperator.trueClause);
+        } else {
+          return compileExpression(context, scope, *expression.ternaryOperator.falseClause);
+        }
+      } else {
+        return applyTernaryOperator(move(condition),
+            compileExpression(context, scope, *expression.ternaryOperator.trueClause),
+            compileExpression(context, scope, *expression.ternaryOperator.falseClause));
+      }
+    }
   }
 
   throw "Can't get here.";
 }
 
-class CxxBlock: public CxxCode {
-public:
-  void addBlankLine();
-  void addStatement(OwnedPtr<CxxCode> statementCode);
-  void addBlock(OwnedPtr<CxxCode> statementCode);
-
-private:
-};
-
-OwnedPtr<CxxCode> compileImperative(Context& context, Scope& scope,
-                                    const vector<ast::Statement>& statements) {
-  OwnedPtr<CxxBlock> code = newOwned<CxxBlock>();
+vector<CxxStatement> compileImperative(Context& context, Scope& scope,
+                                       const vector<ast::Statement>& statements) {
+  vector<CxxStatement> code;
 
   for (auto& statement: statements) {
     switch (statement.getType()) {
@@ -115,14 +127,18 @@ OwnedPtr<CxxCode> compileImperative(Context& context, Scope& scope,
         if (value.getType() != Thing::Type::CXX_EXPRESSION) {
           context.error(errors::error(statement.location, "Statement has no effect."));
         } else {
-          code->addStatement(move(value.code));
+          code.push_back(CxxStatement::addSemicolon(move(value.cxxExpression)));
         }
         break;
       }
 
       case ast::Statement::Type::BLOCK: {
         OwnedPtr<Scope> subscope = scope.startBlock();
-        code->addBlock(compileImperative(context, *subscope, statement.block));
+        CxxStatement cxxStatement(CxxExpression("{"));
+        cxxStatement.blocks.emplace_back(
+            move(compileImperative(context, *subscope, statement.block)),
+            CxxExpression("}"));
+        code.push_back(move(cxxStatement));
         break;
       }
 
