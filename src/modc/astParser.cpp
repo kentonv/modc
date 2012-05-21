@@ -118,8 +118,24 @@ private:
 
 parser::WrapperParserConstructor<LocatedParser> located;
 
+static std::set<string> allOperatorNames() {
+  std::set<string> result;
+  result.insert("=");
+  for (auto& entry: ast::getBinaryOperatorInfoByNameMap()) {
+    result.insert(entry.first);
+    result.insert(entry.first + "=");
+  }
+  for (auto& entry: ast::getPrefixOperatorByNameMap()) {
+    result.insert(entry.first);
+  }
+  for (auto& entry: ast::getPostfixOperatorByNameMap()) {
+    result.insert(entry.first);
+  }
+  return result;
+}
+
 // Hack:  This set is automatically initialized as the parsers are constructed.
-std::set<string> keywords;
+std::set<string> keywords = allOperatorNames();
 
 const std::set<string>& keywordSet() {
   return keywords;
@@ -374,6 +390,30 @@ auto thisStyleAllowance = oneOfKeywordsTo<StyleAllowance>({
     std::make_pair(".&", StyleAllowance::MUTABLE_REFERENCE),
     std::make_pair("->", StyleAllowance::MOVE)});
 
+auto prefixOp = [](TokenParserInput& input) -> Maybe<ast::PrefixOperator> {
+  if (input.atEnd() || input.current().getType() != Token::Type::KEYWORD) {
+    return nullptr;
+  }
+
+  Maybe<ast::PrefixOperator> result = ast::findPrefixOperator(input.current().keyword);
+  if (result) {
+    input.next();
+  }
+  return result;
+};
+
+auto postfixOp = [](TokenParserInput& input) -> Maybe<ast::PostfixOperator> {
+  if (input.atEnd() || input.current().getType() != Token::Type::KEYWORD) {
+    return nullptr;
+  }
+
+  Maybe<ast::PostfixOperator> result = ast::findPostfixOperator(input.current().keyword);
+  if (result) {
+    input.next();
+  }
+  return result;
+};
+
 parser::Parser<TokenParserInput, std::function<Expression(Expression&&)>> suffix = oneOf(
     // Member access
     transform(sequence(thisStyleAllowance, identifier),
@@ -403,11 +443,11 @@ parser::Parser<TokenParserInput, std::function<Expression(Expression&&)>> suffix
         }),
 
     // postincrement / postdecrement
-    transform(oneOfKeywords({"++", "--"}),
-        [](Loc l, string&& op) -> std::function<Expression(Expression&&)> {
-          return std::bind([l](string& op, Expression&& seed) {
-            return Expression::fromPostfixOperator(l, move(seed), move(op));
-          }, move(op), _1);
+    transform(postfixOp,
+        [](Loc l, ast::PostfixOperator op) -> std::function<Expression(Expression&&)> {
+          return [l, op](Expression&& seed) {
+            return Expression::fromPostfixOperator(l, move(seed), op);
+          };
         }));
 
 const ExpressionParser suffixedExpression = transform(
@@ -422,47 +462,44 @@ const ExpressionParser suffixedExpression = transform(
     });
 
 const ExpressionParser prefixedExpression =
-    transform(sequence(repeated(located(oneOfKeywords({"++", "--", "+", "-", "!", "~"}))),
-                       suffixedExpression),
-        [](Loc l, vector<Located<string>>&& ops, Expression&& seed) {
+    transform(sequence(repeated(located(prefixOp)), suffixedExpression),
+        [](Loc l, vector<Located<ast::PrefixOperator>>&& ops, Expression&& seed) {
           for (auto& op : ops) {
-            seed = Expression::fromPrefixOperator(op.location.to(l), move(op.value), move(seed));
+            seed = Expression::fromPrefixOperator(op.location.to(l), op.value, move(seed));
           }
           return move(seed);
         });
 
-const ExpressionParser binaryOpParser(const ExpressionParser& next,
-                                      std::initializer_list<string> ops) {
-  auto suffix = transform(
-      sequence(oneOfKeywords(ops), next),
-      [](Loc l, string&& op, Expression&& operand) {
-        return std::make_pair(move(op), move(operand));
-      });
+Maybe<Expression> parseBinaryOp(TokenParserInput& input, int minPriority) {
+  auto start = input.getPosition();
+  Maybe<Expression> left = prefixedExpression(input);
+  if (left) {
+    while (!input.atEnd() && input.current().getType() == Token::Type::KEYWORD) {
+      Maybe<const ast::BinaryOperatorInfo&> info =
+          ast::findBinaryOperatorInfo(input.current().keyword);
 
-  return transform(sequence(next, repeated(move(suffix))),
-      [](Loc l, Expression&& seed, vector<std::pair<string, Expression>>&& ops) {
-        for (auto& op : ops) {
-          seed = Expression::fromBinaryOperator(l.to(op.second.location),
-                                                move(op.first), move(seed), move(op.second));
-        }
-        return move(seed);
-      });
+      if (!info || info->priority < minPriority) {
+        break;
+      }
+
+      TokenParserInput subInput(input);
+      subInput.next();
+      Maybe<Expression> right = parseBinaryOp(subInput, info->priority + 1);
+      if (!right) {
+        break;
+      }
+
+      Loc l(std::make_pair(start, subInput.getPosition()));
+      subInput.advanceParent();
+      left = Expression::fromBinaryOperator(l, info->op, move(*left), move(*right));
+    }
+  }
+
+  return left;
 }
 
-// If you add new operators, please make sure to update operator<< in ast.cc.
-const ExpressionParser multiplyExpression = binaryOpParser(prefixedExpression, {"*","/","//","%"});
-const ExpressionParser addExpression      = binaryOpParser(multiplyExpression, {"+", "-"});
-const ExpressionParser shiftExpression    = binaryOpParser(addExpression     , {"<<", ">>"});
-const ExpressionParser orderExpression    = binaryOpParser(shiftExpression   , {"<",">","<=",">="});
-const ExpressionParser compareExpression  = binaryOpParser(orderExpression   , {"==", "!="});
-const ExpressionParser bitandExpression   = binaryOpParser(compareExpression , {"&"});
-const ExpressionParser bitxorExpression   = binaryOpParser(bitandExpression  , {"^"});
-const ExpressionParser bitorExpression    = binaryOpParser(bitxorExpression  , {"|"});
-const ExpressionParser andExpression      = binaryOpParser(bitorExpression   , {"&&"});
-const ExpressionParser orExpression       = binaryOpParser(andExpression     , {"||"});
-
-auto assignmentOp = oneOfKeywords({"=", "*=", "/=", "//=", "%=", "+=", "-=", "<<=", ">>=",
-                                   "&=", "^=", "|=", "&&=", "||="});
+const ExpressionParser binaryOpExpression =
+    [](TokenParserInput& input) { return parseBinaryOp(input, 0); };
 
 auto ternarySuffix = transform(
     sequence(keyword("?"), generalExpression, keyword(":"), generalExpression),
@@ -471,7 +508,7 @@ auto ternarySuffix = transform(
     });
 
 const ExpressionParser generalExpression = transform(
-    sequence(orExpression, optional(move(ternarySuffix))),
+    sequence(binaryOpExpression, optional(move(ternarySuffix))),
     [](Loc l, Expression&& condition, Maybe<std::pair<Expression, Expression>>&& clauses) {
       if (clauses) {
         return Expression::fromTernaryOperator(
@@ -685,15 +722,35 @@ StatementParser declarationStatement(const DeclarationParser& parser) {
   });
 }
 
+auto assignmentOp = [](TokenParserInput& input) -> Maybe<Maybe<ast::BinaryOperator>> {
+  if (input.atEnd() || input.current().getType() != Token::Type::KEYWORD) {
+    return nullptr;
+  }
+
+  string keyword = input.current().keyword;
+  if (keyword.back() != '=') {
+    return nullptr;
+  }
+
+  keyword.erase(keyword.size() - 1);
+  if (keyword.empty()) {
+    input.next();
+    return Maybe<ast::BinaryOperator>(nullptr);
+  }
+
+  Maybe<const ast::BinaryOperatorInfo&> info = ast::findBinaryOperatorInfo(keyword);
+  if (!info) {
+    return nullptr;
+  }
+
+  input.next();
+  return Maybe<ast::BinaryOperator>(info->op);
+};
+
 StatementParser assignmentStatement = transform(
     sequence(generalExpression, assignmentOp, generalExpression),
-    [](Loc l, Expression&& variable, string&& op, Expression&& value) {
-      op.erase(op.size() - 1);
-      if (op.empty()) {
-        return Statement::fromAssignment(l, move(variable), nullptr, move(value));
-      } else {
-        return Statement::fromAssignment(l, move(variable), move(op), move(value));
-      }
+    [](Loc l, Expression&& variable, Maybe<ast::BinaryOperator>&& op, Expression&& value) {
+      return Statement::fromAssignment(l, move(variable), move(op), move(value));
     });
 
 StatementParser unionStatement = transform(keyword("union"),

@@ -116,6 +116,28 @@ private:
   };
 };
 
+template <typename T>
+class Maybe<T&> {
+public:
+  Maybe(): ptr(nullptr) {}
+  Maybe(T& t): ptr(&t) {}
+  Maybe(std::nullptr_t): ptr(nullptr) {}
+
+  ~Maybe() noexcept {}
+
+  inline operator bool() const { return ptr != nullptr; }
+  inline T& operator*() { return *ptr; }
+  inline const T& operator*() const { return *ptr; }
+  inline T* operator->() { return ptr; }
+  inline const T* operator->() const { return ptr; }
+
+  inline bool operator==(const Maybe& other) const { return ptr == other.ptr; }
+  inline bool operator!=(const Maybe& other) const { return ptr != other.ptr; }
+
+private:
+  T* ptr;
+};
+
 }  // namespace modc
 
 #endif /* KENTONSCODE_MODC_MAYBE_H_ */

@@ -14,174 +14,261 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef KENTONSCODE_MODC_AST_H_
-#define KENTONSCODE_MODC_AST_H_
+#ifndef KENTONSCODE_MODC_COMPILER_H_
+#define KENTONSCODE_MODC_COMPILER_H_
 
 #include <map>
 #include <string>
 #include <vector>
 
 #include "base/OwnedPtr.h"
+#include "Maybe.h"
+#include "macros.h"
+#include "ast.h"
 
 namespace modc {
+namespace compiler {
 
 using namespace ekam;
 using std::string;
-
-template <typename T> class Array;
-template <typename T> class Maybe;
-
-namespace tokens {
-  class Tree;
-}
+using std::vector;
+using std::map;
 
 class CodePrinter;
 
-class Type;
-class Value;
-class Function;
-
-class Descriptor;
-class Visibility;
-class UnboundName;
-
-class Block;
-class Statement;
-class Expression;
-
 class Scope;
+class Thing;
+class ThingDescriptor;
+class Binding;
 
-class Value {
+class CxxCode {
 public:
+  virtual ~CxxCode();
+
+  virtual void write(CodePrinter& printer) = 0;
+
+  // TODO:  Collect forward declarations.
 };
 
 class Type {
 public:
-
+  Binding& binding;
+  vector<Thing> params;
 };
 
 class Function {
 public:
-
-};
-
-enum class Kind {
-  VARIABLE,
-  FUNCTION,
-  TYPE,
-  ERROR
-};
-
-class UnboundName {
-public:
-  bool relative;
-  std::vector<string> parts;
-};
-
-class Visibility {
-public:
-};
-
-class ValueDescriptor {
-public:
-  OwnedPtr<Type> type;
-
-  enum class Style {
-    VALUE,
-    IMMUTABLE_REFERENCE,
-    MUTABLE_REFERENCE,
-    ENTANGLED_REFERENCE
-  };
-
-  Style style;
-
-  // TODO:  lifecycle
-  // TODO:  range
-  // TODO:  stage
-
-  // TODO:  constant value?  Do we put that here or in Binding?
-};
-
-class TypeDescriptor {
-public:
-  OwnedPtr<Type> supertype;
-
-  OwnedPtrMap<string, Descriptor> members;
 };
 
 class FunctionDescriptor {
 public:
-  class Parameter {
-  public:
-    string name;
-    bool isType;
-    union {
-      ValueDescriptor value;
-      TypeDescriptor type;
-    };
-  };
-  OwnedPtrVector<Parameter> parameters;
-
-  bool returnsType;
-  union {
-    ValueDescriptor returnValue;
-    TypeDescriptor returnType;
-  };
 };
 
-class Descriptor {
+class Value {
 public:
-  Descriptor() = delete;
-  Descriptor(Kind kind);
-  Descriptor(ValueDescriptor&& valueDescriptor);
-  Descriptor(TypeDescriptor&& typeDescriptor);
-  Descriptor(FunctionDescriptor&& functionDescriptor);
-  Descriptor(Descriptor&& other);
-  ~Descriptor();
+  UNION_TYPE_BOILERPLATE(Value);
 
-  const Kind kind;
+  enum class Type {
+    BOOLEAN,
+    INTEGER,
+    DOUBLE,
+    OBJECT,
+    TUPLE
+  };
+
+  struct Object {
+    Type type;
+    map<string, Thing> members;
+  };
+
+  struct Tuple {
+    vector<Thing> positionalElements;
+    map<string, Thing> keywordElements;
+
+    typedef map<string, Thing> KeywordElementMap;  // Macro can't handle comma.  Yay C++.
+    VALUE_TYPE2(Tuple, vector<Thing>&&, positionalElements, KeywordElementMap&&, keywordElements);
+  };
 
   union {
-    ValueDescriptor value;
-    TypeDescriptor type;
-    FunctionDescriptor funciton;
+    bool boolean;
+    int integer;
+    double double_;
+    Object object;
+    Tuple tuple;
   };
+
+  static Value fromBoolean(bool b);
+  static Value fromInteger(int b);
+  static Value fromDouble(double b);
+
+private:
+  Value(Type type): type(type) {}
+
+  Type type;
 };
 
-extern const Descriptor errorDescriptor;
+class Class {
+public:
+  map<string, ThingDescriptor> members;
+};
 
-enum class ScopeType {
-  CLASS,
-  FUNCTION
+class ClassDescriptor {
+public:
+  // TODO:  supertypes, subtypes
+};
+
+class Enum {
+public:
+};
+
+class Interface {
+public:
+};
+
+class Thing {
+public:
+  UNION_TYPE_BOILERPLATE(Thing);
+
+  enum class Type {
+    ERROR,
+
+    VALUE,
+    FUNCTION,  // i.e., overloaded name
+
+    CLASS,
+    INTERFACE,
+    ENUM,
+
+    CXX_EXPRESSION,
+    META_CONSTANT  // A metaprogramming parameter that has not yet been bound, but will be a
+                   // compile-time constant.
+  };
+
+  Type getType();
+
+  struct MetaConstant {
+    VALUE_TYPE0(MetaConstant);
+  };
+
+  union {
+    Value value;
+    Function function;
+
+    Class class_;
+    Interface interface;
+    Enum enum_;
+
+    OwnedPtr<CxxCode> code;
+    MetaConstant metaConstant;
+  };
+
+  static Thing fromError();
+
+  static Thing fromValue(Value&& value);
+
+  static Thing fromCxxExpression(OwnedPtr<CxxCode> code);
+};
+
+class ThingDescriptor {
+public:
+  Thing::Type type;
+
+  // TODO:  type, supertypes, subtypes, annotations, constraints
 };
 
 class Binding {
+  // Binding keeps track of knowledge about a named thing in the current scope.
 public:
-  virtual const Descriptor& descriptor() const = 0;
+  virtual ~Binding();
 
-  virtual const Scope& scope() const = 0;
+  // interface
+  // TODO:  Lazy init?
+  const ThingDescriptor& getDescriptor();
+  // style + style constraints
+  // visibility
 
-  inline bool operator==(const Binding& other) const { return this == &other; }
-  inline bool operator!=(const Binding& other) const { return this != &other; }
+  // implementation
+  // VARIABLE:  value if known
+  // FUNCTION, CLASS, INTERFACE, ENUM:  lazy ref to body
+
+
+
+  virtual bool assign(Thing&& value) = 0;
+
+  virtual Maybe<const Thing&> getValue() = 0;
+  // Returns the binding's current assigned value, if it is known at compile time.
+
+  virtual OwnedPtr<CxxCode> getReferenceCode() = 0;
+
+  class MutableHandle;
+  virtual OwnedPtr<MutableHandle> useMutably(errors::Location location) = 0;
+
+  class ImmutableHandle;
+  virtual OwnedPtr<ImmutableHandle> useImmutably(errors::Location location) = 0;
+
+  class MemberHandle {
+  public:
+    RESOURCE_TYPE_BOILERPLATE(MemberHandle);
+
+    MemberHandle(Binding& bindind): binding(binding) {}
+    ~MemberHandle();
+
+    Binding& binding;
+  };
+  virtual OwnedPtr<MemberHandle> useMember(errors::Location location) = 0;
+
+  class OverloadHandle {
+  public:
+    RESOURCE_TYPE_BOILERPLATE(OverloadHandle);
+
+    OverloadHandle(Binding& bindind): binding(binding) {}
+    ~OverloadHandle();
+
+    Binding& binding;
+  };
+  virtual OwnedPtr<OverloadHandle> useOverload(const vector<Thing>& parameters) = 0;
 };
 
 class Scope {
+  // Scope keeps track of knowledge about the current scope, e.g. what variables are defined, what
+  // their properties are, etc.  Scope does NOT keep track of code, only auxiliary knowledge.
 public:
-  const Binding& lookupBinding(const string& name) const;
+  RESOURCE_TYPE_BOILERPLATE(Scope);
 
-  Binding& declareValueBinding(const string& name, ValueDescriptor&& descriptor);
+  // For EXPRESSION
+  // Note that this may instantiate a template.
+  Maybe<Binding&> lookupBinding(const string& name);
 
-  void declareBinding(const string& name, Descriptor&& descriptor);
-
-  // Return false if already initialized, in which case the statement should probably be considered
-  // an assignment instead of an initialization.
-  bool initializeBinding(const string& name);
-
-  // Code will be compiled on-demand.
-  void declareClass(const string& name, const Block& code);
+  // For DECLARATION
+  Binding& declareValueBinding(const string& name, Thing&& value);
+  void declareBinding(const string& name, Type&& type);
 
   // Code will be compiled on-demand.
-  void declareFunction(const string& name, Function&& function, const Block& code);
+  void declareClass(const string& name, ClassDescriptor&& descirptor,
+                    const vector<ast::Statement>& code);
+
+  // Code will be compiled on-demand.
+  void declareFunction(const string& name, FunctionDescriptor&& descirptor,
+                       const vector<ast::Statement>& code);
+
+  // Sub-blocks.
+  OwnedPtr<Scope> startBlock();
+  OwnedPtr<Scope> startLoop();
+  OwnedPtr<Scope> startParallel();
+
+  class IfElse {
+  public:
+    ~IfElse();
+
+    OwnedPtr<Scope> addIf(Thing&& condition);
+    OwnedPtr<Scope> addElse();
+  };
+  OwnedPtr<IfElse> startIfElse();
+
+  // Other control flow.
+  void addBreak(Maybe<string> loopName);
+  void addContinue(Maybe<string> loopName);
+  void addReturn(Thing&& value);
 
 private:
   const Scope& parent;
@@ -190,33 +277,20 @@ private:
   std::map<string, OwnedPtrVector<Function> > functions;
 };
 
-class CompiledStatement {
+// =======================================================================================
+
+class Context {
 public:
-  virtual void toCpp(CodePrinter& printer) const = 0;
+  Thing import(const string& name);
+
+  void error(errors::Error&& err);
+  void error(const errors::Error& err);
 };
 
-class CompiledExpression {
-public:
-  virtual const Descriptor& descriptor() const = 0;
-  virtual void toCpp(CodePrinter& printer) const = 0;
-};
+OwnedPtr<CxxCode> compileImperative(Context& context, Scope& scope,
+                                    const vector<ast::Statement>& statements);
 
-class Statement {
-public:
-  virtual ~Statement();
-
-  virtual void toCode(CodePrinter& printer) const = 0;
-  virtual OwnedPtr<CompiledStatement> bind(Scope& scope) const = 0;
-};
-
-class Expression {
-public:
-  virtual ~Expression();
-
-  virtual void toCode(CodePrinter& printer) const = 0;
-  virtual OwnedPtr<CompiledExpression> bind(Scope& scope) const = 0;
-};
-
+}  // namespace compiler
 }  // namespace modc
 
-#endif /* KENTONSCODE_MODC_AST_H_ */
+#endif /* KENTONSCODE_MODC_COMPILER_H_ */

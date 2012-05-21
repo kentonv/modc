@@ -33,15 +33,164 @@ namespace ast {
 
 using std::move;
 
-template <typename T>
-void destroy(T& obj) {
-  obj.~T();
+// =======================================================================================
+
+std::map<BinaryOperator, BinaryOperatorInfo> makeBinaryOperatorInfoByOpMap() {
+  std::map<BinaryOperator, BinaryOperatorInfo> result;
+
+#define OP(ID, NAME, PRIORITY) \
+  result.insert(std::make_pair(BinaryOperator::ID, \
+      BinaryOperatorInfo(BinaryOperator::ID, NAME, PRIORITY)));
+
+  OP(MULTIPLY, "*", 10);
+  OP(DIVIDE, "/", 10);
+  OP(DIVIDE_AND_FLOOR, "//", 10);
+  OP(MODULUS, "%", 10);
+
+  OP(ADD, "+", 9);
+  OP(SUBTRACT, "-", 9);
+
+  OP(LEFT_SHIFT, "<<", 8);
+  OP(RIGHT_SHIFT, ">>", 8);
+
+  OP(LESS_THAN, "<", 7);
+  OP(GREATER_THAN, ">", 7);
+  OP(LESS_THAN_OR_EQUAL, "<=", 7);
+  OP(GREATER_THAN_OR_EQUAL, ">=", 7);
+
+  OP(EQUALS, "==", 6);
+  OP(NOT_EQUALS, "!=", 6);
+
+  OP(BITWISE_AND, "&", 5);
+  OP(BITWISE_XOR, "^", 4);
+  OP(BITWISE_OR, "|", 3);
+
+  OP(LOGICAL_AND, "&&", 2);
+  OP(LOGICAL_OR, "||", 1);
+
+  return result;
+}
+
+std::map<PrefixOperator, string> makePrefixOperatorNameMap() {
+  std::map<PrefixOperator, string> result;
+
+  result[PrefixOperator::INCREMENT] = "++";
+  result[PrefixOperator::DECREMENT] = "--";
+  result[PrefixOperator::POSITIVE] = "+";
+  result[PrefixOperator::NEGATIVE] = "-";
+  result[PrefixOperator::LOGICAL_NOT] = "!";
+  result[PrefixOperator::BITWISE_NOT] = "~";
+
+  return result;
+}
+
+std::map<PostfixOperator, string> makePostfixOperatorNameMap() {
+  std::map<PostfixOperator, string> result;
+
+  result[PostfixOperator::INCREMENT] = "++";
+  result[PostfixOperator::DECREMENT] = "--";
+
+  return result;
+}
+
+const std::map<BinaryOperator, BinaryOperatorInfo>& getBinaryOperatorInfoByOpMap() {
+  static const std::map<BinaryOperator, BinaryOperatorInfo> result =
+      makeBinaryOperatorInfoByOpMap();
+  return result;
+}
+
+const std::map<PrefixOperator, string>& getPrefixOperatorNameMap() {
+  static const std::map<PrefixOperator, string> result = makePrefixOperatorNameMap();
+  return result;
+}
+
+const std::map<PostfixOperator, string>& getPostfixOperatorNameMap() {
+  static const std::map<PostfixOperator, string> result = makePostfixOperatorNameMap();
+  return result;
+}
+
+std::map<string, BinaryOperatorInfo> makeBinaryOperatorInfoByNameMap() {
+  std::map<string, BinaryOperatorInfo> result;
+
+  for (auto& entry: getBinaryOperatorInfoByOpMap()) {
+    result.insert(std::make_pair(entry.second.name, entry.second));
+  }
+
+  return result;
+}
+
+const std::map<string, BinaryOperatorInfo>& getBinaryOperatorInfoByNameMap() {
+  static const std::map<string, BinaryOperatorInfo> result = makeBinaryOperatorInfoByNameMap();
+  return result;
+}
+
+template <typename T, typename U>
+std::map<U, T> reverse(const std::map<T, U>& orig) {
+  std::map<U, T> result;
+
+  for (auto& entry: orig) {
+    result.insert(std::make_pair(entry.second, entry.first));
+  }
+
+  return result;
+}
+
+const std::map<string, PrefixOperator>& getPrefixOperatorByNameMap() {
+  static const std::map<string, PrefixOperator> result = reverse(getPrefixOperatorNameMap());
+  return result;
+}
+
+const std::map<string, PostfixOperator>& getPostfixOperatorByNameMap() {
+  static const std::map<string, PostfixOperator> result = reverse(getPostfixOperatorNameMap());
+  return result;
+}
+
+const BinaryOperatorInfo& getBinaryOperatorInfo(BinaryOperator op) {
+  return getBinaryOperatorInfoByOpMap().find(op)->second;
+}
+
+Maybe<const BinaryOperatorInfo&> findBinaryOperatorInfo(const string& name) {
+  auto& map = getBinaryOperatorInfoByNameMap();
+  auto iter = map.find(name);
+  if (iter == map.end()) {
+    return nullptr;
+  } else {
+    return iter->second;
+  }
+}
+
+const string& getPrefixOperatorName(PrefixOperator op) {
+  return getPrefixOperatorNameMap().find(op)->second;
+}
+
+Maybe<PrefixOperator> findPrefixOperator(const string& name) {
+  auto& map = getPrefixOperatorByNameMap();
+  auto iter = map.find(name);
+  if (iter == map.end()) {
+    return nullptr;
+  } else {
+    return iter->second;
+  }
+}
+
+const string& getPostfixOperatorName(PostfixOperator op) {
+  return getPostfixOperatorNameMap().find(op)->second;
+}
+
+Maybe<PostfixOperator> findPostfixOperator(const string& name) {
+  auto& map = getPostfixOperatorByNameMap();
+  auto iter = map.find(name);
+  if (iter == map.end()) {
+    return nullptr;
+  } else {
+    return iter->second;
+  }
 }
 
 // =======================================================================================
 // Expression
 
-#define FOR_ALL_EXPRESSIONS(HANDLE) \
+#define EXPRESSION_UNION(HANDLE) \
   HANDLE(ERROR, error, vector<errors::Error>) \
   HANDLE(VARIABLE, variable, string) \
   HANDLE(TUPLE, tuple, vector<ListElement>) \
@@ -59,66 +208,10 @@ void destroy(T& obj) {
   HANDLE(IMPORT, import, string) \
   HANDLE(LAMBDA, lambda, Lambda)
 
-Expression::Expression(Expression&& other): location(other.location), type(other.type) {
-  switch (type) {
-#define MOVE_CONSTRUCT(ID, NAME, TYPE) \
-    case Type::ID: \
-      new (&NAME) TYPE(move(other.NAME)); \
-      break;
-    FOR_ALL_EXPRESSIONS(MOVE_CONSTRUCT)
-#undef MOVE_CONSTRUCT
-  }
-}
+#define EXPRESSION_EXTRAS(HANDLE) \
+  HANDLE(location, false)
 
-Expression::Expression(const Expression& other): location(other.location), type(other.type) {
-  switch (type) {
-#define COPY_CONSTRUCT(ID, NAME, TYPE) \
-    case Type::ID: \
-      new (&NAME) TYPE(other.NAME); \
-      break;
-    FOR_ALL_EXPRESSIONS(COPY_CONSTRUCT)
-#undef COPY_CONSTRUCT
-  }
-}
-
-Expression::~Expression() noexcept {
-  switch (type) {
-#define DESTRUCT(ID, NAME, TYPE) \
-    case Type::ID: \
-      destroy(NAME); \
-      break;
-    FOR_ALL_EXPRESSIONS(DESTRUCT)
-#undef DESTRUCT
-  }
-}
-
-Expression& Expression::operator=(Expression&& other) {
-  // Lazy.
-  this->~Expression();
-  new(this) Expression(move(other));
-  return *this;
-}
-
-Expression& Expression::operator=(const Expression& other) {
-  // Lazy.
-  this->~Expression();
-  new(this) Expression(other);
-  return *this;
-}
-
-bool Expression::operator==(const Expression& other) const {
-  if (type == other.type) {
-    switch (type) {
-#define COMPARE(ID, NAME, TYPE) \
-      case Type::ID: \
-        return NAME == other.NAME;
-      FOR_ALL_EXPRESSIONS(COMPARE)
-#undef MOVE_CONSTRUCT
-    }
-  }
-
-  return false;
-}
+UNION_IMPLEMENT(, Expression, EXPRESSION_UNION, EXPRESSION_EXTRAS)
 
 // -------------------------------------------------------------------
 
@@ -167,20 +260,22 @@ Expression Expression::fromLiteralArray(Location location, vector<ListElement>&&
   return result;
 }
 
-Expression Expression::fromBinaryOperator(Location location, string&& op,
+Expression Expression::fromBinaryOperator(Location location, ast::BinaryOperator op,
                                           Expression&& left, Expression&& right) {
   Expression result(location, Type::BINARY_OPERATOR);
-  new (&result.binaryOperator) BinaryOperator(move(op), move(left), move(right));
+  new (&result.binaryOperator) BinaryOperator(op, move(left), move(right));
   return result;
 }
-Expression Expression::fromPrefixOperator(Location location, string&& op, Expression&& exp) {
+Expression Expression::fromPrefixOperator(Location location, ast::PrefixOperator op,
+                                          Expression&& exp) {
   Expression result(location, Type::PREFIX_OPERATOR);
-  new (&result.prefixOperator) PrefixOperator(move(op), move(exp));
+  new (&result.prefixOperator) PrefixOperator(op, move(exp));
   return result;
 }
-Expression Expression::fromPostfixOperator(Location location, Expression&& exp, string&& op) {
+Expression Expression::fromPostfixOperator(Location location, Expression&& exp,
+                                           ast::PostfixOperator op) {
   Expression result(location, Type::POSTFIX_OPERATOR);
-  new (&result.postfixOperator) PostfixOperator(move(exp), move(op));
+  new (&result.postfixOperator) PostfixOperator(move(exp), op);
   return result;
 }
 Expression Expression::fromTernaryOperator(Location location, Expression&& condition,
@@ -256,65 +351,13 @@ Declaration Declaration::fromError(Location location, vector<errors::Error>&& er
   return result;
 }
 
-Declaration::Definition::Definition(Definition&& other): type(other.type) {
-  switch (type) {
-    case Type::EXPRESSION:
-      new (&expression) Expression(move(other.expression));
-      break;
-    case Type::BLOCK:
-      new (&block) vector<Statement>(move(other.block));
-      break;
-  }
-}
+#define DEFINITION_UNION(HANDLE) \
+  HANDLE(EXPRESSION, expression, Expression) \
+  HANDLE(BLOCK, block, vector<Statement>)
 
-Declaration::Definition::Definition(const Definition& other): type(other.type) {
-  switch (type) {
-    case Type::EXPRESSION:
-      new (&expression) Expression(other.expression);
-      break;
-    case Type::BLOCK:
-      new (&block) vector<Statement>(other.block);
-      break;
-  }
-}
+#define DEFINITION_EXTRAS(HANDLE)
 
-Declaration::Definition::~Definition() noexcept {
-  switch (type) {
-    case Type::EXPRESSION:
-      destroy(expression);
-      break;
-    case Type::BLOCK:
-      destroy(block);
-      break;
-  }
-}
-
-Declaration::Definition& Declaration::Definition::operator=(Definition&& other) {
-  // Lazy.
-  this->~Definition();
-  new(this) Definition(move(other));
-  return *this;
-}
-
-Declaration::Definition& Declaration::Definition::operator=(const Definition& other) {
-  // Lazy.
-  this->~Definition();
-  new(this) Definition(other);
-  return *this;
-}
-
-bool Declaration::Definition::operator==(const Definition& other) const {
-  if (type == other.type) {
-    switch (type) {
-      case Type::EXPRESSION:
-        return expression == other.expression;
-      case Type::BLOCK:
-        return block == other.block;
-    }
-  }
-
-  return false;
-}
+UNION_IMPLEMENT(Declaration::, Definition, DEFINITION_UNION, DEFINITION_EXTRAS)
 
 Declaration::Definition Declaration::Definition::fromExpression(Expression&& expression) {
   Definition result(Type::EXPRESSION);
@@ -330,65 +373,13 @@ Declaration::Definition Declaration::Definition::fromBlock(vector<Statement>&& s
 // -------------------------------------------------------------------
 // ParameterDeclaration
 
-ParameterDeclaration::ParameterDeclaration(ParameterDeclaration&& other): type(other.type) {
-  switch (type) {
-    case Type::CONSTANT:
-      new (&constant) Expression(move(other.constant));
-      break;
-    case Type::VARIABLE:
-      new (&variable) Declaration(move(other.variable));
-      break;
-  }
-}
+#define PARAMETER_DECLARATION_UNION(HANDLE) \
+  HANDLE(CONSTANT, constant, Expression) \
+  HANDLE(VARIABLE, variable, Declaration)
 
-ParameterDeclaration::ParameterDeclaration(const ParameterDeclaration& other): type(other.type) {
-  switch (type) {
-    case Type::CONSTANT:
-      new (&constant) Expression(other.constant);
-      break;
-    case Type::VARIABLE:
-      new (&variable) Declaration(other.variable);
-      break;
-  }
-}
+#define PARAMETER_DECLARATION_EXTRAS(HANDLE)
 
-ParameterDeclaration::~ParameterDeclaration() noexcept {
-  switch (type) {
-    case Type::CONSTANT:
-      destroy(constant);
-      break;
-    case Type::VARIABLE:
-      destroy(variable);
-      break;
-  }
-}
-
-ParameterDeclaration& ParameterDeclaration::operator=(ParameterDeclaration&& other) {
-  // Lazy.
-  this->~ParameterDeclaration();
-  new(this) ParameterDeclaration(move(other));
-  return *this;
-}
-
-ParameterDeclaration& ParameterDeclaration::operator=(const ParameterDeclaration& other) {
-  // Lazy.
-  this->~ParameterDeclaration();
-  new(this) ParameterDeclaration(other);
-  return *this;
-}
-
-bool ParameterDeclaration::operator==(const ParameterDeclaration& other) const {
-  if (type == other.type) {
-    switch (type) {
-      case Type::CONSTANT:
-        return constant == other.constant;
-      case Type::VARIABLE:
-        return variable == other.variable;
-    }
-  }
-
-  return false;
-}
+UNION_IMPLEMENT(, ParameterDeclaration, PARAMETER_DECLARATION_UNION, PARAMETER_DECLARATION_EXTRAS)
 
 ParameterDeclaration ParameterDeclaration::fromError(Location location,
                                                      vector<errors::Error>&& errors) {
@@ -411,7 +402,7 @@ ParameterDeclaration ParameterDeclaration::fromVariable(Location location,
 // =======================================================================================
 // Statement
 
-#define FOR_ALL_STATEMENTS(HANDLE) \
+#define STATEMENT_UNION(HANDLE) \
   HANDLE(ERROR, error, std::vector<errors::Error>) \
   HANDLE(EXPRESSION, expression, Expression) \
   HANDLE(BLOCK, block, vector<Statement>) \
@@ -428,86 +419,14 @@ ParameterDeclaration ParameterDeclaration::fromVariable(Location location,
   HANDLE(BREAK, break_, Maybe<string>) \
   HANDLE(CONTINUE, continue_, Maybe<string>) \
   HANDLE(ASSERT, assert_, Assert) \
-  HANDLE(DEBUG, debug, vector<Expression>)
+  HANDLE(DEBUG, debug, vector<Expression>) \
+  HANDLE(BLANK, blank, Blank)
 
-Statement::Statement(Statement&& other)
-    : comment(other.comment), location(other.location), type(other.type) {
-  switch (type) {
-#define MOVE_CONSTRUCT(ID, NAME, TYPE) \
-    case Type::ID: \
-      new (&NAME) TYPE(move(other.NAME)); \
-      break;
-      FOR_ALL_STATEMENTS(MOVE_CONSTRUCT)
-#undef MOVE_CONSTRUCT
+#define STATEMENT_EXTRAS(HANDLE) \
+  HANDLE(comment, true) \
+  HANDLE(location, false)
 
-    case Type::BLANK:
-      break;
-  }
-}
-
-Statement::Statement(const Statement& other)
-    : comment(other.comment), location(other.location), type(other.type) {
-  switch (type) {
-#define COPY_CONSTRUCT(ID, NAME, TYPE) \
-    case Type::ID: \
-      new (&NAME) TYPE(other.NAME); \
-      break;
-      FOR_ALL_STATEMENTS(COPY_CONSTRUCT)
-#undef COPY_CONSTRUCT
-
-    case Type::BLANK:
-      break;
-  }
-}
-
-Statement::~Statement() noexcept {
-  switch (type) {
-#define DESTRUCT(ID, NAME, TYPE) \
-    case Type::ID: \
-      destroy(NAME); \
-      break;
-      FOR_ALL_STATEMENTS(DESTRUCT)
-#undef DESTRUCT
-
-    case Type::BLANK:
-      break;
-  }
-}
-
-Statement& Statement::operator=(Statement&& other) {
-  // Lazy.
-  this->~Statement();
-  new(this) Statement(move(other));
-  return *this;
-}
-
-Statement& Statement::operator=(const Statement& other) {
-  // Lazy.
-  this->~Statement();
-  new(this) Statement(other);
-  return *this;
-}
-
-bool Statement::operator==(const Statement& other) const {
-  if (comment != other.comment) {
-    return false;
-  }
-
-  if (type == other.type) {
-    switch (type) {
-#define COMPARE(ID, NAME, TYPE) \
-      case Type::ID: \
-        return NAME == other.NAME;
-        FOR_ALL_STATEMENTS(COMPARE)
-#undef MOVE_CONSTRUCT
-
-      case Type::BLANK:
-        return true;
-    }
-  }
-
-  return false;
-}
+UNION_IMPLEMENT(, Statement, STATEMENT_UNION, STATEMENT_EXTRAS);
 
 // -------------------------------------------------------------------
 
@@ -540,7 +459,7 @@ Statement Statement::fromDeclaration(Location location, Declaration&& declaratio
   return result;
 }
 Statement Statement::fromAssignment(Location location, Expression&& variable,
-                                    Maybe<string>&& compoundOp, Expression&& value) {
+                                    Maybe<BinaryOperator>&& compoundOp, Expression&& value) {
   Statement result(location, Type::ASSIGNMENT);
   new (&result.assignment) Assignment(move(variable), move(compoundOp), move(value));
   return result;
@@ -620,7 +539,9 @@ Statement Statement::fromDebug(Location location, vector<Expression>&& debugInfo
 }
 
 Statement Statement::fromBlank(Location location) {
-  return Statement(location, Type::BLANK);
+  Statement result(location, Type::BLANK);
+  new (&result.blank) Blank;
+  return result;
 }
 
 // =======================================================================================
@@ -659,32 +580,6 @@ CodePrinter& operator<<(CodePrinter& printer, const errors::Error& error) {
   return printer << string("(") << error.message << string(")");
 }
 
-vector<vector<string>> operators = {
-  vector<string> {"*", "/", "//", "%"},
-  vector<string> {"+", "-"},
-  vector<string> {"<<", ">>"},
-  vector<string> {"<", ">", "<=", ">="},
-  vector<string> {"==", "!="},
-  vector<string> {"&"},
-  vector<string> {"^"},
-  vector<string> {"|"},
-  vector<string> {"&&"},
-  vector<string> {"||"}
-};
-
-std::map<string, int> operatorPriorities;
-
-struct Initializer {
-  Initializer() {
-    for (size_t i = 0; i < operators.size(); i++) {
-      for (const string& op: operators[i]) {
-        operatorPriorities[op] = 50 - i;
-      }
-    }
-  }
-};
-Initializer initializer;
-
 int priority(const Expression& exp) {
   switch (exp.getType()) {
     case Expression::Type::ERROR:
@@ -706,15 +601,8 @@ int priority(const Expression& exp) {
     case Expression::Type::PREFIX_OPERATOR:
       return 80;
 
-    case Expression::Type::BINARY_OPERATOR: {
-      auto iter = operatorPriorities.find(exp.binaryOperator.op);
-      if (iter == operatorPriorities.end()) {
-        DEBUG_ERROR << "Missing operator priority: " << exp.binaryOperator.op;
-        return 50;
-      } else {
-        return iter->second;
-      }
-    }
+    case Expression::Type::BINARY_OPERATOR:
+      return 40 + getBinaryOperatorInfo(exp.binaryOperator.op).priority;
 
     case Expression::Type::TERNARY_OPERATOR:
       return 20;
@@ -809,7 +697,8 @@ void Expression::print(CodePrinter& printer, int minPriority) const {
       // Left side can have equal priority to expression.
       binaryOperator.left->print(printer, pri);
 
-      printer << space << formatted(format::OPERATOR, binaryOperator.op) << breakable(pri) << space;
+      const string& name = getBinaryOperatorInfo(binaryOperator.op).name;
+      printer << space << formatted(format::OPERATOR, name) << breakable(pri) << space;
 
       // Right side must have higher priority.
       binaryOperator.right->print(printer, pri + 1);
@@ -817,13 +706,13 @@ void Expression::print(CodePrinter& printer, int minPriority) const {
       break;
     }
     case Expression::Type::PREFIX_OPERATOR: {
-      printer << formatted(format::OPERATOR, prefixOperator.op);
+      printer << formatted(format::OPERATOR, getPrefixOperatorName(prefixOperator.op));
       prefixOperator.operand->print(printer, pri);
       break;
     }
     case Expression::Type::POSTFIX_OPERATOR:
       postfixOperator.operand->print(printer, pri);
-      printer << formatted(format::OPERATOR, postfixOperator.op);
+      printer << formatted(format::OPERATOR, getPostfixOperatorName(postfixOperator.op));
       break;
     case Expression::Type::TERNARY_OPERATOR:
       // The middle part doesn't need parenthesization, but the ends might.  The ternary operator
@@ -1053,7 +942,8 @@ CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
     case Statement::Type::ASSIGNMENT:
       printer << stmt.assignment.variable << space;
       if (stmt.assignment.compoundOp) {
-        printer << formatted(format::OPERATOR, *stmt.assignment.compoundOp);
+        printer << formatted(format::OPERATOR,
+                             getBinaryOperatorInfo(*stmt.assignment.compoundOp).name);
       }
       printer << "= " << breakable(0) << stmt.assignment.value << ";";
       break;

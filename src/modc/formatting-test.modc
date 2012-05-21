@@ -1,4 +1,6 @@
 func frob(s: String, i: Integer = 123): String {
+  -1;
+
   # This is a comment!
   if (s.length < i) {
     return s; # Comments can go after lines.

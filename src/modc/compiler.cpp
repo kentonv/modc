@@ -13,209 +13,127 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#if 0
+
 #include <stdexcept>
 
 #include "compiler.h"
-#include "tokens.h"
 #include "CodePrinter.h"
 
 namespace modc {
-namespace expressions {
+namespace compiler {
 
 using std::move;
+using ast::Expression;
+using ast::Statement;
 
-class Variable : public Expression {
+
+
+class CxxBinaryOperator: public CxxCode {
 public:
-  Variable(string name): name(move(name)) {}
-  ~Variable() {}
 
-  class Compiled : public CompiledExpression {
-  public:
-    Compiled(string name, const Binding& binding)
-        : name(move(name)), binding(binding) {}
+  ~CxxBinaryOperator() {}
 
-    const Descriptor& descriptor() const {
-      return binding.descriptor();
-    }
+  void
 
-    void toCpp(CodePrinter& printer) const {
-      // TODO:
-      // - Module members must be accessed via global module pointer.
-      // - Outer class members must be accessed via outer class pointer.
-      // - Need to avoid accidental superclass references.
+  // implements CxxCode ----------------------------------------------
 
-      printer.write(name);
-    }
+  void write(CodePrinter& printer) {
 
-  private:
-    string name;
-    const Binding& binding;
-  };
-
-  void toCode(CodePrinter& printer) const {
-    printer.write(name);
   }
-
-  OwnedPtr<CompiledExpression> bind(Scope& scope) const {
-    return newOwned<Compiled>(name, scope.lookupBinding(name));
-  }
-
-private:
-  string name;
 };
 
-extern const Descriptor integerDescriptor;
+Thing compileExpression(Context& context, Scope& scope, const Expression& expression) {
+  switch (expression.getType()) {
+    case Expression::Type::ERROR: {
+      for (auto& error: expression.error) {
+        context.error(error);
+      }
+      return Thing::fromError();
+    }
 
-class IntegerLiteral : public Expression {
+    case Expression::Type::VARIABLE: {
+      Maybe<Binding&> binding = scope.lookupBinding(expression.variable);
+      if (!binding) {
+        context.error(errors::error(expression.location, "Unknown identifier: ",
+                                    expression.variable));
+        return Thing::fromError();
+      }
+
+      return Thing::fromCxxExpression(binding->getReferenceCode());
+    }
+
+    case Expression::Type::TUPLE: {
+      // TODO
+      break;
+    }
+
+    case Expression::Type::LITERAL_INT:
+      return Thing::fromValue(Value::fromInteger(expression.literalInt));
+
+    case Expression::Type::LITERAL_DOUBLE:
+      return Thing::fromValue(Value::fromDouble(expression.literalDouble));
+
+    case Expression::Type::LITERAL_STRING:
+      // TODO:  Generate code to construct the string class.
+      break;
+
+    case Expression::Type::LITERAL_ARRAY:
+      // TODO:  Generate code to construct the FixedArray class.
+      break;
+
+    case Expression::Type::BINARY_OPERATOR:
+      // TODO:  Chain left-hand side of same priority.
+      break;
+  }
+
+  throw "Can't get here.";
+}
+
+class CxxBlock: public CxxCode {
 public:
-  IntegerLiteral(int value, const string& original): value(value), original(original) {}
-  ~IntegerLiteral() {}
-
-  class Compiled : public CompiledExpression {
-  public:
-    Compiled(int value, const string& original): value(value), original(original) {}
-
-    const Descriptor& descriptor() const {
-      return integerDescriptor;
-    }
-
-    void toCpp(CodePrinter& printer) const {
-      printer.write(original);
-    }
-
-  private:
-    int value;
-    string original;
-  };
-
-  void toCode(CodePrinter& printer) const {
-    printer.write(original);
-  }
-
-  OwnedPtr<CompiledExpression> bind(Scope& scope) const {
-    return newOwned<Compiled>(value, original);
-  }
+  void addBlankLine();
+  void addStatement(OwnedPtr<CxxCode> statementCode);
+  void addBlock(OwnedPtr<CxxCode> statementCode);
 
 private:
-  int value;
-  string original;
 };
 
-class MemberAccess : public Expression {
-public:
-  MemberAccess(OwnedPtr<Expression> object, string memberName)
-      : object(object.release()), memberName(memberName) {}
-  ~MemberAccess() {}
+OwnedPtr<CxxCode> compileImperative(Context& context, Scope& scope,
+                                    const vector<ast::Statement>& statements) {
+  OwnedPtr<CxxBlock> code = newOwned<CxxBlock>();
 
-  class Compiled : public CompiledExpression {
-  public:
-    Compiled(OwnedPtr<CompiledExpression> object, string memberName)
-        : object(object.release()), memberName(memberName) {}
-
-    const Descriptor& descriptor() const {
-      return integerDescriptor;
-    }
-
-    void toCpp(CodePrinter& printer) const {
-      // TODO:  Detect when we'd generate (*foo).bar and generate foo->bar instead.
-      object->toCpp(printer);
-      printer.writePrefix(".");
-      printer.write(memberName);
-    }
-
-  private:
-    OwnedPtr<CompiledExpression> object;
-    string memberName;
-  };
-
-  void toCode(CodePrinter& printer) const {
-    object->toCode(printer);
-    printer.writePrefix(".");
-    printer.write(memberName);
-  }
-
-  OwnedPtr<CompiledExpression> bind(Scope& scope) const {
-    return newOwned<Compiled>(object->bind(scope), memberName);
-  }
-
-private:
-  OwnedPtr<Expression> object;
-  string memberName;
-};
-
-class FunctionCall : public Expression {
-public:
-  FunctionCall(OwnedPtr<Expression> function, std::vector<OwnedPtr<Expression>> parameters)
-      : function(function.release()), parameters(move(parameters)) {}
-  ~FunctionCall() {}
-
-  class Compiled : public CompiledExpression {
-  public:
-    Compiled(OwnedPtr<CompiledExpression> function,
-             std::vector<OwnedPtr<CompiledExpression>> parameters)
-        : function(function.release()), parameters(move(parameters)) {}
-
-    const Descriptor& descriptor() const {
-      return integerDescriptor;
-    }
-
-    void toCpp(CodePrinter& printer) const {
-      function->toCpp(printer);
-
-      printer.writeSuffix("(");
-
-      bool isFirst = true;
-      for (const auto& parameter : parameters) {
-        if (isFirst) {
-          isFirst = false;
-        } else {
-          printer.writeSuffix(", ");
+  for (auto& statement: statements) {
+    switch (statement.getType()) {
+      case ast::Statement::Type::ERROR:
+        for (auto& error: statement.error) {
+          context.error(error);
         }
+        break;
 
-        parameter->toCpp(printer);
+      case ast::Statement::Type::EXPRESSION: {
+        Thing value = compileExpression(context, scope, statement.expression);
+        if (value.getType() != Thing::Type::CXX_EXPRESSION) {
+          context.error(errors::error(statement.location, "Statement has no effect."));
+        } else {
+          code->addStatement(move(value.code));
+        }
+        break;
       }
 
-      printer.writeSuffix(")");
-    }
-
-  private:
-    OwnedPtr<CompiledExpression> function;
-    std::vector<OwnedPtr<CompiledExpression>> parameters;
-  };
-
-  void toCode(CodePrinter& printer) const {
-    function->toCode(printer);
-
-    printer.write("(");
-
-    bool isFirst = true;
-    for (const auto& parameter : parameters) {
-      if (isFirst) {
-        isFirst = false;
-      } else {
-        printer.write(", ");
+      case ast::Statement::Type::BLOCK: {
+        OwnedPtr<Scope> subscope = scope.startBlock();
+        code->addBlock(compileImperative(context, *subscope, statement.block));
+        break;
       }
 
-      parameter->toCode(printer);
+      case ast::Statement::Type::DECLARATION: {
+        //??
+      }
     }
-
-    printer.write(")");
   }
 
-  OwnedPtr<CompiledExpression> bind(Scope& scope) const {
-    std::vector<OwnedPtr<CompiledExpression>> compiledParameters;
-    for (const auto& parameter : parameters) {
-      compiledParameters.push_back(parameter->bind(scope));
-    }
+  return move(code);
+}
 
-    return newOwned<Compiled>(move(function->bind(scope)), move(compiledParameters));
-  }
-
-private:
-  OwnedPtr<Expression> function;
-  std::vector<OwnedPtr<Expression>> parameters;
-};
-
-}  // namespace expressions
+}  // namespace compiler
 }  // namespace modc

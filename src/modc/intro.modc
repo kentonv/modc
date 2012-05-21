@@ -9,7 +9,9 @@
 # 2.  There is NO GARBAGE COLLECTION in %C.
 # 3.  %C programs cannot segfault or overrun buffers.  These problems are detected at compile time,
 #     with no overhead at run time.
-# 4.  %C is faster and more memory efficient than C++.  Not just in contrived benchmarks.  Always.
+# 4.  %C is compiled to C++, but the %C compiler can perform optimizations that the C++ compiler
+#     itself wouldn't be able to.  Therefore, %C is strictly faster and more memory-efficient than
+#     C++.  Not just in contrived benchmarks.  Always.
 # 5.  Boilerplate is evil.
 
 # Some quick notes:

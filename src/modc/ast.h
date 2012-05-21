@@ -19,10 +19,12 @@
 
 #include <string>
 #include <vector>
+#include <map>
 
 #include "base/OwnedPtr.h"
 #include "Maybe.h"
 #include "errors.h"
+#include "macros.h"
 
 namespace modc {
   class CodePrinter;
@@ -66,56 +68,84 @@ class Declaration;
 class Statement;
 struct ParameterDeclaration;
 
-#define VALUE_TYPE_PROTOTYPES(TYPENAME) \
-  TYPENAME(TYPENAME&& other); \
-  TYPENAME(const TYPENAME& other); \
-  ~TYPENAME() noexcept; \
-  TYPENAME& operator=(TYPENAME&& other); \
-  TYPENAME& operator=(const TYPENAME& other); \
-  bool operator==(const TYPENAME& other) const; \
-  bool operator!=(const TYPENAME& other) const { return !(*this == other); }
+enum class BinaryOperator {
+  MULTIPLY,
+  DIVIDE,
+  DIVIDE_AND_FLOOR,
+  MODULUS,
 
-#define VALUE_TYPE1(TYPENAME, TYPE1, VAR1) \
-  TYPENAME(TYPE1 VAR1): VAR1(move(VAR1)) {} \
-  bool operator==(const TYPENAME& other) const { \
-    return VAR1 == other.VAR1; \
-  } \
-  bool operator!=(const TYPENAME& other) const { return !(*this == other); }
+  ADD,
+  SUBTRACT,
 
-#define VALUE_TYPE2(TYPENAME, TYPE1, VAR1, TYPE2, VAR2) \
-  TYPENAME(TYPE1 VAR1, TYPE2 VAR2) \
-      : VAR1(move(VAR1)), VAR2(move(VAR2)) {} \
-  bool operator==(const TYPENAME& other) const { \
-    return VAR1 == other.VAR1 && VAR2 == other.VAR2; \
-  } \
-  bool operator!=(const TYPENAME& other) const { return !(*this == other); }
+  LEFT_SHIFT,
+  RIGHT_SHIFT,
 
-#define VALUE_TYPE3(TYPENAME, TYPE1, VAR1, TYPE2, VAR2, TYPE3, VAR3) \
-  TYPENAME(TYPE1 VAR1, TYPE2 VAR2, TYPE3 VAR3) \
-      : VAR1(move(VAR1)), VAR2(move(VAR2)), VAR3(move(VAR3)) {} \
-  bool operator==(const TYPENAME& other) const { \
-    return VAR1 == other.VAR1 && VAR2 == other.VAR2 && VAR3 == other.VAR3; \
-  } \
-  bool operator!=(const TYPENAME& other) const { return !(*this == other); }
+  LESS_THAN,
+  GREATER_THAN,
+  LESS_THAN_OR_EQUAL,
+  GREATER_THAN_OR_EQUAL,
 
-#define VALUE_TYPE4(TYPENAME, TYPE1, VAR1, TYPE2, VAR2, TYPE3, VAR3, TYPE4, VAR4) \
-  TYPENAME(TYPE1 VAR1, TYPE2 VAR2, TYPE3 VAR3, TYPE4 VAR4) \
-      : VAR1(move(VAR1)), VAR2(move(VAR2)), VAR3(move(VAR3)), VAR4(move(VAR4)) {} \
-  bool operator==(const TYPENAME& other) const { \
-    return VAR1 == other.VAR1 && VAR2 == other.VAR2 && VAR3 == other.VAR3 && VAR4 == other.VAR4; \
-  } \
-  bool operator!=(const TYPENAME& other) const { return !(*this == other); }
+  EQUALS,
+  NOT_EQUALS,
+
+  BITWISE_AND,
+  BITWISE_XOR,
+  BITWISE_OR,
+
+  LOGICAL_AND,
+  LOGICAL_OR
+};
+
+struct BinaryOperatorInfo {
+  BinaryOperator op;
+  string name;
+  int priority;
+
+  VALUE_TYPE3(BinaryOperatorInfo, BinaryOperator, op, string&&, name, int, priority);
+};
+
+const std::map<BinaryOperator, BinaryOperatorInfo>& getBinaryOperatorInfoByOpMap();
+const std::map<string, BinaryOperatorInfo>& getBinaryOperatorInfoByNameMap();
+
+const BinaryOperatorInfo& getBinaryOperatorInfo(BinaryOperator op);
+Maybe<const BinaryOperatorInfo&> findBinaryOperatorInfo(const string& name);
+
+enum class PrefixOperator {
+  INCREMENT,
+  DECREMENT,
+  POSITIVE,
+  NEGATIVE,
+  LOGICAL_NOT,
+  BITWISE_NOT
+};
+
+const std::map<PrefixOperator, string>& getPrefixOperatorNameMap();
+const std::map<string, PrefixOperator>& getPrefixOperatorByNameMap();
+const string& getPrefixOperatorName(PrefixOperator op);
+Maybe<PrefixOperator> findPrefixOperator(const string& name);
+
+enum class PostfixOperator {
+  INCREMENT,
+  DECREMENT
+};
+
+const std::map<PostfixOperator, string>& getPostfixOperatorNameMap();
+const std::map<string, PostfixOperator>& getPostfixOperatorByNameMap();
+const string& getPostfixOperatorName(PostfixOperator op);
+Maybe<PostfixOperator> findPostfixOperator(const string& name);
 
 class Expression {
 public:
-  VALUE_TYPE_PROTOTYPES(Expression);
+  UNION_TYPE_BOILERPLATE(Expression);
 
   enum class Type {
     ERROR,
 
     VARIABLE,
     TUPLE,
+    // TODO: this
 
+    // TODO: Boolean
     LITERAL_INT,
     LITERAL_DOUBLE,
     LITERAL_STRING,
@@ -138,25 +168,25 @@ public:
   Type getType() const { return type; }
 
   struct BinaryOperator {
-    string op;
+    ast::BinaryOperator op;
     Indirect<Expression> left;
     Indirect<Expression> right;
 
-    VALUE_TYPE3(BinaryOperator, string&&, op, Expression&&, left, Expression&&, right);
+    VALUE_TYPE3(BinaryOperator, ast::BinaryOperator, op, Expression&&, left, Expression&&, right);
   };
 
   struct PrefixOperator {
-    string op;
+    ast::PrefixOperator op;
     Indirect<Expression> operand;
 
-    VALUE_TYPE2(PrefixOperator, string&&, op, Expression&&, operand);
+    VALUE_TYPE2(PrefixOperator, ast::PrefixOperator, op, Expression&&, operand);
   };
 
   struct PostfixOperator {
     Indirect<Expression> operand;
-    string op;
+    ast::PostfixOperator op;
 
-    VALUE_TYPE2(PostfixOperator, Expression&&, operand, string&&, op);
+    VALUE_TYPE2(PostfixOperator, Expression&&, operand, ast::PostfixOperator, op);
   };
 
   struct TernaryOperator {
@@ -249,10 +279,11 @@ public:
   static Expression fromLiteralString(Location location, string&& value);
   static Expression fromLiteralArray(Location location, vector<ListElement>&& elements);
 
-  static Expression fromBinaryOperator(Location location, string&& op,
+  static Expression fromBinaryOperator(Location location, ast::BinaryOperator op,
                                        Expression&& left, Expression&& right);
-  static Expression fromPrefixOperator(Location location, string&& op, Expression&& exp);
-  static Expression fromPostfixOperator(Location location, Expression&& exp, string&& op);
+  static Expression fromPrefixOperator(Location location, ast::PrefixOperator op, Expression&& exp);
+  static Expression fromPostfixOperator(Location location, Expression&& exp,
+                                        ast::PostfixOperator op);
   static Expression fromTernaryOperator(Location location, Expression&& condition,
                                         Expression&& trueClause, Expression&& falseClause);
 
@@ -363,7 +394,7 @@ struct Declaration {
 
   class Definition {
   public:
-    VALUE_TYPE_PROTOTYPES(Definition);
+    UNION_TYPE_BOILERPLATE(Definition);
 
     enum class Type {
       EXPRESSION,
@@ -408,7 +439,7 @@ inline CodePrinter& operator<<(CodePrinter& os, const Declaration& declaration) 
 
 class ParameterDeclaration {
 public:
-  VALUE_TYPE_PROTOTYPES(ParameterDeclaration);
+  UNION_TYPE_BOILERPLATE(ParameterDeclaration);
 
   enum class Type {
     CONSTANT,
@@ -438,7 +469,7 @@ inline CodePrinter& operator<<(CodePrinter& os, const ParameterDeclaration& para
 
 class Statement {
 public:
-  VALUE_TYPE_PROTOTYPES(Statement);
+  UNION_TYPE_BOILERPLATE(Statement);
 
   enum class Type {
     ERROR,
@@ -472,10 +503,10 @@ public:
 
   struct Assignment {
     Expression variable;
-    Maybe<string> compoundOp;
+    Maybe<BinaryOperator> compoundOp;
     Expression value;
 
-    VALUE_TYPE3(Assignment, Expression&&, variable, Maybe<string>&&, compoundOp,
+    VALUE_TYPE3(Assignment, Expression&&, variable, Maybe<BinaryOperator>&&, compoundOp,
                 Expression&&, value);
   };
 
@@ -516,6 +547,10 @@ public:
                 bool, isFatal);
   };
 
+  struct Blank {
+    VALUE_TYPE0(Blank);
+  };
+
   union {
     std::vector<errors::Error> error;
 
@@ -540,6 +575,8 @@ public:
 
     Assert assert_;  // Needs trailing underscore because of assert() macro.  :(
     vector<Expression> debug;
+
+    Blank blank;
   };
 
   // Comment appearing after the end of the statement, on the same line.
@@ -556,7 +593,7 @@ public:
 
   static Statement fromDeclaration(Location location, Declaration&& declaration);
   static Statement fromAssignment(Location location, Expression&& variable,
-                                  Maybe<string>&& compoundOp, Expression&& value);
+                                  Maybe<BinaryOperator>&& compoundOp, Expression&& value);
 
   static Statement fromUnion(Location location, vector<Declaration>&& declarations);
 
