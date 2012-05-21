@@ -47,14 +47,20 @@
 <span class='wrap-indent'></span><span class='comment'>#&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;with&nbsp;no&nbsp;overhead&nbsp;at&nbsp;run&nbsp;time.<br>
 </div>
 <div class='statement'>
-<span class='wrap-indent'></span><span class='comment'>#&nbsp;4.&nbsp;&nbsp;%C&nbsp;is&nbsp;faster&nbsp;and&nbsp;more&nbsp;memory&nbsp;efficient&nbsp;than&nbsp;C++.&nbsp;&nbsp;Not&nbsp;just&nbsp;in&nbsp;contrived&nbsp;benchmarks.&nbsp;&nbsp;Always.<br>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;4.&nbsp;&nbsp;%C&nbsp;is&nbsp;compiled&nbsp;to&nbsp;C++,&nbsp;but&nbsp;the&nbsp;%C&nbsp;compiler&nbsp;can&nbsp;perform&nbsp;optimizations&nbsp;that&nbsp;the&nbsp;C++&nbsp;compiler<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;itself&nbsp;wouldn't&nbsp;be&nbsp;able&nbsp;to.&nbsp;&nbsp;Therefore,&nbsp;%C&nbsp;is&nbsp;strictly&nbsp;faster&nbsp;and&nbsp;more&nbsp;memory-efficient&nbsp;than<br>
+</div>
+<div class='statement'>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;C++.&nbsp;&nbsp;Not&nbsp;just&nbsp;in&nbsp;contrived&nbsp;benchmarks.&nbsp;&nbsp;Always.<br>
 </div>
 <div class='statement'>
 <span class='wrap-indent'></span><span class='comment'>#&nbsp;5.&nbsp;&nbsp;Boilerplate&nbsp;is&nbsp;evil.<br>
 </div>
 <br>
 <div class='statement'>
-<span class='wrap-indent'></span><span class='comment'>#&nbsp;Two&nbsp;quick&nbsp;notes:<br>
+<span class='wrap-indent'></span><span class='comment'>#&nbsp;Some&nbsp;quick&nbsp;notes:<br>
 </div>
 <div class='statement'>
 <span class='wrap-indent'></span><span class='comment'>#&nbsp;-&nbsp;&nbsp;&nbsp;Because&nbsp;this&nbsp;file&nbsp;started&nbsp;with&nbsp;"#!&nbsp;/",&nbsp;it&nbsp;is&nbsp;executable.&nbsp;&nbsp;It&nbsp;has&nbsp;no&nbsp;main()&nbsp;function&nbsp;--&nbsp;the<br>
@@ -93,7 +99,7 @@
 <div class='block'>
 
 <div class='statement'>
-<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>cli</span>&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='keyword'>import</span>&nbsp;<span class='literal'>"/modc/cli.modc"</span><span class='delimiter'>;<br>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>var</span>&nbsp;<span class='declaration'>cli</span><span class='keysymbol'>@</span>&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='keyword'>import</span>&nbsp;<span class='literal'>"/modc/cli.modc"</span><span class='delimiter'>;<br>
 </div>
 <div class='statement'>
 <span class='wrap-indent'>&nbsp;&nbsp;</span>cli<span class='keysymbol'>.</span>out<span class='keysymbol'>.</span>write<span class='bracket'>(</span><span class='literal'>"Hello&nbsp;World!"</span><span class='bracket'>)</span><span class='delimiter'>;<br>
@@ -853,7 +859,7 @@
 <span class='wrap-indent'>&nbsp;&nbsp;</span>t<span class='keysymbol'>.</span>hours&nbsp;<span class='keysymbol'>=</span>&nbsp;<span class='literal'>2</span><span class='delimiter'>;<br>
 </div>
 <div class='statement'>
-<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>t<span class='keysymbol'>.</span>minutes&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>60</span><span class='bracket'>)</span><span class='delimiter'>;<br>
+<span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>t<span class='keysymbol'>.</span>minutes&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>120</span><span class='bracket'>)</span><span class='delimiter'>;<br>
 </div>
 <div class='statement'>
 <span class='wrap-indent'>&nbsp;&nbsp;</span><span class='keyword'>assert</span><span class='bracket'>(</span>t<span class='keysymbol'>.</span>seconds&nbsp;<span class='operator'>==</span>&nbsp;<span class='literal'>7200</span><span class='bracket'>)</span><span class='delimiter'>;<br>
