@@ -18,6 +18,7 @@
 #define KENTONSCODE_MODC_COMPILER_H_
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -33,13 +34,24 @@ using namespace ekam;
 using std::string;
 using std::vector;
 using std::map;
+using std::set;
 
 class CodePrinter;
 
+// Resource types.
 class Scope;
-class Thing;
-class ThingDescriptor;
 class Binding;
+class Class;
+class Interface;
+class Field;
+class Enum;
+class Function;
+
+// Value types.
+class Thing;
+class CxxExpression;
+
+// =======================================================================================
 
 struct CxxExpression {
   class Piece;
@@ -118,37 +130,77 @@ public:
   };
 };
 
-class Type {
-public:
-  Binding& binding;
-  vector<Thing> params;
+// =======================================================================================
+
+enum class BuiltinType {
+  BOOLEAN,
+  INTEGER,
+  DOUBLE
+
+  // TODO:  fixed array?
 };
 
-class Function {
+class ValueDescriptor {
 public:
+  // TODO:  type, supertypes, subtypes, annotations, constraints, outstanding binding locks
+
+  Indirect<Thing> type;
+
+  // Aliases which the value contains.
+  enum class AliasType {
+    IDENTITY,
+    IMMUTABLE,
+    MUTABLE
+  };
+  map<Binding*, AliasType> identityAliases;
+
+  // TODO:  Constraints.
 };
 
-class FunctionDescriptor {
+class TypeDescriptor {
 public:
+  vector<Thing> supertypes;
+  vector<Thing> subtypes;
 };
 
-class Value {
+class Thing {
 public:
-  UNION_TYPE_BOILERPLATE(Value);
+  UNION_TYPE_BOILERPLATE(Thing);
 
-  enum class Type {
+  enum class Kind {
+    ERROR,
+
+    // Compile-time known
+
+    // Reference to known binding, which itself may have constant value.
+    BINDING,
+
+    // Compile-time known values.
     BOOLEAN,
     INTEGER,
     DOUBLE,
     OBJECT,
-    TUPLE
+    TUPLE,
+
+    // Compile-time known types.
+    BUILTIN_TYPE,
+    CLASS,
+    INTERFACE,
+    ENUM,
+
+    // Not compile-time known.
+    RUNTIME_LVALUE,
+    RUNTIME_RVALUE,
+
+    META_CONSTANT  // A metaprogramming parameter that has not yet been bound, but will be a
+                   // compile-time constant.
   };
 
-  Type getType() { return type; }
+  Kind getKind() { return type; }
 
   struct Object {
-    Type type;
-    map<string, Thing> members;
+    Class* type;
+    map<Field*, Thing> fields;
   };
 
   struct Tuple {
@@ -159,32 +211,97 @@ public:
     VALUE_TYPE2(Tuple, vector<Thing>&&, positionalElements, KeywordElementMap&&, keywordElements);
   };
 
+  struct RuntimeLvalue {
+    ValueDescriptor descriptor;
+    CxxExpression cxxExpression;
+
+    // Bindings which must be locked if and when the lvalue is used.
+    set<Binding*> entangledBindings;
+  };
+
+  struct RuntimeRvalue {
+    ValueDescriptor descriptor;
+    CxxExpression cxxExpression;
+  };
+
+  struct MetaConstant {
+    // Type may or may not be known.
+    Maybe<Indirect<Thing>> type;
+
+    VALUE_TYPE1(MetaConstant, Maybe<Indirect<Thing>>&&, type);
+  };
+
   union {
+    Binding* binding;
+
     bool boolean;
     int integer;
     double double_;
     Object object;
     Tuple tuple;
+
+    // TODO:  Types and functions may need to be bound to type parameters.
+    Function* function;
+
+    BuiltinType builtinType;
+    Class* class_;
+    Interface* interface;
+    Enum* enum_;
+
+    RuntimeLvalue runtimeLvalue;
+    RuntimeRvalue runtimeRvalue;
+    MetaConstant metaConstant;
   };
 
-  static Value fromBoolean(bool b);
-  static Value fromInteger(int b);
-  static Value fromDouble(double b);
+  static Thing fromError();
+
+  static Thing fromBoolean(bool value);
+  static Thing fromInteger(int value);
+  static Thing fromDouble(double value);
+
+  static Thing fromBuiltinType(BuiltinType type);
+
+  static Thing fromRuntimeRvalue(ValueDescriptor&& descriptor, CxxExpression&& cxxExpression);
 
 private:
-  Value(Type type): type(type) {}
-
+  // For the sake of the union macros, the discriminating enum must be called Type, but that is
+  // confusing in this context, so we make this a private detail and use "kind" publicly.
+  typedef Kind Type;
   Type type;
+};
+
+class Evaluation {
+public:
+  Thing result;
+
+  // Bitfield.
+  enum BindingUsage {
+    MUTABLY = 1,
+    IMMUTABLY = 2,
+    MEMBER_MUTABLY = 4,
+    MEMBER_IMMUTABLY = 8
+  };
+  map<Binding*, int> bindingsUsed;
+
+  explicit Evaluation(Thing&& result);
+  Evaluation(Thing&& result, Binding* binding, BindingUsage usage);
+  Evaluation(Thing&& result, std::initializer_list<const Evaluation*> inputs);
+
+  void mergeBindingsUsedFrom(const Evaluation& other);
+};
+
+// =======================================================================================
+
+class Function {
+public:
+};
+
+class Field {
+public:
 };
 
 class Class {
 public:
-  map<string, ThingDescriptor> members;
-};
-
-class ClassDescriptor {
-public:
-  // TODO:  supertypes, subtypes
 };
 
 class Enum {
@@ -195,55 +312,19 @@ class Interface {
 public:
 };
 
-class Thing {
+class BindingDescriptor {
 public:
-  UNION_TYPE_BOILERPLATE(Thing);
-
-  enum class Type {
-    ERROR,
-
+  enum class Kind {
     VALUE,
-    FUNCTION,  // i.e., overloaded name
-
-    CLASS,
-    INTERFACE,
-    ENUM,
-
-    CXX_EXPRESSION,
-    META_CONSTANT  // A metaprogramming parameter that has not yet been bound, but will be a
-                   // compile-time constant.
-  };
-
-  Type getType();
-
-  struct MetaConstant {
-    VALUE_TYPE0(MetaConstant);
+    TYPE,
+    FUNCTION
   };
 
   union {
-    Value value;
-    Function function;
-
-    Class class_;
-    Interface interface;
-    Enum enum_;
-
-    CxxExpression cxxExpression;
-    MetaConstant metaConstant;
+    ValueDescriptor valueDescriptor;
+    TypeDescriptor typeDescriptor;
   };
-
-  static Thing fromError();
-
-  static Thing fromValue(Value&& value);
-
-  static Thing fromCxxExpression(CxxExpression&& code);
-};
-
-class ThingDescriptor {
-public:
-  Thing::Type type;
-
-  // TODO:  type, supertypes, subtypes, annotations, constraints
+  vector<Thing> annotations;
 };
 
 class Binding {
@@ -262,19 +343,24 @@ public:
   // FUNCTION, CLASS, INTERFACE, ENUM:  lazy ref to body
 
 
+  // For VARIABLE
 
   virtual bool assign(Thing&& value) = 0;
 
-  virtual Maybe<const Thing&> getValue() = 0;
-  // Returns the binding's current assigned value, if it is known at compile time.
+  class ImmutableHandle {
+  public:
+    virtual ~ImmutableHandle();
+    virtual Thing get() = 0;
+  };
+  virtual OwnedPtr<ImmutableHandle> useImmutably(errors::Location location) = 0;
 
-  virtual CxxExpression getReferenceCode() = 0;
-
-  class MutableHandle;
+  class MutableHandle {
+  public:
+    virtual ~MutableHandle();
+  };
   virtual OwnedPtr<MutableHandle> useMutably(errors::Location location) = 0;
 
-  class ImmutableHandle;
-  virtual OwnedPtr<ImmutableHandle> useImmutably(errors::Location location) = 0;
+  // For VARIABLE or TYPE
 
   class MemberHandle {
   public:
@@ -287,6 +373,12 @@ public:
   };
   virtual OwnedPtr<MemberHandle> useMember(errors::Location location) = 0;
 
+  // For TYPE
+
+  virtual Thing convertFrom(Thing::Tuple&& input) = 0;
+
+  // For FUNCTION
+
   class OverloadHandle {
   public:
     RESOURCE_TYPE_BOILERPLATE(OverloadHandle);
@@ -296,7 +388,7 @@ public:
 
     Binding& binding;
   };
-  virtual OwnedPtr<OverloadHandle> useOverload(const vector<Thing>& parameters) = 0;
+  virtual OwnedPtr<OverloadHandle> useOverload(const Thing::Tuple& parameters) = 0;
 };
 
 class Scope {
@@ -306,10 +398,13 @@ public:
   RESOURCE_TYPE_BOILERPLATE(Scope);
 
   // For EXPRESSION
-  // Note that this may instantiate a template.
+
   Maybe<Binding&> lookupBinding(const string& name);
+  // Note that this may instantiate a template.
+  // Note also that this returns a proxy specific to the current scope.
 
   // For DECLARATION
+
   Binding& declareValueBinding(const string& name, Thing&& value);
   void declareBinding(const string& name, Type&& type);
 
@@ -344,7 +439,7 @@ private:
   const Scope& parent;
 
   OwnedPtrMap<string, Binding> bindings;
-  std::map<string, OwnedPtrVector<Function> > functions;
+  map<string, OwnedPtrVector<Function> > functions;
 };
 
 // =======================================================================================
