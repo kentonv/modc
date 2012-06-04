@@ -30,83 +30,112 @@ class Compiler {
 public:
   Compiler(Context& context, Scope& scope): context(context), scope(scope) {}
 
-  CxxExpression asCxx(Thing&& thing);
+  CxxExpression asCxx(Thing&& value);
 
-  void dereference(Evaluation& eval, errors::Location location) {
-    if (eval.result.getKind() == Thing::Kind::BINDING) {
-      eval.bindingsUsed[eval.result.binding] |= Evaluation::BindingUsage::IMMUTABLY;
-      eval.result = eval.result.binding->useImmutably(location)->get();
-    } else if (eval.result.getKind() == Thing::Kind::RUNTIME_LVALUE) {
-      for (Binding* binding: eval.result.runtimeLvalue.entangledBindings) {
-        binding->useImmutably(location);
-        eval.bindingsUsed[binding] |= Evaluation::BindingUsage::IMMUTABLY;
-      }
+  struct Dereferenced {
+    Thing thing;
+    VariableUsageSet variablesUsed;
 
-      eval.result = Thing::fromRuntimeRvalue(
-          move(eval.result.runtimeLvalue.descriptor),
-          move(eval.result.runtimeLvalue.cxxExpression));
+    VALUE_TYPE2(Dereferenced, Thing&&, thing, VariableUsageSet&&, variablesUsed);
+  };
+
+  Dereferenced dereference(Evaluation&& eval, errors::Location location) {
+    switch (eval.getKind()) {
+      case Evaluation::Kind::REFERENCE:
+        switch (eval.reference.getKind()) {
+          case Reference::Kind::NAMED:
+            return Dereferenced(eval.reference.named->read(eval.variablesUsed, location),
+                                move(eval.variablesUsed));
+
+          case Reference::Kind::ANONYMOUS:
+            for (Variable* variable: eval.reference.anonymous.entangledVariables) {
+              variable->entangle(VariableUsageSet::Style::IMMUTABLE, eval.variablesUsed, location);
+            }
+
+            return Dereferenced(
+                Thing::fromRuntimeValue(
+                    move(eval.reference.anonymous.descriptor),
+                    move(eval.reference.anonymous.cxxExpression)),
+                move(eval.variablesUsed));
+        }
+
+        throw "can't get here";
+
+      case Evaluation::Kind::THING:
+        return Dereferenced(move(eval.thing), move(eval.variablesUsed));
     }
+
+    throw "can't get here";
   }
 
-  Evaluation castTo(Evaluation&& thing, const Thing& type);
+  Dereferenced castTo(Evaluation&& eval, const Type& type);
   ValueDescriptor findCommonSupertype(const ValueDescriptor& type1, const ValueDescriptor& type2);
 
-  Thing applyBinaryOperator(Thing&& left, ast::BinaryOperator op, Thing&& right);
+  Evaluation applyBinaryOperator(Evaluation&& left, ast::BinaryOperator op, Evaluation&& right);
 
   Evaluation applyPrefixOperator(ast::PrefixOperator op, Evaluation&& operand,
                                  errors::Location location) {
-    dereference(operand, location);
+    Dereferenced derefOperand = dereference(move(operand), location);
 
     switch (op) {
       case ast::PrefixOperator::POSITIVE:
-        switch (operand.result.getKind()) {
+        switch (derefOperand.thing.getKind()) {
           case Thing::Kind::INTEGER:
           case Thing::Kind::DOUBLE:
-            return move(operand);
+            return Evaluation::fromThing(
+                move(derefOperand.thing), move(derefOperand.variablesUsed));
 
           case Thing::Kind::OBJECT:
             // TODO:  Apply operator+
             throw "unimplemented";
 
-          case Thing::Kind::BINDING:
-          case Thing::Kind::RUNTIME_LVALUE:
-            throw "can't happen, should have dereferenced";
-
-          case Thing::Kind::RUNTIME_RVALUE: {
+          case Thing::Kind::RUNTIME_VALUE: {
             // TODO:  Verify that the type has operator+, and check what operator+ returns (for now
             //   we're assuming it returns the same type, but that's wrong).
             CxxExpression result(CxxExpression::Priority::PREFIX, false);
             result.append("+");
-            result.append(move(operand.result.runtimeRvalue.cxxExpression));
-            return Evaluation(
-                Thing::fromRuntimeRvalue(
-                    move(operand.result.runtimeRvalue.descriptor), move(result)),
-                {&operand});
+            result.append(move(derefOperand.thing.runtimeValue.cxxExpression));
+            return Evaluation::fromThing(
+                Thing::fromRuntimeValue(
+                    move(derefOperand.thing.runtimeValue.descriptor), move(result)),
+                move(derefOperand.variablesUsed));
           }
         }
     }
   }
 
-  Thing applyPostfixOperator(Thing&& operand, ast::PostfixOperator op);
+  Evaluation applyPostfixOperator(Evaluation&& operand, ast::PostfixOperator op);
 
   Evaluation applyTernaryOperator(
       Evaluation&& condition, const Expression& trueClause, const Expression& falseClause) {
-    condition = castTo(move(condition), Thing::fromBuiltinType(BuiltinType::BOOLEAN));
+    Dereferenced boolCondition =
+        castTo(move(condition), Type::fromBuiltinType(BuiltinType::BOOLEAN));
 
-    switch (condition.result.getKind()) {
+    switch (boolCondition.thing.getKind()) {
       case Thing::Kind::ERROR:
         return move(condition);
 
-      case Thing::Kind::BOOLEAN:
+      case Thing::Kind::BOOLEAN: {
         // The condition is known at compile time.  We don't even compile the dead branch because
         // the branch may assume things that the condition disproves.
-        if (condition.result.boolean) {
-          return compileExpression(trueClause);
+        const Expression* branchToCompile;
+        if (boolCondition.thing.boolean) {
+          branchToCompile = &trueClause;
         } else {
-          return compileExpression(falseClause);
+          branchToCompile = &falseClause;
         }
 
-      case Thing::Kind::RUNTIME_RVALUE: {
+        // Merge variables used by the branches.  Branches are guaranteed to execute after
+        // condition, so this is a sequential merge.
+        Evaluation result = compileExpression(*branchToCompile);
+        result.variablesUsed.mergeSequential(boolCondition.variablesUsed);
+
+        return result;
+      }
+
+      case Thing::Kind::RUNTIME_VALUE: {
+        // TODO(kenton):  Need to create sub-scopes or something to track the fact that only one
+        //   of the two branches' side effects will occur.
         Evaluation trueThing = compileExpression(trueClause);
         Evaluation falseThing = compileExpression(falseClause);
 
@@ -114,28 +143,103 @@ public:
         bool isPointer;
         CxxExpression trueCxx;
         CxxExpression falseCxx;
+        ValueDescriptor commonDescriptor;
 
         CxxExpression result(CxxExpression::Priority::TERNARY, isPointer);
 
         if (isPointer) {
-          result.append(move(condition.result.runtimeRvalue.cxxExpression))
+          result.append(move(boolCondition.thing.runtimeValue.cxxExpression))
                 .append(" ? ").appendBreak()
                 .append(move(trueCxx))
                 .append(" : ").appendBreak()
                 .append(move(falseCxx));
         } else {
-          result.append(move(condition.result.runtimeRvalue.cxxExpression))
+          result.append(move(boolCondition.thing.runtimeValue.cxxExpression))
                 .append(" ? ").appendBreak()
                 .appendAsPointer(move(trueCxx))
                 .append(" : ").appendBreak()
                 .appendAsPointer(move(falseCxx));
         }
-        return Evaluation(Thing::fromRuntimeRvalue(move(commonDescriptor), move(result)),
-                          {&condition, &trueThing, &falseThing});
+
+        // Since only one of the branches will actually be executed, we can consider them
+        // sequential.
+        boolCondition.variablesUsed.mergeSequential(trueThing.variablesUsed);
+        boolCondition.variablesUsed.mergeSequential(falseThing.variablesUsed);
+
+        // TODO(kenton):  If both branches are references, we actually want to return a reference...
+        return Evaluation::fromThing(
+            Thing::fromRuntimeValue(move(commonDescriptor), move(result)),
+            move(boolCondition.variablesUsed));
       }
 
       default:
+        throw "can't happen; cast to bool";
+    }
+  }
+
+  Evaluation getMember(Evaluation&& object, const string& memberName,
+                       errors::Location location) {
+    switch (object.getKind()) {
+      case Evaluation::Kind::REFERENCE:
+        switch (object.reference.getKind()) {
+          case Reference::Kind::NAMED: {
+            Variable& variable = *object.reference.named;
+            Maybe<Entity&> member = variable.getMember(memberName);
+
+            if (member) {
+              return Evaluation::fromReference(Reference::fromNamed(&*member),
+                                               move(object.variablesUsed));
+            } else {
+              context.error(errors::error(location, "No such member: ", memberName));
+              return Evaluation::fromError();
+            }
+          }
+
+          case Reference::Kind::ANONYMOUS: {
+            CxxExpression exp(CxxExpression::Priority::SUFFIX, false);
+            exp.appendMemberAccess(move(object.reference.anonymous.cxxExpression), memberName);
+            object.reference.anonymous.cxxExpression = move(exp);
+            return move(object);
+          }
+        }
         throw "can't happen";
+
+      case Evaluation::Kind::THING:
+        switch (object.thing.getKind()) {
+          case Thing::Kind::ERROR:
+            return move(object);
+
+          case Thing::Kind::BOOLEAN:
+          case Thing::Kind::INTEGER:
+          case Thing::Kind::DOUBLE:
+          case Thing::Kind::TUPLE:
+            context.error(errors::error(location, "Not an aggregate value."));
+            return Evaluation::fromError();
+
+          case Thing::Kind::OBJECT: {
+            Maybe<Member&> member = object.thing.object.type->lookupMember(memberName);
+            if (!member) {
+              context.error(errors::error(location, "No such member: ", memberName));
+              return Evaluation::fromError();
+            }
+
+            if (member->isField()) {
+              auto iter = object.thing.object.fields.find(&*member);
+              if (iter == object.thing.object.fields.end()) {
+                context.error(errors::error(location, "Field is not set: ", memberName));
+                return Evaluation::fromError();
+              } else {
+                return Evaluation::fromThing(move(iter->second), move(object.variablesUsed));
+              }
+            } else {
+              // TODO:  It's an overload...  could still become a field later.
+            }
+          }
+
+          //case Thing::Kind::TYPE:
+          //case Thing::Kind::RUNTIME_VALUE:
+          //case Thing::Kind::META_CONSTANT:
+        }
     }
   }
 
@@ -145,17 +249,20 @@ public:
         for (auto& error: expression.error) {
           context.error(error);
         }
-        return Evaluation(Thing::fromError());
+        return Evaluation::fromError();
       }
 
       case Expression::Type::VARIABLE: {
-        Maybe<Binding&> binding = scope.lookupBinding(expression.variable);
+        Maybe<Entity&> binding = scope.lookupBinding(expression.variable);
         if (binding) {
-          return binding->reference();
+          // Note that this doesn't actually *use* the binding, just forms a reference which may
+          // be used later.
+          // TODO:  Really?  Does it not use the binding's identity, at least?
+          return Evaluation::fromReference(Reference::fromNamed(&*binding), VariableUsageSet());
         } else {
           context.error(errors::error(expression.location, "Unknown identifier: ",
                                       expression.variable));
-          return Evaluation(Thing::fromError());
+          return Evaluation::fromError();
         }
       }
 
@@ -165,10 +272,11 @@ public:
       }
 
       case Expression::Type::LITERAL_INT:
-        return Evaluation(Thing::fromInteger(expression.literalInt));
+        return Evaluation::fromThing(Thing::fromInteger(expression.literalInt), VariableUsageSet());
 
       case Expression::Type::LITERAL_DOUBLE:
-        return Evaluation(Thing::fromDouble(expression.literalDouble));
+        return Evaluation::fromThing(Thing::fromDouble(expression.literalDouble),
+                                     VariableUsageSet());
 
       case Expression::Type::LITERAL_STRING:
         // TODO:  Generate code to construct the string class.
@@ -240,12 +348,26 @@ public:
           break;
 
         case ast::Statement::Type::EXPRESSION: {
-          Thing value = compileExpression(context, scope, statement.expression);
-          if (value.descriptor.getKind() != Thing::Kind::RUNTIME_RVALUE) {
-            context.error(errors::error(statement.location, "Statement has no effect."));
-          } else {
-            code.push_back(CxxStatement::addSemicolon(move(value.cxxExpression)));
+          Evaluation eval = compileExpression(statement.expression);
+
+          switch (eval.getKind()) {
+            case Evaluation::Kind::REFERENCE:
+              if (eval.reference.getKind() != Reference::Kind::ANONYMOUS) {
+                context.error(errors::error(statement.location, "Statement has no effect."));
+              }
+              code.push_back(CxxStatement::addSemicolon(
+                  move(eval.reference.anonymous.cxxExpression)));
+              break;
+            case Evaluation::Kind::THING:
+              if (eval.thing.getKind() != Thing::Kind::RUNTIME_VALUE) {
+                context.error(errors::error(statement.location, "Statement has no effect."));
+              }
+              code.push_back(CxxStatement::addSemicolon(
+                  move(eval.thing.runtimeValue.cxxExpression)));
+              break;
           }
+
+          // TODO(kenton):  Verify no conflicting variable usage.
           break;
         }
 

@@ -39,15 +39,18 @@ using std::set;
 class CodePrinter;
 
 // Resource types.
+class Context;
 class Scope;
-class Binding;
+class Entity;
+class Variable;
 class Class;
 class Interface;
-class Field;
 class Enum;
 class Function;
+class Overload;
 
 // Value types.
+class Reference;
 class Thing;
 class CxxExpression;
 
@@ -132,6 +135,41 @@ public:
 
 // =======================================================================================
 
+class TypeDescriptor {
+public:
+  vector<Thing> supertypes;
+  vector<Thing> subtypes;
+};
+
+class ValueDescriptor {
+public:
+  Indirect<Thing> type;
+
+  // Variables which the value aliases.
+  enum class AliasType {
+    IDENTITY,
+    IMMUTABLE,
+    MUTABLE
+  };
+  map<Variable*, AliasType> aliases;
+
+  // TODO:  Constraints, e.g. integer range
+};
+
+class ThingDescriptor {
+public:
+  enum class Kind {
+    VALUE,
+    TYPE,
+    FUNCTION
+  };
+
+  union {
+    ValueDescriptor valueDescriptor;
+    TypeDescriptor typeDescriptor;
+  };
+};
+
 enum class BuiltinType {
   BOOLEAN,
   INTEGER,
@@ -140,27 +178,68 @@ enum class BuiltinType {
   // TODO:  fixed array?
 };
 
-class ValueDescriptor {
+class Type {
 public:
-  // TODO:  type, supertypes, subtypes, annotations, constraints, outstanding binding locks
-
-  Indirect<Thing> type;
-
-  // Aliases which the value contains.
-  enum class AliasType {
-    IDENTITY,
-    IMMUTABLE,
-    MUTABLE
+  enum class Kind {
+    BUILTIN,
+    CLASS,
+    ENUM,
+    INTERFACE
   };
-  map<Binding*, AliasType> identityAliases;
 
-  // TODO:  Constraints.
+  Kind getKind();
+
+  union {
+    BuiltinType builtin;
+    Class* class_;
+    Enum* enum_;
+    Interface* interface;
+  };
+
+  Maybe<Indirect<Thing>> outerObject;
+  vector<Thing> paramValues;
+
+  static Type fromBuiltinType(BuiltinType type);
 };
 
-class TypeDescriptor {
+class EntityContext {
 public:
-  vector<Thing> supertypes;
-  vector<Thing> subtypes;
+  // TODO:  Do these Things need to be Evaluations, or something that supports references?
+  //   What about the case where a type parameter is an expression -- should that even be allowed?
+  //   BoundExpression = Expression + Scope, maybe?
+  Indirect<Thing> outerObject;
+  vector<Thing> paramValues;
+
+  // TODO:  Implicit references drawn from environment.
+};
+
+class Reference {
+public:
+  UNION_TYPE_BOILERPLATE(Reference);
+
+  enum class Kind {
+    NAMED,
+    ANONYMOUS
+  };
+
+  Kind getKind();
+
+  struct Anonymous {
+    ValueDescriptor descriptor;
+    CxxExpression cxxExpression;
+
+    // Variables which must be locked if and when the reference is used.
+    set<Variable*> entangledVariables;
+  };
+
+  union {
+    Variable* named;
+    Anonymous anonymous;
+  };
+
+  static Reference fromNamed(Variable* variable);
+  static Reference fromAnonymous(ValueDescriptor&& descriptor, CxxExpression&& code,
+                                 set<Variable*>&& entangledVariables);
 };
 
 class Thing {
@@ -172,9 +251,6 @@ public:
 
     // Compile-time known
 
-    // Reference to known binding, which itself may have constant value.
-    BINDING,
-
     // Compile-time known values.
     BOOLEAN,
     INTEGER,
@@ -183,24 +259,23 @@ public:
     TUPLE,
 
     // Compile-time known types.
-    BUILTIN_TYPE,
-    CLASS,
-    INTERFACE,
-    ENUM,
+    TYPE,
 
     // Not compile-time known.
-    RUNTIME_LVALUE,
-    RUNTIME_RVALUE,
+    // TODO:  Rename DYNAMIC
+    RUNTIME_VALUE,
 
     META_CONSTANT  // A metaprogramming parameter that has not yet been bound, but will be a
                    // compile-time constant.
   };
 
-  Kind getKind() { return type; }
+  Kind getKind() { return kind; }
 
   struct Object {
     Class* type;
-    map<Field*, Thing> fields;
+    Maybe<Indirect<Thing>> outerObject;
+    vector<Thing> typeParams;
+    map<Variable*, Thing> fields;
   };
 
   struct Tuple {
@@ -211,15 +286,7 @@ public:
     VALUE_TYPE2(Tuple, vector<Thing>&&, positionalElements, KeywordElementMap&&, keywordElements);
   };
 
-  struct RuntimeLvalue {
-    ValueDescriptor descriptor;
-    CxxExpression cxxExpression;
-
-    // Bindings which must be locked if and when the lvalue is used.
-    set<Binding*> entangledBindings;
-  };
-
-  struct RuntimeRvalue {
+  struct RuntimeValue {
     ValueDescriptor descriptor;
     CxxExpression cxxExpression;
   };
@@ -232,24 +299,15 @@ public:
   };
 
   union {
-    Binding* binding;
-
     bool boolean;
     int integer;
     double double_;
     Object object;
     Tuple tuple;
 
-    // TODO:  Types and functions may need to be bound to type parameters.
-    Function* function;
+    Type type_;
 
-    BuiltinType builtinType;
-    Class* class_;
-    Interface* interface;
-    Enum* enum_;
-
-    RuntimeLvalue runtimeLvalue;
-    RuntimeRvalue runtimeRvalue;
+    RuntimeValue runtimeValue;
     MetaConstant metaConstant;
   };
 
@@ -259,136 +317,128 @@ public:
   static Thing fromInteger(int value);
   static Thing fromDouble(double value);
 
-  static Thing fromBuiltinType(BuiltinType type);
+  static Thing fromType(Type&& type);
 
-  static Thing fromRuntimeRvalue(ValueDescriptor&& descriptor, CxxExpression&& cxxExpression);
+  static Thing fromRuntimeValue(ValueDescriptor&& descriptor, CxxExpression&& cxxExpression);
 
 private:
-  // For the sake of the union macros, the discriminating enum must be called Type, but that is
-  // confusing in this context, so we make this a private detail and use "kind" publicly.
-  typedef Kind Type;
-  Type type;
+  Kind kind;
+};
+
+class VariableUsageSet {
+public:
+  enum class Style {
+    IDENTITY,
+    MUTABLE,
+    IMMUTABLE,
+    MEMBER_MUTABLE,
+    MEMBER_IMMUTABLE,
+    ASSIGNMENT
+  };
+
+  void addSequential(Variable* variable, Style style, errors::Location location);
+  void mergeSequential(const VariableUsageSet& other);
+  void mergeParallel(const VariableUsageSet& other, Context* context);
+
+  bool operator==(const VariableUsageSet& other) const {
+    return variablesUsed == other.variablesUsed;
+  }
+  bool operator!=(const VariableUsageSet& other) const {
+    return variablesUsed != other.variablesUsed;
+  }
+
+private:
+  struct Usage {
+    Style style;
+    errors::Location location;
+
+    VALUE_TYPE2(Usage, Style, style, errors::Location, location);
+  };
+
+  map<Variable*, Usage> variablesUsed;
 };
 
 class Evaluation {
 public:
-  Thing result;
+  UNION_TYPE_BOILERPLATE(Evaluation);
 
-  // Bitfield.
-  enum BindingUsage {
-    MUTABLY = 1,
-    IMMUTABLY = 2,
-    MEMBER_MUTABLY = 4,
-    MEMBER_IMMUTABLY = 8
+  enum Kind {
+    REFERENCE,
+    THING
   };
-  map<Binding*, int> bindingsUsed;
 
-  explicit Evaluation(Thing&& result);
-  Evaluation(Thing&& result, Binding* binding, BindingUsage usage);
-  Evaluation(Thing&& result, std::initializer_list<const Evaluation*> inputs);
+  Kind getKind();
 
-  void mergeBindingsUsedFrom(const Evaluation& other);
+  union {
+    Reference reference;
+    Thing thing;
+  };
+
+  VariableUsageSet variablesUsed;
+
+  static Evaluation fromReference(Reference&& reference, VariableUsageSet&& variablesUsed);
+  static Evaluation fromThing(Thing&& thing, VariableUsageSet&& variablesUsed);
+
+  static Evaluation fromError();
 };
 
 // =======================================================================================
 
-class Function {
+class Entity {
 public:
+  virtual ~Entity();
 };
 
-class Field {
+class Variable {
+  // Variable keeps track of knowledge about a named value in the current scope.
 public:
-};
-
-class Class {
-public:
-};
-
-class Enum {
-public:
-};
-
-class Interface {
-public:
-};
-
-class BindingDescriptor {
-public:
-  enum class Kind {
-    VALUE,
-    TYPE,
-    FUNCTION
-  };
-
-  union {
-    ValueDescriptor valueDescriptor;
-    TypeDescriptor typeDescriptor;
-  };
-  vector<Thing> annotations;
-};
-
-class Binding {
-  // Binding keeps track of knowledge about a named thing in the current scope.
-public:
-  virtual ~Binding();
+  virtual ~Variable();
 
   // interface
-  // TODO:  Lazy init?
-  const ThingDescriptor& getDescriptor();
+  virtual const ThingDescriptor& getDescriptor() = 0;
+  virtual const vector<Thing>& getAnnotations() = 0;
+
   // style + style constraints
   // visibility
 
   // implementation
-  // VARIABLE:  value if known
-  // FUNCTION, CLASS, INTERFACE, ENUM:  lazy ref to body
 
+  bool assign(Thing&& value, VariableUsageSet& variablesUsed, errors::Location location);
 
-  // For VARIABLE
+  Thing read(VariableUsageSet& variablesUsed, errors::Location location);
+  void entangle(VariableUsageSet::Style style, VariableUsageSet& variablesUsed,
+                errors::Location location);
 
-  virtual bool assign(Thing&& value) = 0;
+  Maybe<Entity&> getMember(const string& name);
+};
 
-  class ImmutableHandle {
-  public:
-    virtual ~ImmutableHandle();
-    virtual Thing get() = 0;
-  };
-  virtual OwnedPtr<ImmutableHandle> useImmutably(errors::Location location) = 0;
+class Function: public Entity {
+public:
+};
 
-  class MutableHandle {
-  public:
-    virtual ~MutableHandle();
-  };
-  virtual OwnedPtr<MutableHandle> useMutably(errors::Location location) = 0;
+class Overload: public Entity {
+public:
+  Entity* resolve(const Thing::Tuple& parameters);
+};
 
-  // For VARIABLE or TYPE
+// TODO:  Rename BuiltinType
+class BuiltinClass: public Entity {
+public:
+};
 
-  class MemberHandle {
-  public:
-    RESOURCE_TYPE_BOILERPLATE(MemberHandle);
+class Class: public Entity {
+public:
+  Maybe<Entity&> lookupMember(const string& name);
+  Thing convertFrom(Thing::Tuple&& input);
+  Maybe<Overload&> getConstructor(const string& name);
+};
 
-    MemberHandle(Binding& bindind): binding(binding) {}
-    ~MemberHandle();
+class Enum: public Entity {
+public:
+};
 
-    Binding& binding;
-  };
-  virtual OwnedPtr<MemberHandle> useMember(errors::Location location) = 0;
-
-  // For TYPE
-
-  virtual Thing convertFrom(Thing::Tuple&& input) = 0;
-
-  // For FUNCTION
-
-  class OverloadHandle {
-  public:
-    RESOURCE_TYPE_BOILERPLATE(OverloadHandle);
-
-    OverloadHandle(Binding& bindind): binding(binding) {}
-    ~OverloadHandle();
-
-    Binding& binding;
-  };
-  virtual OwnedPtr<OverloadHandle> useOverload(const Thing::Tuple& parameters) = 0;
+class Interface: public Entity {
+public:
 };
 
 class Scope {
@@ -399,14 +449,13 @@ public:
 
   // For EXPRESSION
 
-  Maybe<Binding&> lookupBinding(const string& name);
+  Maybe<Entity&> lookupBinding(const string& name);
   // Note that this may instantiate a template.
   // Note also that this returns a proxy specific to the current scope.
 
   // For DECLARATION
 
-  Binding& declareValueBinding(const string& name, Thing&& value);
-  void declareBinding(const string& name, Type&& type);
+  Variable& declareVariable(const string& name, Thing&& value);
 
   // Code will be compiled on-demand.
   void declareClass(const string& name, ClassDescriptor&& descirptor,
@@ -438,7 +487,7 @@ public:
 private:
   const Scope& parent;
 
-  OwnedPtrMap<string, Binding> bindings;
+  OwnedPtrMap<string, Entity> bindings;
   map<string, OwnedPtrVector<Function> > functions;
 };
 

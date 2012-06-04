@@ -146,6 +146,77 @@ void destroy(T& obj) {
     return false; \
   }
 
-}
+
+
+
+
+
+#define KINDUNION_MEMBER_MOVE_CONSTRUCT(ID, NAME, TYPE) \
+  case Kind::ID: \
+    new (&NAME) TYPE(move(other.NAME)); \
+    break;
+#define KINDUNION_EXTRA_MOVE_CONSTRUCT(NAME, SHOULD_COMPARE) NAME(move(other.NAME)),
+#define KINDUNION_MEMBER_COPY_CONSTRUCT(ID, NAME, TYPE) \
+  case Kind::ID: \
+    new (&NAME) TYPE(other.NAME); \
+    break;
+#define KINDUNION_EXTRA_COPY_CONSTRUCT(NAME, SHOULD_COMPARE) NAME(other.NAME),
+#define KINDUNION_MEMBER_DESTRUCT(ID, NAME, TYPE) \
+  case Kind::ID: \
+    destroy(NAME); \
+    break;
+#define KINDUNION_EXTRA_DESTRUCT(NAME, SHOULD_COMPARE)
+#define KINDUNION_MEMBER_COMPARE(ID, NAME, TYPE) \
+  case Kind::ID: \
+    return NAME == other.NAME;
+#define KINDUNION_EXTRA_COMPARE(NAME, SHOULD_COMPARE) \
+  if ((SHOULD_COMPARE) && NAME != other.NAME) return false;
+
+#define KINDUNION_IMPLEMENT(SCOPE, TYPENAME, MEMBERS, EXTRAS) \
+  SCOPE TYPENAME::TYPENAME(TYPENAME&& other) \
+      : EXTRAS(UNION_EXTRA_MOVE_CONSTRUCT) kind(other.kind) { \
+    switch (kind) { \
+      MEMBERS(UNION_MEMBER_MOVE_CONSTRUCT) \
+    } \
+  } \
+  \
+  SCOPE TYPENAME::TYPENAME(const TYPENAME& other) \
+      : EXTRAS(UNION_EXTRA_COPY_CONSTRUCT) kind(other.kind) { \
+    switch (kind) { \
+      MEMBERS(UNION_MEMBER_COPY_CONSTRUCT) \
+    } \
+  } \
+  \
+  SCOPE TYPENAME::~TYPENAME() noexcept { \
+    EXTRAS(UNION_EXTRA_DESTRUCT) \
+    switch (kind) { \
+      MEMBERS(UNION_MEMBER_DESTRUCT) \
+    } \
+  } \
+  \
+  SCOPE TYPENAME& SCOPE TYPENAME::operator=(TYPENAME&& other) { \
+    this->~TYPENAME(); \
+    new(this) TYPENAME(move(other)); \
+    return *this; \
+  } \
+  \
+  SCOPE TYPENAME& SCOPE TYPENAME::operator=(const TYPENAME& other) { \
+    this->~TYPENAME(); \
+    new(this) TYPENAME(other); \
+    return *this; \
+  } \
+  \
+  bool SCOPE TYPENAME::operator==(const TYPENAME& other) const { \
+    EXTRAS(UNION_EXTRA_COMPARE) \
+    if (kind == other.kind) { \
+      switch (kind) { \
+        MEMBERS(UNION_MEMBER_COMPARE) \
+      } \
+    } \
+    \
+    return false; \
+  }
+
+}  // namespace modc
 
 #endif /* KENTONSCODE_MODC_MACROS_H_ */
