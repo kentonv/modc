@@ -51,6 +51,7 @@ class Function;
 class Overload;
 
 // Value types.
+class Value;
 class Reference;
 class Thing;
 class CxxExpression;
@@ -137,11 +138,101 @@ public:
 
 // =======================================================================================
 
+class EntityContext {
+public:
+  UNION_TYPE_BOILERPLATE(EntityContext);
+
+  enum class Kind {
+    MEMBER,
+    LOCAL
+  };
+
+  Kind getKind();
+
+  union {
+    Indirect<Value> outerObject;
+    Scope* scope;
+  };
+
+  // Parameters, including:
+  // - For a parameterized class, the dynamic type parameters.
+  // - For a local class or function, the local parameters.
+  //   TODO:  Should local parameters really be passed here, as opposed to being readable directly
+  //   in the inner scope?
+  vector<Value> params;
+
+  static EntityContext forMember(Value&& outerObject);
+  static EntityContext forLocal(Scope& scope);
+};
+
+class Value {
+public:
+  UNION_TYPE_BOILERPLATE(Value);
+
+  enum class Kind {
+    // A placeholder value that is not yet known, e.g. because it is a metaprogramming constant,
+    // or because there was an error when trying to evaluate the value.
+    UNKNOWN,
+
+    BOOLEAN,
+    INTEGER,
+    DOUBLE,
+
+    OBJECT,
+    ARRAY,
+
+    POINTER
+  };
+
+  Kind getKind() { return kind; }
+
+  struct Object {
+    Entity* type;
+    EntityContext typeContext;
+    map<Variable*, Value> fields;
+  };
+
+  struct Array {
+    Entity* elementType;
+    EntityContext elementTypeContext;
+    vector<Value> elements;
+  };
+
+  struct Pointer {
+    Entity* entity;
+    EntityContext context;
+  };
+
+  union {
+    bool boolean;
+    int integer;
+    double double_;
+
+    Object object;
+    Array array;
+
+    Pointer pointer;
+  };
+
+  static Value fromUnknown();
+
+  static Value fromBoolean(bool value);
+  static Value fromInteger(int value);
+  static Value fromDouble(double value);
+
+  static Value fromReference(Entity* entity, EntityContext&& context);
+
+private:
+  Kind kind;
+};
+
 class BoundExpression {
 public:
   UNION_TYPE_BOILERPLATE(BoundExpression);
 
   enum class Kind {
+    CONSTANT,
+
     BINARY_OPERATOR,
     PREFIX_OPERATOR,
     POSTFIX_OPERATOR,
@@ -149,67 +240,71 @@ public:
 
     FUNCTION_CALL,
     SUBSCRIPT,
-    MEMBER_ACCESS
+    MEMBER_ACCESS,
 
-    // cast?  dereference?
+    READ_POINTER
+
+    // cast?
   };
 
   Kind getKind() const { return kind; }
 
   struct BinaryOperator {
     ast::BinaryOperator op;
-    Indirect<Thing> left;
-    Indirect<Thing> right;
+    Indirect<Value> left;
+    Indirect<Value> right;
 
-    VALUE_TYPE3(BinaryOperator, ast::BinaryOperator, op, Thing&&, left, Thing&&, right);
+    VALUE_TYPE3(BinaryOperator, ast::BinaryOperator, op, Value&&, left, Value&&, right);
   };
 
   struct PrefixOperator {
     ast::PrefixOperator op;
-    Indirect<Thing> operand;
+    Indirect<Value> operand;
 
-    VALUE_TYPE2(PrefixOperator, ast::PrefixOperator, op, Thing&&, operand);
+    VALUE_TYPE2(PrefixOperator, ast::PrefixOperator, op, Value&&, operand);
   };
 
   struct PostfixOperator {
-    Indirect<Thing> operand;
+    Indirect<Value> operand;
     ast::PostfixOperator op;
 
-    VALUE_TYPE2(PostfixOperator, Thing&&, operand, ast::PostfixOperator, op);
+    VALUE_TYPE2(PostfixOperator, Value&&, operand, ast::PostfixOperator, op);
   };
 
   struct TernaryOperator {
-    Indirect<Thing> condition;
-    Indirect<Thing> trueClause;
-    Indirect<Thing> falseClause;
+    Indirect<Value> condition;
+    Indirect<Value> trueClause;
+    Indirect<Value> falseClause;
 
-    VALUE_TYPE3(TernaryOperator, Thing&&, condition, Thing&&, trueClause, Thing&&, falseClause);
+    VALUE_TYPE3(TernaryOperator, Value&&, condition, Value&&, trueClause, Value&&, falseClause);
   };
 
   struct FunctionCall {
-    Indirect<Thing> function;
-    vector<TupleElement> parameters;
+    Indirect<Value> function;
+    vector<BoundExpression> parameters;
 
-    VALUE_TYPE2(FunctionCall, Thing&&, function, vector<TupleElement>&&, parameters);
+    VALUE_TYPE2(FunctionCall, Value&&, function, vector<BoundExpression>&&, parameters);
   };
 
   struct Subscript {
-    Indirect<Thing> container;
-    Indirect<Thing> subscript;
+    Indirect<Value> container;
+    Indirect<Value> subscript;
 
-    VALUE_TYPE2(Subscript, Thing&&, container, Thing&&, subscript);
+    VALUE_TYPE2(Subscript, Value&&, container, Value&&, subscript);
   };
 
   struct MemberAccess {
-    Indirect<Thing> object;
+    Indirect<Value> object;
     Entity* member;
     ast::StyleAllowance thisStyleAllowance;
 
-    VALUE_TYPE3(MemberAccess, Thing&&, object, Entity*, member,
+    VALUE_TYPE3(MemberAccess, Value&&, object, Entity*, member,
                 ast::StyleAllowance, thisStyleAllowance);
   };
 
   union {
+    Value constant;
+
     BinaryOperator binaryOperator;
     PrefixOperator prefixOperator;
     PostfixOperator postfixOperator;
@@ -218,17 +313,19 @@ public:
     FunctionCall functionCall;
     Subscript subscript;
     MemberAccess memberAccess;
+
+    Indirect<BoundExpression> readPointer;
   };
 
-  static BoundExpression fromBinaryOperator(ast::BinaryOperator op, Thing&& left, Thing&& right);
-  static BoundExpression fromPrefixOperator(ast::PrefixOperator op, Thing&& exp);
-  static BoundExpression fromPostfixOperator(Thing&& exp, ast::PostfixOperator op);
-  static BoundExpression fromTernaryOperator(Thing&& condition, Thing&& trueClause,
-                                             Thing&& falseClause);
+  static BoundExpression fromBinaryOperator(ast::BinaryOperator op, Value&& left, Value&& right);
+  static BoundExpression fromPrefixOperator(ast::PrefixOperator op, Value&& exp);
+  static BoundExpression fromPostfixOperator(Value&& exp, ast::PostfixOperator op);
+  static BoundExpression fromTernaryOperator(Value&& condition, Value&& trueClause,
+                                             Value&& falseClause);
 
-  static BoundExpression fromFunctionCall(Thing&& function, vector<TupleElement>&& parameters);
-  static BoundExpression fromSubscript(Thing&& container, Thing&& key);
-  static BoundExpression fromMemberAccess(Thing&& object, string&& member,
+  static BoundExpression fromFunctionCall(Value&& function, vector<BoundExpression>&& parameters);
+  static BoundExpression fromSubscript(Value&& container, Value&& key);
+  static BoundExpression fromMemberAccess(Value&& object, string&& member,
                                           ast::StyleAllowance thisStyleAllowance);
 
 private:
@@ -279,134 +376,53 @@ public:
   };
 };
 
-class EntityContext {
-public:
-  UNION_TYPE_BOILERPLATE(EntityContext);
-
-  enum class Kind {
-    MEMBER,
-    LOCAL
-  };
-
-  Kind getKind();
-
-  union {
-    Indirect<Thing> outerObject;
-    Scope* scope;
-  };
-
-  // Parameters, including:
-  // - For a parameterized class, the dynamic type parameters.
-  // - For a local class or function, the local parameters.
-  //   TODO:  Should local parameters really be passed here, as opposed to being readable directly
-  //   in the inner scope?
-  vector<Thing> params;
-
-  static EntityContext forMember(Thing&& outerObject);
-  static EntityContext forLocal(Scope& scope);
-};
-
 class Thing {
 public:
   UNION_TYPE_BOILERPLATE(Thing);
 
   enum class Kind {
-    ERROR,
-
-    // Compile-time known values.
-    BOOLEAN,
-    INTEGER,
-    DOUBLE,
-
-    OBJECT,
-    ARRAY,
+    CONSTANT,
     TUPLE,
-
-    // A non-value entity, dereferenced.
-    ENTITY,
-
-    // Not compile-time known.
-    DYNAMIC_VALUE,
-
-    REFERENCE,
-    DYNAMIC_REFERENCE,
-
-    META_CONSTANT  // A metaprogramming parameter that has not yet been bound, but will be a
-                   // compile-time constant.
+    DYNAMIC,
+    ENTITY
   };
 
   Kind getKind() { return kind; }
 
-  struct Object {
-    Class* type;
-    Maybe<Indirect<Thing>> outerObject;
-    vector<Thing> typeParams;
-    map<Variable*, Thing> fields;
-
-    // TODO: Aliases?  ValueDescriptor?
-  };
-
-  struct Array {
-    ValueDescriptor elementDescriptor;
-    vector<Thing> elements;
-
-    // TODO: Aliases?  ValueDescriptor?
-  };
-
-  struct DynamicValue {
-    ValueDescriptor descriptor;
-    BoundExpression expression;
-  };
-
-  struct Reference {
-    Entity* entity;
-    EntityContext context;
-  };
-
-  struct DynamicReference {
+  struct Dynamic {
     ValueDescriptor descriptor;
     BoundExpression expression;
 
+    // TODO:  Aliases
+    // TODO:  Partial knowledge, e.g. some members of an object or elements of an array.
+
+    // Only if the expression is a pointer.
     // Variables which must be marked mutated if/when the references is used mutably.  These
     // are accumulated when calling functions that return entangled references.
     set<Variable*> entangledVariables;
   };
 
+  struct BoundEntity {
+    Entity* entity;
+    EntityContext context;
+  };
+
   struct MetaConstant {
     // Type may or may not be known.
-    Maybe<Indirect<Thing>> type;
+    Maybe<ValueDescriptor> descriptor;
 
-    VALUE_TYPE1(MetaConstant, Maybe<Indirect<Thing>>&&, type);
+    VALUE_TYPE1(MetaConstant, Maybe<ValueDescriptor>&&, descriptor);
   };
 
   union {
-    bool boolean;
-    int integer;
-    double double_;
-
-    Object object;
-    Array array;
+    Value constant;
     vector<TupleElement> tuple;
-
-    DynamicValue dynamicValue;
-
-    Reference entity;
-
-    Reference reference;
-    DynamicReference dynamicReference;
-
-    MetaConstant metaConstant;
+    Dynamic dynamic;
+    BoundEntity entity;
   };
 
-  static Thing fromError();
-
-  static Thing fromBoolean(bool value);
-  static Thing fromInteger(int value);
-  static Thing fromDouble(double value);
-
-  static Thing fromReference(Entity* entity, EntityContext&& context);
-
-  static Thing fromDynamicValue(ValueDescriptor&& descriptor, BoundExpression&& cxxExpression);
+  static Thing fromConstant(Value&& value);
+  static Thing fromDynamic(ValueDescriptor&& descriptor, BoundExpression&& expression);
 
 private:
   Kind kind;
