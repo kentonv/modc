@@ -26,6 +26,11 @@ using std::move;
 using ast::Expression;
 using ast::Statement;
 
+class Evaluator {
+public:
+  Value readPointer(Value&& pointer);
+};
+
 class Compiler {
 public:
   Compiler(Context& context, Scope& scope): context(context), scope(scope) {}
@@ -35,23 +40,71 @@ public:
   bool compare(const Thing& a, const Thing& b);
   bool compare(const EntityName& a, const EntityName& b);
 
+  Value evaluate(const BoundExpression& expression);
+
+  Thing errorCantUseHere(Thing&& value, errors::Location location) {
+    // TODO:  Improve error message.
+    context.error(errors::error(location, "Can't use this thing here."));
+    return Thing::fromUnknown();
+  }
+
+
   Thing dereference(Thing&& input, VariableUsageSet& variablesUsed, errors::Location location,
                     VariableUsageSet::Style style = VariableUsageSet::Style::IMMUTABLE) {
     switch (input.getKind()) {
-      case Thing::Kind::REFERENCE:
-        return input.reference.entity->dereference(
-            move(input.reference.context), variablesUsed, location, style);
-      case Thing::Kind::DYNAMIC_REFERENCE:
-        for (Variable* variable: input.dynamicReference.entangledVariables) {
-          variable->entangle(VariableUsageSet::Style::IMMUTABLE, variablesUsed, location);
+      case Thing::Kind::UNKNOWN:
+        // Update the descriptor, if there is one and it is a value.
+        if (input.unknown) {
+          if (input.unknown->getKind() != ThingDescriptor::Kind::VALUE) {
+            return errorCantUseHere(move(input), location);
+          }
+          variablesUsed.addUsage(input.unknown->value, style);
+          switch (input.unknown->value.style) {
+            case ast::Style::VALUE:
+            case ast::Style::CONSTANT:
+              // Already dereferenced.
+              break;
+
+            case ast::Style::IMMUTABLE_REFERENCE:
+            case ast::Style::MUTABLE_REFERENCE:
+            case ast::Style::ENTANGLED_REFERENCE:
+            case ast::Style::HEAP_VALUE:
+              input.unknown->value.style = ast::Style::VALUE;
+              break;
+          }
+        }
+        return move(input);
+
+      case Thing::Kind::VALUE:
+        variablesUsed.addUsage(input.value.descriptor, style);
+        switch (input.value.descriptor.style) {
+          case ast::Style::VALUE:
+          case ast::Style::CONSTANT:
+            // Already dereferenced.
+            return move(input);
+
+          case ast::Style::IMMUTABLE_REFERENCE:
+          case ast::Style::MUTABLE_REFERENCE:
+          case ast::Style::ENTANGLED_REFERENCE:
+          case ast::Style::HEAP_VALUE:
+            input.value.descriptor.style = ast::Style::VALUE;
+            if (input.value.expression.getKind() == BoundExpression::Kind::CONSTANT) {
+              input.value.expression.constant =
+                  evaluator.readPointer(move(input.value.expression.constant));
+              assert(!input.value.partialValue);
+            } else {
+              input.value.expression =
+                  BoundExpression::fromReadPointer(move(input.value.expression));
+              if (input.value.partialValue) {
+                input.value.partialValue = evaluator.readPointer(move(*input.value.partialValue));
+              }
+            }
+            return move(input);
         }
 
-        return Thing::fromDynamicValue(
-            move(input.dynamicReference.descriptor),
-            move(input.dynamicReference.expression));
-
-      default:
-        return move(input);
+      case Thing::Kind::ENTITY:
+      case Thing::Kind::TUPLE:
+        return errorCantUseHere(move(input), location);
     }
 
     throw "can't get here";
@@ -59,83 +112,258 @@ public:
 
   Thing castTo(Thing&& input, const Thing& type,
                VariableUsageSet& variablesUsed, errors::Location location);
+
+
   ValueDescriptor findCommonSupertype(const ValueDescriptor& type1, const ValueDescriptor& type2);
 
-  Thing applyBinaryOperator(Thing&& left, ast::BinaryOperator op, Thing&& right);
-
-  Thing applyPrefixOperator(ast::PrefixOperator op, Thing&& operand,
-                            VariableUsageSet& variablesUsed, errors::Location location) {
-    Thing derefOperand = dereference(move(operand), variablesUsed, location);
-
-    switch (op) {
-      case ast::PrefixOperator::POSITIVE:
-        switch (derefOperand.getKind()) {
-          case Thing::Kind::INTEGER:
-          case Thing::Kind::DOUBLE:
-            return move(derefOperand);
-
-          case Thing::Kind::OBJECT:
-            // TODO:  Apply operator+
-            throw "unimplemented";
-
-          case Thing::Kind::DYNAMIC_VALUE: {
-            // TODO:  Verify that the type has operator+, and check what operator+ returns (for now
-            //   we're assuming it returns the same type, but that's wrong).
-            ValueDescriptor descriptor = derefOperand.dynamicValue.descriptor;
-            return Thing::fromDynamicValue(move(descriptor),
-                BoundExpression::fromPrefixOperator(op, move(derefOperand)));
-          }
+  const ValueDescriptor* getValueDescriptor(const Thing& value) {
+    switch (value.getKind()) {
+      case Thing::Kind::UNKNOWN:
+        // Update the descriptor, if there is one and it is a value.
+        if (value.unknown) {
+          assert(value.unknown->getKind() == ThingDescriptor::Kind::VALUE);
+          return &value.unknown->value;
+        } else {
+          return nullptr;
         }
+
+      case Thing::Kind::VALUE:
+        return &value.value.descriptor;
+
+      case Thing::Kind::ENTITY:
+      case Thing::Kind::TUPLE:
+        return nullptr;
+    }
+
+    throw "can't get here";
+  }
+
+  Maybe<ThingDescriptor> getThingDescriptor(const Thing& value);
+
+  Thing applyBinaryOperator(const Expression& leftExpression, ast::BinaryOperator op,
+                            const Expression& rightExpression,
+                            VariableUsageSet& variablesUsed, errors::Location location) {
+    vector<VariableUsageSet> subVariablesUsed(2);
+
+    Thing left = dereference(
+        evaluate(leftExpression, variablesUsed), subVariablesUsed[0], leftExpression.location);
+    Thing right = dereference(
+        evaluate(rightExpression, variablesUsed), subVariablesUsed[1], rightExpression.location);
+
+    variablesUsed.merge(move(subVariablesUsed), context);
+
+    const ValueDescriptor* leftDesc = getValueDescriptor(left);
+    const ValueDescriptor* rightDesc = getValueDescriptor(right);
+
+    if (leftDesc == nullptr || rightDesc == nullptr) {
+      // Can't do anything if one input is fully unknown.
+      return Thing::fromUnknown();
+    }
+
+    Maybe<Overload&> leftOverload = leftDesc->type->lookupLeftBinaryOperator(op);
+    Maybe<Overload&> righOverload = rightDesc->type->lookupLeftBinaryOperator(op);
+
+    // TODO:  Binary operators are more complicated since parameters arguably shouldn't be
+    //   dereferenced...  hmm...
+    throw "TODO";
+
+    if (!leftOverload && !leftOverload) {
+      context.error(errors::error(location, "Operands do not support this operator."));
+      return Thing::fromUnknown();
+    }
+
+    if (left.getKind() == Thing::Kind::UNKNOWN || right.getKind() == Thing::Kind::UNKNOWN) {
+      // One operand is unknown, so result must be unknown.
     }
   }
 
-  Thing applyPostfixOperator(Thing&& operand, ast::PostfixOperator op);
+  Thing applyPrefixOperator(ast::PrefixOperator op, const Expression& operandExpression,
+                            VariableUsageSet& variablesUsed, errors::Location location) {
+    Thing operand = evaluate(operandExpression, variablesUsed);
 
-  Thing applyTernaryOperator(Thing&& condition, const Expression& trueClause,
-                             const Expression& falseClause,
-                             VariableUsageSet& variablesUsed, Location location) {
-    Thing boolCondition =
-        castTo(move(condition), scope.lookupBuiltinType(BuiltinType::Type::BOOLEAN),
-               variablesUsed, location);
+    switch (operand.getKind()) {
+      case Thing::Kind::UNKNOWN:
+        // Update the descriptor, if there is one and it is a value.
+        if (operand.unknown) {
+          if (operand.unknown->getKind() != ThingDescriptor::Kind::VALUE) {
+            return errorCantUseHere(move(operand), operandExpression.location);
+          }
 
-    switch (boolCondition.getKind()) {
-      case Thing::Kind::ERROR:
-        return move(boolCondition);
+          Maybe<Function&> method = operand.unknown->value.type->lookupPrefixOperator(op);
+          if (!method) {
+            context.error(errors::error(location, "Operand does not support this operator."));
+            return Thing::fromUnknown();
+          }
 
-      case Thing::Kind::BOOLEAN: {
-        // The condition is known at compile time.  We don't even compile the dead branch because
-        // the branch may assume things that the condition disproves.
-        const Expression* branchToCompile;
-        if (boolCondition.boolean) {
-          branchToCompile = &trueClause;
-        } else {
-          branchToCompile = &falseClause;
+          // Unary operator must always have empty parameters.
+          assert(method->getParameters().empty());
+
+          operand.unknown->value = method->getReturnDescriptor(
+              move(operand.unknown->value), vector<ValueDescriptor>());
+        }
+        return move(operand);
+
+      case Thing::Kind::VALUE: {
+        Maybe<Function&> method = operand.value.descriptor.type->lookupPrefixOperator(op);
+        if (!method) {
+          context.error(errors::error(location, "Operand does not support this operator."));
+          return Thing::fromUnknown();
         }
 
-        // Branches are guaranteed to execute after condition, so no need to create a separate
-        // VariableUsageSet.
-        return evaluate(*branchToCompile, variablesUsed);
+        assert(method->getParameters().empty());
+
+        return method->call(move(operand.value), vector<Thing::DynamicValue>());
       }
 
-      case Thing::Kind::DYNAMIC_VALUE: {
-        // TODO(kenton):  Need to create sub-scopes or something to track the fact that only one
-        //   of the two branches' side effects will occur.
+      case Thing::Kind::ENTITY:
+      case Thing::Kind::TUPLE:
+        return errorCantUseHere(move(operand), operandExpression.location);
+    }
+  }
+
+  Thing applyPostfixOperator(const Expression& operandExpression, ast::PostfixOperator op,
+                             VariableUsageSet& variablesUsed, errors::Location location) {
+    Thing operand = evaluate(operandExpression, variablesUsed);
+
+    switch (operand.getKind()) {
+      case Thing::Kind::UNKNOWN:
+        // Update the descriptor, if there is one and it is a value.
+        if (operand.unknown) {
+          if (operand.unknown->getKind() != ThingDescriptor::Kind::VALUE) {
+            return errorCantUseHere(move(operand), operandExpression.location);
+          }
+
+          Maybe<Function&> method = operand.unknown->value.type->lookupPostfixOperator(op);
+          if (!method) {
+            context.error(errors::error(location, "Operand does not support this operator."));
+            return Thing::fromUnknown();
+          }
+
+          assert(method->getParameters().empty());
+
+          operand.unknown->value = method->getReturnDescriptor(
+              move(operand.unknown->value), vector<ValueDescriptor>());
+        }
+        return move(operand);
+
+      case Thing::Kind::VALUE: {
+        Maybe<Function&> method = operand.value.descriptor.type->lookupPostfixOperator(op);
+        if (!method) {
+          context.error(errors::error(location, "Operand does not support this operator."));
+          return Thing::fromUnknown();
+        }
+
+        assert(method->getParameters().empty());
+
+        return method->call(move(operand.value), vector<Thing::DynamicValue>());
+      }
+
+      case Thing::Kind::ENTITY:
+      case Thing::Kind::TUPLE:
+        return errorCantUseHere(move(operand), operandExpression.location);
+    }
+  }
+
+  Thing applyTernaryOperator(const Expression& conditionExpression,
+                             const Expression& trueClause,
+                             const Expression& falseClause,
+                             VariableUsageSet& variablesUsed, Location location) {
+    Thing condition =
+        castTo(evaluate(conditionExpression, variablesUsed),
+               scope.lookupBuiltinType(BuiltinType::Builtin::BOOLEAN),
+               variablesUsed, conditionExpression.location);
+
+    switch (condition.getKind()) {
+      case Thing::Kind::UNKNOWN: {
+        // The condition is a meta variable, meaning it will be known at compile time, meaning
+        // that we only expect to compile one of the two branches.  You might think this means we
+        // can't compile either branch, because it's perfectly valid for the branch that ends up
+        // compiled out to have type errors.  However, the fact that the condition is a meta
+        // variable implies that the function has not yet been specialized and we're just giving
+        // it the once-over for errors.  We should expect that if we don't have enough knowledge
+        // yet to know which branch will be taken, then we don't have enough knowledge yet
+        // to know why the other branch might be broken.  If a branch fails to compile even in the
+        // meta phase then it should just be deleted.
+        //
+        // TL;DR:  Compile both branches even though the condition is constant, just to check for
+        // errors.
+
+        // TODO:  I wonder if we should discard variablesUsed for the branches?
+
         Thing trueThing = evaluate(trueClause, variablesUsed);
         Thing falseThing = evaluate(falseClause, variablesUsed);
 
-        // TODO:  Coerce trueThing and falseThing to a common type and isPointer status.
-        ValueDescriptor commonDescriptor;
+        // If the two branches have exactly the same type, then we can assume that's the type that
+        // will be returned.  Otherwise, we can't assume anything.  We can't look for the common
+        // super-type because at specialization time we will end up taking one branch or the other
+        // and will not do this generalization.
+        Maybe<ThingDescriptor> trueDescriptor = getThingDescriptor(trueThing);
+        Maybe<ThingDescriptor> falseDescriptor = getThingDescriptor(falseThing);
 
-        // TODO(kenton):  If both branches are references, we actually want to return a reference...
-        return Thing::fromDynamicValue(
-            move(commonDescriptor),
-            BoundExpression::fromTernaryOperator(
-                move(boolCondition), move(trueThing), move(falseThing)));
+        if (trueDescriptor == falseDescriptor) {
+          return Thing::fromUnknown(move(trueDescriptor));
+        } else {
+          return Thing::fromUnknown();
+        }
       }
 
-      default:
-        throw "can't happen; cast to bool";
+      case Thing::Kind::VALUE: {
+        if (condition.value.expression.getKind() == BoundExpression::Kind::CONSTANT) {
+          // The condition is known at compile time.  We don't even compile the dead branch because
+          // the branch may assume things that the condition disproves.
+          Value& conditionValue = condition.value.expression.constant;
+
+          // We cast to Boolean, so the constant must be a boolean.
+          assert(conditionValue.getKind() == Value::Kind::BOOLEAN);
+
+          if (conditionValue.boolean) {
+            return evaluate(trueClause, variablesUsed);
+          } else {
+            return evaluate(falseClause, variablesUsed);
+          }
+        } else {
+          // TODO(kenton):  Need to create sub-scopes or something to track the fact that only one
+          //   of the two branches' side effects will occur.
+          Thing trueThing = evaluate(trueClause, variablesUsed);
+          Thing falseThing = evaluate(falseClause, variablesUsed);
+
+          const ValueDescriptor* trueDescriptor = getValueDescriptor(trueThing);
+          const ValueDescriptor* falseDescriptor = getValueDescriptor(falseThing);
+
+          if (trueDescriptor == nullptr || falseDescriptor == nullptr) {
+            if (trueDescriptor == nullptr && trueThing.getKind() != Thing::Kind::UNKNOWN) {
+              context.error(errors::error(trueClause.location,
+                  "Branches of dynamic conditions must be values."));
+            }
+            if (falseDescriptor == nullptr && falseThing.getKind() != Thing::Kind::UNKNOWN) {
+              context.error(errors::error(falseClause.location,
+                  "Branches of dynamic conditions must be values."));
+            }
+            return Thing::fromUnknown();
+          }
+
+          // TODO:  Coerce trueThing and falseThing to a common type and isPointer status.
+          ValueDescriptor commonDescriptor = findCommonSupertype(*trueDescriptor, *falseDescriptor);
+
+          Thing commonType = Thing::fromEntity(commonDescriptor.type)
+
+          trueThing = castTo(move(trueThing), commonDescriptor.,
+                             variablesUsed, trueClause.location);
+
+          // TODO(kenton):  If both branches are references, we actually want to return a reference...
+          return Thing::fromValue(
+              move(commonDescriptor),
+              BoundExpression::fromTernaryOperator(
+                  move(condition.value.expression), move(trueExpression), move(falseExpression)));
+        }
+      }
+
+      case Thing::Kind::ENTITY:
+      case Thing::Kind::TUPLE:
+        return errorCantUseHere(move(condition), conditionExpression.location);
     }
+
+    throw "can't get here";
   }
 
   Maybe<Entity&> lookupMemberEntity(const ValueDescriptor& descriptor);
@@ -425,6 +653,7 @@ public:
 private:
   Context& context;
   Scope& scope;
+  Evaluator& evaluator;
 };
 
 vector<CxxStatement> compileImperative(Context& context, Scope& scope,

@@ -44,6 +44,7 @@ class Context;
 class Scope;
 class Entity;
 class Variable;
+class Type;
 class Class;
 class Interface;
 class Enum;
@@ -55,7 +56,6 @@ class Value;
 class Reference;
 class Thing;
 class CxxExpression;
-struct TupleElement;
 
 // =======================================================================================
 
@@ -138,33 +138,6 @@ public:
 
 // =======================================================================================
 
-class EntityContext {
-public:
-  UNION_TYPE_BOILERPLATE(EntityContext);
-
-  enum class Kind {
-    MEMBER,
-    LOCAL
-  };
-
-  Kind getKind();
-
-  union {
-    Indirect<Value> outerObject;
-    Scope* scope;
-  };
-
-  // Parameters, including:
-  // - For a parameterized class, the dynamic type parameters.
-  // - For a local class or function, the local parameters.
-  //   TODO:  Should local parameters really be passed here, as opposed to being readable directly
-  //   in the inner scope?
-  vector<Value> params;
-
-  static EntityContext forMember(Value&& outerObject);
-  static EntityContext forLocal(Scope& scope);
-};
-
 class Value {
 public:
   UNION_TYPE_BOILERPLATE(Value);
@@ -187,20 +160,20 @@ public:
   Kind getKind() { return kind; }
 
   struct Object {
-    Entity* type;
-    EntityContext typeContext;
+    Type* type;
+    vector<Value> typeContext;
     map<Variable*, Value> fields;
   };
 
   struct Array {
-    Entity* elementType;
-    EntityContext elementTypeContext;
+    Type* elementType;
+    vector<Value> elementTypeContext;
     vector<Value> elements;
   };
 
   struct Pointer {
-    Entity* entity;
-    EntityContext context;
+    Variable* variable;
+    vector<Value> context;
   };
 
   union {
@@ -220,7 +193,7 @@ public:
   static Value fromInteger(int value);
   static Value fromDouble(double value);
 
-  static Value fromReference(Entity* entity, EntityContext&& context);
+  static Value fromPointer(Variable* variable, vector<Value>&& context);
 
 private:
   Kind kind;
@@ -233,12 +206,14 @@ public:
   enum class Kind {
     CONSTANT,
 
+    // Note that the arithmetic operators here are strictly built-in.  Overloaded operators would
+    // have been converted to function calls.
     BINARY_OPERATOR,
     PREFIX_OPERATOR,
     POSTFIX_OPERATOR,
     TERNARY_OPERATOR,
 
-    FUNCTION_CALL,
+    METHOD_CALL,
     SUBSCRIPT,
     MEMBER_ACCESS,
 
@@ -251,54 +226,63 @@ public:
 
   struct BinaryOperator {
     ast::BinaryOperator op;
-    Indirect<Value> left;
-    Indirect<Value> right;
+    Indirect<BoundExpression> left;
+    Indirect<BoundExpression> right;
 
-    VALUE_TYPE3(BinaryOperator, ast::BinaryOperator, op, Value&&, left, Value&&, right);
+    VALUE_TYPE3(BinaryOperator, ast::BinaryOperator, op, BoundExpression&&, left,
+                BoundExpression&&, right);
   };
 
   struct PrefixOperator {
     ast::PrefixOperator op;
-    Indirect<Value> operand;
+    Indirect<BoundExpression> operand;
 
-    VALUE_TYPE2(PrefixOperator, ast::PrefixOperator, op, Value&&, operand);
+    VALUE_TYPE2(PrefixOperator, ast::PrefixOperator, op, BoundExpression&&, operand);
   };
 
   struct PostfixOperator {
-    Indirect<Value> operand;
+    Indirect<BoundExpression> operand;
     ast::PostfixOperator op;
 
-    VALUE_TYPE2(PostfixOperator, Value&&, operand, ast::PostfixOperator, op);
+    VALUE_TYPE2(PostfixOperator, BoundExpression&&, operand, ast::PostfixOperator, op);
   };
 
   struct TernaryOperator {
-    Indirect<Value> condition;
-    Indirect<Value> trueClause;
-    Indirect<Value> falseClause;
+    Indirect<BoundExpression> condition;
+    Indirect<BoundExpression> trueClause;
+    Indirect<BoundExpression> falseClause;
 
-    VALUE_TYPE3(TernaryOperator, Value&&, condition, Value&&, trueClause, Value&&, falseClause);
+    VALUE_TYPE3(TernaryOperator, BoundExpression&&, condition, BoundExpression&&, trueClause,
+                BoundExpression&&, falseClause);
   };
 
-  struct FunctionCall {
-    Indirect<Value> function;
+  struct MethodCall {
+    Function* method;
+    Indirect<BoundExpression> object;  // i.e., this
+
+    // Just the variable parameters, since we've already matched them up against the function
+    // signature.
     vector<BoundExpression> parameters;
 
-    VALUE_TYPE2(FunctionCall, Value&&, function, vector<BoundExpression>&&, parameters);
+    VALUE_TYPE3(MethodCall, Function*, method, BoundExpression&&, object,
+                vector<BoundExpression>&&, parameters);
   };
 
   struct Subscript {
-    Indirect<Value> container;
-    Indirect<Value> subscript;
+    // Container must strictly be a built-in array.  Calls to an overloaded operator[] on a class
+    // would have been converted to MethodCall.
+    Indirect<BoundExpression> container;
+    Indirect<BoundExpression> subscript;
 
-    VALUE_TYPE2(Subscript, Value&&, container, Value&&, subscript);
+    VALUE_TYPE2(Subscript, BoundExpression&&, container, BoundExpression&&, subscript);
   };
 
   struct MemberAccess {
-    Indirect<Value> object;
+    Indirect<BoundExpression> object;
     Entity* member;
     ast::StyleAllowance thisStyleAllowance;
 
-    VALUE_TYPE3(MemberAccess, Value&&, object, Entity*, member,
+    VALUE_TYPE3(MemberAccess, BoundExpression&&, object, Entity*, member,
                 ast::StyleAllowance, thisStyleAllowance);
   };
 
@@ -310,23 +294,28 @@ public:
     PostfixOperator postfixOperator;
     TernaryOperator ternaryOperator;
 
-    FunctionCall functionCall;
+    MethodCall methodCall;
     Subscript subscript;
     MemberAccess memberAccess;
 
     Indirect<BoundExpression> readPointer;
   };
 
-  static BoundExpression fromBinaryOperator(ast::BinaryOperator op, Value&& left, Value&& right);
-  static BoundExpression fromPrefixOperator(ast::PrefixOperator op, Value&& exp);
-  static BoundExpression fromPostfixOperator(Value&& exp, ast::PostfixOperator op);
-  static BoundExpression fromTernaryOperator(Value&& condition, Value&& trueClause,
-                                             Value&& falseClause);
+  static BoundExpression fromBinaryOperator(ast::BinaryOperator op, BoundExpression&& left,
+                                            BoundExpression&& right);
+  static BoundExpression fromPrefixOperator(ast::PrefixOperator op, BoundExpression&& exp);
+  static BoundExpression fromPostfixOperator(BoundExpression&& exp, ast::PostfixOperator op);
+  static BoundExpression fromTernaryOperator(BoundExpression&& condition,
+                                             BoundExpression&& trueClause,
+                                             BoundExpression&& falseClause);
 
-  static BoundExpression fromFunctionCall(Value&& function, vector<BoundExpression>&& parameters);
-  static BoundExpression fromSubscript(Value&& container, Value&& key);
-  static BoundExpression fromMemberAccess(Value&& object, string&& member,
+  static BoundExpression fromMethodCall(Function* method, BoundExpression&& object,
+                                        vector<BoundExpression>&& parameters);
+  static BoundExpression fromSubscript(BoundExpression&& container, BoundExpression&& key);
+  static BoundExpression fromMemberAccess(BoundExpression&& object, string&& member,
                                           ast::StyleAllowance thisStyleAllowance);
+
+  static BoundExpression fromReadPointer(BoundExpression&& pointer);
 
 private:
   Kind kind;
@@ -341,38 +330,56 @@ struct EntityName {
   Maybe<vector<Thing>> parameters;
 };
 
+class ValueDescriptor {
+public:
+  Type* type;
+  vector<Thing> typeContext;
+  ast::Style style;
+
+  // Things which are accessible through this value, e.g. if this value is a pointer or contains
+  // pointers.
+  enum class AliasType {
+    IDENTITY,
+    IMMUTABLE,
+    MUTABLE,
+    ENTANGLED
+  };
+  vector<std::pair<Value::Pointer, AliasType>> aliases;
+
+  // TODO:  Constraints, e.g. integer range
+};
+
 class TypeDescriptor {
 public:
   vector<Thing> supertypes;
   vector<Thing> subtypes;
 };
 
-class ValueDescriptor {
+class FunctionDescriptor {
 public:
-  Indirect<Thing> type;
-
-  // Variables which the value aliases.
-  enum class AliasType {
-    IDENTITY,
-    IMMUTABLE,
-    MUTABLE
-  };
-  map<Variable*, AliasType> aliases;
-
-  // TODO:  Constraints, e.g. integer range
+  // We don't know anything about functions unless we know the specific function.  So there
+  // is nothing to describe.
+  VALUE_TYPE0(FunctionDescriptor);
 };
 
+// Contains information known at compile time about a Thing, where the Thing itself is not known
+// at compile time.
 class ThingDescriptor {
 public:
+  UNION_TYPE_BOILERPLATE(ThingDescriptor);
+
   enum class Kind {
     VALUE,
     TYPE,
-    FUNCTION
+    FUNCTION  // (possibly overloaded)
   };
 
+  Kind getKind() const;
+
   union {
-    ValueDescriptor valueDescriptor;
-    TypeDescriptor typeDescriptor;
+    ValueDescriptor value;
+    TypeDescriptor type;
+    FunctionDescriptor function;
   };
 };
 
@@ -381,60 +388,55 @@ public:
   UNION_TYPE_BOILERPLATE(Thing);
 
   enum class Kind {
-    CONSTANT,
-    TUPLE,
-    DYNAMIC,
-    ENTITY
+    UNKNOWN,
+    VALUE,
+    ENTITY,  // i.e. type or overload
+    TUPLE
   };
 
-  Kind getKind() { return kind; }
+  Kind getKind() const { return kind; }
 
-  struct Dynamic {
+  struct DynamicValue {
     ValueDescriptor descriptor;
     BoundExpression expression;
 
-    // TODO:  Aliases
-    // TODO:  Partial knowledge, e.g. some members of an object or elements of an array.
+    // If expression is NOT a constant, but is partially known, this is filled in.
+    Maybe<Value> partialValue;
+  };
 
-    // Only if the expression is a pointer.
-    // Variables which must be marked mutated if/when the references is used mutably.  These
-    // are accumulated when calling functions that return entangled references.
-    set<Variable*> entangledVariables;
+  struct TupleElement {
+    Maybe<EntityName> name;
+    ast::StyleAllowance styleAllowance;
+    Indirect<Thing> value;
+
+    VALUE_TYPE3(TupleElement, Maybe<EntityName>&&, name, ast::StyleAllowance, styleAllowance,
+                Thing&&, value);
   };
 
   struct BoundEntity {
     Entity* entity;
-    EntityContext context;
-  };
-
-  struct MetaConstant {
-    // Type may or may not be known.
-    Maybe<ValueDescriptor> descriptor;
-
-    VALUE_TYPE1(MetaConstant, Maybe<ValueDescriptor>&&, descriptor);
+    vector<Thing> context;
   };
 
   union {
-    Value constant;
-    vector<TupleElement> tuple;
-    Dynamic dynamic;
+    Maybe<ThingDescriptor> unknown;
+    DynamicValue value;
     BoundEntity entity;
+    vector<TupleElement> tuple;
   };
 
-  static Thing fromConstant(Value&& value);
-  static Thing fromDynamic(ValueDescriptor&& descriptor, BoundExpression&& expression);
+  static Thing fromUnknown();
+  static Thing fromUnknown(ThingDescriptor&& descriptor);
+  static Thing fromUnknown(Maybe<ThingDescriptor>&& descriptor);
+
+  static Thing fromEntity(Entity* entity, vector<Thing>&& context);
+
+  static Thing fromValue(ValueDescriptor&& descriptor, BoundExpression&& expression);
+  static Thing fromValue(ValueDescriptor&& descriptor, BoundExpression&& expression,
+                         Maybe<Value>&& partialValue);
 
 private:
   Kind kind;
-};
-
-struct TupleElement {
-  Maybe<EntityName> name;
-  ast::StyleAllowance styleAllowance;
-  Thing value;
-
-  VALUE_TYPE3(TupleElement, Maybe<EntityName>&&, name, ast::StyleAllowance, styleAllowance,
-              Thing&&, value);
 };
 
 // TODO:  EntityUsageSet?  Could be useful in determining dependencies and forward declarations?
@@ -450,7 +452,9 @@ public:
     ASSIGNMENT
   };
 
-  // TODO:  Does this need EntityContext?  We do need to distinguish between the same member of
+  void addUsage(const ValueDescriptor& valueDescriptor, Style style);
+
+  // TODO:  Does this need context?  We do need to distinguish between the same member of
   //   different parents.  Maybe it just needs a path?
   void addSequential(Variable* variable, Style style, errors::Location location);
 
@@ -483,11 +487,10 @@ public:
   virtual ~Entity();
 
   virtual const EntityName& getName() = 0;
-  virtual Scope& getScope() = 0;
   virtual Entity& getParent() = 0;
 
-  virtual const ThingDescriptor& getDescriptor() = 0;
-  virtual const vector<Thing>& getAnnotations() = 0;
+  virtual ThingDescriptor getDescriptor(vector<Thing>&& context) = 0;
+  virtual const vector<Thing>& getAnnotations(vector<Thing>&& context) = 0;
 
   // TODO:  style + style constraints
   // TODO:  visibility
@@ -495,7 +498,7 @@ public:
   // Read the entity.  If not known at compile time, returns a Thing of kind
   // DYNAMIC_{REFERENCE,VALUE} with code that simply reads the variable.
   // Recursively dereferences outer objects in the context.
-  virtual Thing dereference(EntityContext&& context, VariableUsageSet& variablesUsed,
+  virtual Thing dereference(vector<Thing>&& context, VariableUsageSet& variablesUsed,
                             Location location, VariableUsageSet::Style style) = 0;
 
   virtual Maybe<Entity&> lookupMember(const string& name) = 0;
@@ -513,7 +516,7 @@ public:
 
   bool assign(Thing&& value, VariableUsageSet& variablesUsed, errors::Location location);
 
-  // TODO:  May need EntityContext if VariableUsageSet does.
+  // TODO:  May need context if VariableUsageSet does.
   void entangle(VariableUsageSet::Style style, VariableUsageSet& variablesUsed,
                 errors::Location location);
 };
@@ -540,13 +543,19 @@ public:
 
   const vector<ParameterSpec>& getParameters();
 
+  // The return type doesn't depend on the inputs, but the return descriptor does.
+  Type* getReturnType();
+  ValueDescriptor getReturnDescriptor(ValueDescriptor&& object, vector<ValueDescriptor>&& params);
+
   // context.params must be filled in to match the Variables and Aliases in getParameters() --
   // but not the Constants.
   // Returns a FUNCTION_CALL BoundExpression if the call cannot be computed due to inputs being
   // dynamic or if the function implementation is unavailable.
   // TODO:  If a dynamic input is ignored but the computation had side effects we need to make sure
   //   those side effects still take place...
-  Thing call(EntityContext&& context);
+  Value call(vector<Value&&> context, vector<Value>&& parameters);
+
+  Thing call(Thing::DynamicValue&& object, vector<Thing::DynamicValue>&& params);
 
   // TODO:  Implicit parameters, environment.
   //   Both may depend on compiling the function body.
@@ -554,38 +563,49 @@ public:
 
 class Overload: public Entity {
 public:
+  // This may generate meta-functions on-demand.
   // TODO:  Do we need a context to resolve?  I don't think so since no execution occurs here.
-  Maybe<Entity&> resolve(const vector<TupleElement>& parameters);
+  // TODO:  Return ordering of TupleElements for convenience?
+  Maybe<Entity&> resolve(const vector<Thing::TupleElement>& parameters);
+
+  // TODO:  Resolve given ThingDescriptors?  Or just built a tuple of UNKNOWNs for that?  Actually
+  //   ThingDescriptors are somewhat more info than we need...  we really just want to know kind
+  //   and type.
 };
 
 class Type: public Entity {
 public:
   Maybe<Entity&> lookupMemberOfInstance(const string& name);
+
+  Maybe<Function&> lookupPrefixOperator(ast::PrefixOperator op);
+  Maybe<Function&> lookupPostfixOperator(ast::PostfixOperator op);
+  Maybe<Overload&> lookupLeftBinaryOperator(ast::BinaryOperator op);
+  Maybe<Overload&> lookupRightBinaryOperator(ast::BinaryOperator op);
 };
 
-class BuiltinType: public Entity {
+class BuiltinType: public Type {
 public:
-  enum class Type {
+  enum class Builtin {
     BOOLEAN,
     INTEGER,
     DOUBLE
   };
 
-  Type getType();
+  Builtin getType();
 };
 
-class Class: public Entity {
+class Class: public Type {
 public:
   Maybe<Entity&> lookupMember(const string& name);
   Maybe<Overload&> getConstructor(const string& name);
   Overload& getImplicitConstructor();
 };
 
-class Enum: public Entity {
+class Enum: public Type {
 public:
 };
 
-class Interface: public Entity {
+class Interface: public Type {
 public:
 };
 
@@ -597,7 +617,7 @@ public:
 
   // For EXPRESSION
 
-  Thing lookupBuiltinType(BuiltinType::Type type);
+  Thing lookupBuiltinType(BuiltinType::Builtin type);
 
   Maybe<Entity&> lookupBinding(const string& name);
   // Note that this may instantiate a template.
@@ -608,7 +628,7 @@ public:
   Variable& declareVariable(const string& name, Thing&& value);
 
   // Code will be compiled on-demand.
-  void declareClass(const string& name, ClassDescriptor&& descirptor,
+  void declareClass(const string& name, TypeDescriptor&& descirptor,
                     const vector<ast::Statement>& code);
 
   // Code will be compiled on-demand.
