@@ -29,79 +29,80 @@ using ast::Statement;
 class Evaluator {
 public:
   Value readPointer(Value&& pointer);
+  Value upcast(Value&& object, ImplementedInterface* interface);
+
+  // If the input is a pointer, the result will be a pointer.
+  // If the input is a temporary, the result will be a temporary.
+  Value getMember(Value&& object, Variable* member);
 };
 
 class Compiler {
 public:
-  Compiler(Context& context, Scope& scope): context(context), scope(scope) {}
+  Compiler(Scope& scope): scope(scope) {}
+
+  // Returns Thing::fromUnknown() for convenience.
+  template <typename... Parts>
+  Thing error(const ast::Expression& location, Parts&&... parts);
+  template <typename... Parts>
+  Thing error(const ast::Declaration& location, Parts&&... parts);
+  template <typename... Parts>
+  Thing error(const ast::Statement& location, Parts&&... parts);
+
+  Thing errorCantUseHere(Thing&& value, ErrorLocation location) {
+    // TODO:  Improve error message.
+    location.error("Can't use this thing here.");
+    return Thing::fromUnknown();
+  }
+
+  ErrorLocation errorLocation(const Expression& expression);
 
   CxxExpression asCxx(Thing&& value);
 
   bool compare(const Thing& a, const Thing& b);
   bool compare(const EntityName& a, const EntityName& b);
+  bool compare(const Context<DynamicValue>& a, const Context<DynamicValue>& b);
+  template <typename T, typename U>
+  bool compare(const Bound<T, DynamicValue>& a, const Bound<U, DynamicValue>& b);
 
-  Value evaluate(const BoundExpression& expression);
+  Thing call(Entity& entity, ThingPort& port, Tuple&& parameters);
 
-  Thing errorCantUseHere(Thing&& value, errors::Location location) {
-    // TODO:  Improve error message.
-    context.error(errors::error(location, "Can't use this thing here."));
-    return Thing::fromUnknown();
-  }
+  Context<BoundExpression> discardPartialValues(Context<DynamicValue>&& context);
+  template <typename T>
+  Bound<T, BoundExpression> discardPartialValues(Bound<T, DynamicValue>&& context);
+  template <typename T>
+  Bound<T, BoundExpression> copyDiscardingPartialValues(const Bound<T, DynamicValue>& context);
 
+  // -------------------------------------------------------------------------------------
 
-  Thing dereference(Thing&& input, VariableUsageSet& variablesUsed, errors::Location location,
+  // Dereferences the input if it is a pointer, or just returns it unchanged otherwise.  Reports an
+  // error if the input is not a value.
+  Thing dereference(Thing&& input, VariableUsageSet& variablesUsed, ErrorLocation location,
                     VariableUsageSet::Style style = VariableUsageSet::Style::IMMUTABLE) {
     switch (input.getKind()) {
       case Thing::Kind::UNKNOWN:
-        // Update the descriptor, if there is one and it is a value.
-        if (input.unknown) {
-          if (input.unknown->getKind() != ThingDescriptor::Kind::VALUE) {
-            return errorCantUseHere(move(input), location);
-          }
-          variablesUsed.addUsage(input.unknown->value, style);
-          switch (input.unknown->value.style) {
-            case ast::Style::VALUE:
-            case ast::Style::CONSTANT:
-              // Already dereferenced.
-              break;
-
-            case ast::Style::IMMUTABLE_REFERENCE:
-            case ast::Style::MUTABLE_REFERENCE:
-            case ast::Style::ENTANGLED_REFERENCE:
-            case ast::Style::HEAP_VALUE:
-              input.unknown->value.style = ast::Style::VALUE;
-              break;
-          }
-        }
-        return move(input);
+        return Thing::fromUnknown();
 
       case Thing::Kind::VALUE:
         variablesUsed.addUsage(input.value.descriptor, style);
-        switch (input.value.descriptor.style) {
-          case ast::Style::VALUE:
-          case ast::Style::CONSTANT:
-            // Already dereferenced.
-            return move(input);
-
-          case ast::Style::IMMUTABLE_REFERENCE:
-          case ast::Style::MUTABLE_REFERENCE:
-          case ast::Style::ENTANGLED_REFERENCE:
-          case ast::Style::HEAP_VALUE:
-            input.value.descriptor.style = ast::Style::VALUE;
-            if (input.value.expression.getKind() == BoundExpression::Kind::CONSTANT) {
-              input.value.expression.constant =
-                  evaluator.readPointer(move(input.value.expression.constant));
-              assert(!input.value.partialValue);
-            } else {
-              input.value.expression =
-                  BoundExpression::fromReadPointer(move(input.value.expression));
-              if (input.value.partialValue) {
-                input.value.partialValue = evaluator.readPointer(move(*input.value.partialValue));
-              }
-            }
-            return move(input);
+        if (input.value.descriptor.isPointer()) {
+          input.value.descriptor.style = ast::Style::VALUE;
+          if (input.value.value.expression.getKind() == BoundExpression::Kind::CONSTANT) {
+            input.value.value.expression.constant =
+                evaluator.readPointer(move(input.value.value.expression.constant));
+            assert(input.value.value.partialValue.getKind() == Value::Kind::UNKNOWN);
+          } else {
+            input.value.value.expression =
+                BoundExpression::fromReadPointer(move(input.value.value.expression));
+            input.value.value.partialValue =
+                evaluator.readPointer(move(input.value.value.partialValue));
+          }
+          return move(input);
+        } else {
+          // Already dereferenced.
+          return move(input);
         }
 
+      case Thing::Kind::UNKNOWN_TYPE:
       case Thing::Kind::ENTITY:
       case Thing::Kind::TUPLE:
         return errorCantUseHere(move(input), location);
@@ -110,47 +111,443 @@ public:
     throw "can't get here";
   }
 
-  Thing castTo(Thing&& input, const Thing& type,
-               VariableUsageSet& variablesUsed, errors::Location location);
+  // -------------------------------------------------------------------------------------
 
+  enum class CastMode {
+    CHECK_CONSTRAINTS_ONLY,
+    UPCAST_ONLY,
+    FULL_CONVERSION
+  };
 
-  ValueDescriptor findCommonSupertype(const ValueDescriptor& type1, const ValueDescriptor& type2);
+  Thing checkConstraints(Thing::DescribedValue&& input,
+                         const ValueDescriptor& desiredDescirptor,
+                         VariableUsageSet& variablesUsed, ErrorLocation location);
+  Thing checkConstraints(Thing&& input,
+                         const ValueDescriptor& desiredDescirptor,
+                         VariableUsageSet& variablesUsed, ErrorLocation location);
 
-  const ValueDescriptor* getValueDescriptor(const Thing& value) {
-    switch (value.getKind()) {
-      case Thing::Kind::UNKNOWN:
-        // Update the descriptor, if there is one and it is a value.
-        if (value.unknown) {
-          assert(value.unknown->getKind() == ThingDescriptor::Kind::VALUE);
-          return &value.unknown->value;
-        } else {
-          return nullptr;
+  Thing castTo(Thing::DescribedValue&& input, const ValueDescriptor& desiredDescriptor,
+               VariableUsageSet& variablesUsed, ErrorLocation location, CastMode mode) {
+    ThingPort inputTypePort = scope.makePortFor(input.descriptor.type.context);
+
+    if (compare(input.descriptor.type, desiredDescriptor.type)) {
+      return checkConstraints(move(input), desiredDescriptor, variablesUsed, location);
+    }
+
+    if (mode != CastMode::CHECK_CONSTRAINTS_ONLY) {
+      // Can we upcast?
+      if (dynamic_cast<const Interface*>(desiredDescriptor.type.entity) != nullptr) {
+        // Casting to an interface.  See if upcast is available.
+        Maybe<ImplementedInterface&> impl = input.descriptor.type.entity->findImplementedInterface(
+            inputTypePort, desiredDescriptor.type);
+        if (impl) {
+          input.descriptor.type = desiredDescriptor.type;
+          if (input.value.expression.getKind() == BoundExpression::Kind::CONSTANT) {
+            input.value.expression.constant =
+                evaluator.upcast(move(input.value.expression.constant), &*impl);
+            assert(input.value.partialValue.getKind() == Value::Kind::UNKNOWN);
+          } else {
+            input.value.expression = BoundExpression::fromUpcast(
+                move(input.value.expression), &*impl);
+            input.value.partialValue =
+                evaluator.upcast(move(input.value.partialValue), &*impl);
+          }
+
+          return castTo(move(input), desiredDescriptor, variablesUsed, location,
+                        CastMode::CHECK_CONSTRAINTS_ONLY);
+        }
+      }
+
+      if (mode == CastMode::FULL_CONVERSION) {
+        // We prefer conversions declared by the source type over constructors on the destination
+        // type because conversions are necessarily more specific.
+        Maybe<Function&> conversion = input.descriptor.type.entity->lookupConversion(
+            inputTypePort, desiredDescriptor.type);
+        if (conversion) {
+          return castTo(
+              call(*conversion, inputTypePort,
+                   Tuple::fromSingleValue(Thing::fromValue(move(input)))),
+              desiredDescriptor, variablesUsed, location, CastMode::UPCAST_ONLY);
         }
 
+        // Try calling implicit constructor.
+        Maybe<Overload&> ctor = desiredDescriptor.type.entity->getImplicitConstructor();
+        if (ctor) {
+          ThingPort desiredTypePort = scope.makePortFor(desiredDescriptor.type.context);
+          return castTo(
+              call(*ctor, desiredTypePort,
+                   Tuple::fromSingleValue(Thing::fromValue(move(input)))),
+              desiredDescriptor, variablesUsed, location, CastMode::UPCAST_ONLY);
+        }
+      }
+    }
+
+    location.error("No conversion.");
+    return Thing::fromValue(ValueDescriptor(desiredDescriptor), BoundExpression::fromUnknown());
+  }
+
+  // Casts the thing to match the given ValueDescriptor.  This includes dereferencing if the
+  // ValueDescriptor has style = VALUE.  Reports an error if the input is not a value.
+  //
+  // Note that if the requested output style is MUTABLE_ALIAS, the input must be a mutable alias
+  // and only "upcasting" is allowed.
+  Thing castTo(Thing&& input, const ValueDescriptor& desiredDescriptor,
+               VariableUsageSet& variablesUsed, ErrorLocation location, CastMode mode) {
+    assert(!desiredDescriptor.isPointer());
+
+    switch (input.getKind()) {
+      case Thing::Kind::UNKNOWN:
+        return Thing::fromValue(ValueDescriptor(desiredDescriptor), BoundExpression::fromUnknown());
+
       case Thing::Kind::VALUE:
-        return &value.value.descriptor;
+        return castTo(move(input.value), desiredDescriptor, variablesUsed, location, mode);
+
+      case Thing::Kind::UNKNOWN_TYPE:
+      case Thing::Kind::ENTITY:
+        errorCantUseHere(move(input), location);
+
+        // Assume that the cast is *supposed* to succeed.
+        return Thing::fromValue(ValueDescriptor(desiredDescriptor), BoundExpression::fromUnknown());
+
+      case Thing::Kind::TUPLE: {
+        Maybe<Overload&> ctor = desiredDescriptor.type.entity->getImplicitConstructor();
+        if (ctor) {
+          ThingPort desiredTypePort = scope.makePortFor(desiredDescriptor.type.context);
+          return castTo(
+              call(*ctor, desiredTypePort, move(input.tuple)),
+              desiredDescriptor, variablesUsed, location, CastMode::UPCAST_ONLY);
+        } else {
+          location.error("No conversion from tuple to target type.");
+          return Thing::fromValue(ValueDescriptor(desiredDescriptor),
+                                  BoundExpression::fromUnknown());
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------------------
+  // Looking up a member.
+
+  // Called when a member is *dereferenced*, to decide its constraints based on its declared
+  // constraints and the parent object's constraints.
+  void inheritConstraints(ValueDescriptor& member, const ValueConstraints& parent) {
+    if (member.isAlias()) {
+      if (!member.constraints.possibleTargets) {
+        // Inherit possibleTargets from the parent object's transitiveAliases.
+        if (parent.transitiveAliases) {
+          // We can decide this member pointer's possible targets based on the parent's transitive
+          // aliases.
+          member.constraints.possibleTargets.init();
+
+          int possibleAliasTypes = 0;  // a bitfield
+          switch (member.style) {
+            case ast::Style::VALUE:
+            case ast::Style::CONSTANT:
+            case ast::Style::HEAP_VALUE:
+              throw "can't get here; it's an alias";
+
+            case ast::Style::IMMUTABLE_REFERENCE:
+              // An immutable alias member could be pointing at almost anything.
+              possibleAliasTypes |= 1 << (int) ValueConstraints::AliasType::IMMUTABLE;
+              possibleAliasTypes |= 1 << (int) ValueConstraints::AliasType::MUTABLE;
+              possibleAliasTypes |= 1 << (int) ValueConstraints::AliasType::ENTANGLED;
+              break;
+            case ast::Style::MUTABLE_REFERENCE:
+              // A mutable alias member can only be pointing at mutable targets.
+              possibleAliasTypes |= 1 << (int) ValueConstraints::AliasType::MUTABLE;
+              break;
+            case ast::Style::ENTANGLED_REFERENCE:
+              // An entangled alias member can be pointing at mutable or entangled targets?
+              possibleAliasTypes |= 1 << (int) ValueConstraints::AliasType::MUTABLE;
+              possibleAliasTypes |= 1 << (int) ValueConstraints::AliasType::ENTANGLED;
+              break;
+          }
+
+          for (auto& alias: *parent.transitiveAliases) {
+            if (possibleAliasTypes & (1 << (int) alias.second)) {
+              member.constraints.possibleTargets->push_back(alias.first);
+            }
+
+            // Dummy switch to make sure that if another AliasType is added we update this code.
+            switch (alias.second) {
+              case ValueConstraints::AliasType::IDENTITY:
+              case ValueConstraints::AliasType::IMMUTABLE:
+              case ValueConstraints::AliasType::MUTABLE:
+              case ValueConstraints::AliasType::ENTANGLED:
+                break;
+            }
+          }
+        }
+      }
+      // TODO:  We could theoretically fill in member.constraints.transitiveAliases if all of the
+      //   possible targets have well-defined transitiveAliases...  but it's unclear if this is
+      //   useful or desirable.
+    } else {
+      // We are dealing with an owned object (normal member or heap pointer), so just propagate
+      // the transitiveAliases from the parent (unless explict aliases were declared).
+      // possibleTargets does not make sense here.
+      if (!member.constraints.transitiveAliases) {
+        member.constraints.transitiveAliases = parent.transitiveAliases;
+      }
+    }
+  }
+
+  Thing getMember(Thing&& object, const string& memberName,
+                  VariableUsageSet& variablesUsed, ErrorLocation location) {
+    switch (object.getKind()) {
+      case Thing::Kind::UNKNOWN:
+        return Thing::fromUnknown();
+
+      case Thing::Kind::UNKNOWN_TYPE:
+        // We have no idea what constructors (or enum values) the type has, even if we know its
+        // superclasses.
+        return Thing::fromUnknown();
+
+      case Thing::Kind::VALUE: {
+        // Determine what member we're looking up.
+        Maybe<Entity&> member =
+            object.value.descriptor.type.entity->lookupMemberOfInstance(memberName);
+        if (!member) {
+          location.error("No such member.");
+          return Thing::fromUnknown();
+        }
+
+        if (Variable* variable = dynamic_cast<Variable*>(&*member)) {
+          Bound<Variable, DynamicValue> boundMember(
+              variable, Context<DynamicValue>(
+                  object.value.descriptor.type.entity, move(object.value.value)));
+          DynamicValue& objval = boundMember.context.params->at(0);
+
+          if (objval.expression.getKind() == BoundExpression::Kind::CONSTANT) {
+            assert(objval.partialValue.getKind() == Value::Kind::UNKNOWN);
+            DynamicValue memberValue(BoundExpression::fromConstant(
+                evaluator.getMember(move(objval.expression.constant), variable)));
+            if (object.value.descriptor.isPointer()) {
+              // Parent is a pointer to a known variable which may have in-scope constraints.
+              return Thing::fromValue(move(scope.getVariableDescriptor(boundMember)),
+                                      move(memberValue));
+            } else {
+              // Object is a temporary.  Merge the variable's declared constraints with the
+              // parent's constraints.
+              // TODO:  Since the object is a constant, we technically know all of its
+              //   contents.  Should we just use that knowledge instead of tracking constraints
+              //   as if the object were unknown?
+              ThingPort port = scope.makePortFor(boundMember.context);
+              ValueDescriptor memberDescriptor = variable->getDeclaredDescriptor(port);
+              inheritConstraints(memberDescriptor, object.value.descriptor.constraints);
+              return Thing::fromValue(move(memberDescriptor), move(memberValue));
+            }
+            throw "can't get here";
+          } else {
+            DynamicValue memberValue(
+                BoundExpression::fromMemberAccess(move(objval.expression), variable),
+                evaluator.getMember(move(objval.partialValue), variable));
+            // TODO:  Check if new partialValue is fully-known and convert to a constant?  Watch
+            //   out for missed side effects.
+
+            if (object.value.descriptor.isPointer()) {
+              // We're forming a pointer to a member from a pointer to the object.  So, the object
+              // pointer's possible targets should simply be inherited.  Transitive aliases should
+              // also just be inherited *unless* either:
+              // - the new target member is a non-alias and declares its own transitive aliases,
+              //   which should simply be kept
+              // - the new target member is an alias and declares possible targets, in which case
+              //   those should be turned into our transitiveAliases.
+              // TODO:  Do we really want to inherit anything from the target value?  Will its
+              // constraints be applied in due course anyway, once the pointer is dereferenced?
+              #error "TODO"
+            } else {
+              // The object is a dynamic temporary.
+              ThingPort port = scope.makePortFor(boundMember.context);
+              ValueDescriptor memberDescriptor = variable->getDeclaredDescriptor(port);
+              inheritConstraints(memberDescriptor, object.value.descriptor.constraints);
+              return Thing::fromValue(move(memberDescriptor), move(memberValue));
+            }
+          }
+        } else {
+          // TODO:  Handle functions and types.
+          #error "implement"
+        }
+      }
 
       case Thing::Kind::ENTITY:
+        // If a type, look for a constructor / enum constant.
+        #error "TODO"
+
       case Thing::Kind::TUPLE:
-        return nullptr;
+        // Tuples do not have members.
+        errorCantUseHere(move(object), location);
+        return Thing::fromUnknown();
+    }
+  }
+
+  // -------------------------------------------------------------------------------------
+  // Calling a function.
+
+  Thing callFunction(const Expression::FunctionCall& functionCall,
+                     VariableUsageSet& variablesUsed, ErrorLocation location) {
+    vector<VariableUsageSet> subVariablesUsed;
+    subVariablesUsed.reserve(functionCall.parameters.size());
+
+    subVariablesUsed.emplace_back();
+    Thing function = dereference(
+        evaluate(*functionCall.function, subVariablesUsed.back()),
+        subVariablesUsed.back(), location);
+
+    vector<TupleElement> boundParameters;
+    for (auto& parameter: functionCall.parameters) {
+      subVariablesUsed.emplace_back();
+      // TODO:  Keyword args in AST.
+      boundParameters.emplace_back(nullptr, parameter.styleAllowance,
+                                   evaluate(*parameter.expression, subVariablesUsed.back()));
+    }
+
+    // TODO:  In theory we should wait until after casts before doing this merge, since casts could
+    //   have side effects (but shouldn't).  Note OTOH that binding alias parameters counts as a
+    //   *sequential* use because the use actually happens during the function call, which is
+    //   obviously after all parameters have been computed.
+    variablesUsed.merge(move(subVariablesUsed));
+
+    switch (function.getKind()) {
+      case Thing::Kind::ERROR:
+        return move(function);
+
+      case Thing::Kind::BOOLEAN:
+      case Thing::Kind::INTEGER:
+      case Thing::Kind::DOUBLE:
+      case Thing::Kind::TUPLE:
+      case Thing::Kind::ARRAY:
+        return error(*functionCall.function, "Not a function");
+
+      case Thing::Kind::ENTITY: {
+        Entity* entity = function.entity.entity;
+        if (Overload* overload = dynamic_cast<Overload*>(entity)) {
+          Maybe<Entity&> resolved = overload->resolve(boundParameters);
+          if (!resolved) {
+            location.error("No such overload.");
+            return Thing::fromUnknown();
+          }
+          entity = &*resolved;
+        }
+
+        if (Function* functionEntity = dynamic_cast<Function*>(entity)) {
+          // It's a function!
+          const vector<Function::ParameterSpec>& specs = functionEntity->getParameters();
+          map<const Function::ParameterSpec*, TupleElement*> matchedSpecs;
+          int pos = 0;
+          for (TupleElement& input: boundParameters) {
+            if (input.name) {
+              const Function::ParameterSpec* match = nullptr;
+              for (auto& spec: specs) {
+                if (compare(*input.name, spec.entity->getName())) {
+                  match = &spec;
+                  break;
+                }
+              }
+
+              if (match == nullptr) {
+                // TODO: Better error.
+                location.error("No parameter matching name.");
+                return Thing::fromUnknown();
+              } else if (!matchedSpecs.insert(std::make_pair(match, &input)).second) {
+                // TODO: Better error.
+                location.error("Named parameter already satisfied.");
+                return Thing::fromUnknown();
+              }
+            } else {
+              int index = pos++;
+              if (index >= specs.size()) {
+                // TODO: Better error.
+                location.error("Too many parameters.");
+                return Thing::fromUnknown();
+              } else if (!matchedSpecs.insert(std::make_pair(&specs[index], &input)).second) {
+                // TODO: Better error.
+                location.error("Positional parameter already satisfied by name.");
+                return Thing::fromUnknown();
+              }
+            }
+          }
+
+          for (auto& spec: specs) {
+            if (dynamic_cast<Variable*>(spec.entity) != nullptr ||
+                dynamic_cast<Alias*>(spec.entity) != nullptr) {
+              auto iter = matchedSpecs.find(&spec);
+              if (iter != matchedSpecs.end()) {
+                // TODO:  Cast types and match references.  See also TODO above about variablesUsed.
+                #error "TODO"
+                function.entity.context.params.push_back(iter->second->value);
+              } else if (spec.defaultValue) {
+                function.entity.context.params.push_back(*spec.defaultValue);
+              } else {
+                // TODO: Better error.
+                location.error("Missing parameter.");
+                return Thing::fromUnknown();
+              }
+            }
+          }
+
+          functionEntity->call(move(function.entity.context));
+        }
+      }
+
+      case Thing::Kind::DYNAMIC_VALUE:
+        // TODO:  Since functions must always resolve at compile time, the only possibility here
+        //   is that the value is a class with operator().  Deal with that.
+        throw "unimplemented";
+
+      case Thing::Kind::REFERENCE:
+      case Thing::Kind::DYNAMIC_REFERENCE:
+        throw "can't happen; dereferenced";
     }
 
     throw "can't get here";
   }
 
-  Maybe<ThingDescriptor> getThingDescriptor(const Thing& value);
+  // -------------------------------------------------------------------------------------
+  // -------------------------------------------------------------------------------------
+  // -------------------------------------------------------------------------------------
+  // -------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ValueDescriptor findCommonSupertype(const ValueDescriptor& type1, const ValueDescriptor& type2);
+
 
   Thing applyBinaryOperator(const Expression& leftExpression, ast::BinaryOperator op,
                             const Expression& rightExpression,
-                            VariableUsageSet& variablesUsed, errors::Location location) {
+                            VariableUsageSet& variablesUsed, ErrorLocation location) {
     vector<VariableUsageSet> subVariablesUsed(2);
 
     Thing left = dereference(
-        evaluate(leftExpression, variablesUsed), subVariablesUsed[0], leftExpression.location);
+        evaluate(leftExpression, variablesUsed), subVariablesUsed[0],
+                 errorLocation(leftExpression));
     Thing right = dereference(
-        evaluate(rightExpression, variablesUsed), subVariablesUsed[1], rightExpression.location);
+        evaluate(rightExpression, variablesUsed), subVariablesUsed[1],
+                 errorLocation(rightExpression));
 
-    variablesUsed.merge(move(subVariablesUsed), context);
+    variablesUsed.merge(move(subVariablesUsed));
 
     const ValueDescriptor* leftDesc = getValueDescriptor(left);
     const ValueDescriptor* rightDesc = getValueDescriptor(right);
@@ -168,7 +565,7 @@ public:
     throw "TODO";
 
     if (!leftOverload && !leftOverload) {
-      context.error(errors::error(location, "Operands do not support this operator."));
+      location.error("Operands do not support this operator.");
       return Thing::fromUnknown();
     }
 
@@ -178,7 +575,7 @@ public:
   }
 
   Thing applyPrefixOperator(ast::PrefixOperator op, const Expression& operandExpression,
-                            VariableUsageSet& variablesUsed, errors::Location location) {
+                            VariableUsageSet& variablesUsed, ErrorLocation location) {
     Thing operand = evaluate(operandExpression, variablesUsed);
 
     switch (operand.getKind()) {
@@ -186,12 +583,12 @@ public:
         // Update the descriptor, if there is one and it is a value.
         if (operand.unknown) {
           if (operand.unknown->getKind() != ThingDescriptor::Kind::VALUE) {
-            return errorCantUseHere(move(operand), operandExpression.location);
+            return errorCantUseHere(move(operand), errorLocation(operandExpression));
           }
 
           Maybe<Function&> method = operand.unknown->value.type->lookupPrefixOperator(op);
           if (!method) {
-            context.error(errors::error(location, "Operand does not support this operator."));
+            location.error("Operand does not support this operator.");
             return Thing::fromUnknown();
           }
 
@@ -206,7 +603,7 @@ public:
       case Thing::Kind::VALUE: {
         Maybe<Function&> method = operand.value.descriptor.type->lookupPrefixOperator(op);
         if (!method) {
-          context.error(errors::error(location, "Operand does not support this operator."));
+          location.error("Operand does not support this operator.");
           return Thing::fromUnknown();
         }
 
@@ -217,12 +614,12 @@ public:
 
       case Thing::Kind::ENTITY:
       case Thing::Kind::TUPLE:
-        return errorCantUseHere(move(operand), operandExpression.location);
+        return errorCantUseHere(move(operand), errorLocation(operandExpression));
     }
   }
 
   Thing applyPostfixOperator(const Expression& operandExpression, ast::PostfixOperator op,
-                             VariableUsageSet& variablesUsed, errors::Location location) {
+                             VariableUsageSet& variablesUsed, ErrorLocation location) {
     Thing operand = evaluate(operandExpression, variablesUsed);
 
     switch (operand.getKind()) {
@@ -230,12 +627,12 @@ public:
         // Update the descriptor, if there is one and it is a value.
         if (operand.unknown) {
           if (operand.unknown->getKind() != ThingDescriptor::Kind::VALUE) {
-            return errorCantUseHere(move(operand), operandExpression.location);
+            return errorCantUseHere(move(operand), errorLocation(operandExpression));
           }
 
           Maybe<Function&> method = operand.unknown->value.type->lookupPostfixOperator(op);
           if (!method) {
-            context.error(errors::error(location, "Operand does not support this operator."));
+            location.error("Operand does not support this operator.");
             return Thing::fromUnknown();
           }
 
@@ -249,7 +646,7 @@ public:
       case Thing::Kind::VALUE: {
         Maybe<Function&> method = operand.value.descriptor.type->lookupPostfixOperator(op);
         if (!method) {
-          context.error(errors::error(location, "Operand does not support this operator."));
+          location.error("Operand does not support this operator.");
           return Thing::fromUnknown();
         }
 
@@ -260,7 +657,7 @@ public:
 
       case Thing::Kind::ENTITY:
       case Thing::Kind::TUPLE:
-        return errorCantUseHere(move(operand), operandExpression.location);
+        return errorCantUseHere(move(operand), errorLocation(operandExpression));
     }
   }
 
@@ -332,12 +729,10 @@ public:
 
           if (trueDescriptor == nullptr || falseDescriptor == nullptr) {
             if (trueDescriptor == nullptr && trueThing.getKind() != Thing::Kind::UNKNOWN) {
-              context.error(errors::error(trueClause.location,
-                  "Branches of dynamic conditions must be values."));
+              error(trueClause, "Branches of dynamic conditions must be values.");
             }
             if (falseDescriptor == nullptr && falseThing.getKind() != Thing::Kind::UNKNOWN) {
-              context.error(errors::error(falseClause.location,
-                  "Branches of dynamic conditions must be values."));
+              error(falseClause, "Branches of dynamic conditions must be values.");
             }
             return Thing::fromUnknown();
           }
@@ -348,7 +743,7 @@ public:
           Thing commonType = Thing::fromEntity(commonDescriptor.type)
 
           trueThing = castTo(move(trueThing), commonDescriptor.,
-                             variablesUsed, trueClause.location);
+                             variablesUsed, errorLocation(trueClause));
 
           // TODO(kenton):  If both branches are references, we actually want to return a reference...
           return Thing::fromValue(
@@ -360,144 +755,7 @@ public:
 
       case Thing::Kind::ENTITY:
       case Thing::Kind::TUPLE:
-        return errorCantUseHere(move(condition), conditionExpression.location);
-    }
-
-    throw "can't get here";
-  }
-
-  Maybe<Entity&> lookupMemberEntity(const ValueDescriptor& descriptor);
-  Maybe<Entity&> lookupMemberEntity(const ThingDescriptor& descriptor);
-  Maybe<Entity&> lookupMemberEntity(const Thing& thing);
-
-  Thing getMember(Thing&& object, const string& memberName,
-                  VariableUsageSet& variablesUsed, errors::Location location) {
-    Maybe<Entity&> member = lookupMemberEntity(object);
-
-    if (member) {
-      return Thing::fromReference(&*member, EntityContext::forMember(move(object)));
-    } else {
-      context.error(errors::error(location, "No such member: ", memberName));
-      return Thing::fromError();
-    }
-  }
-
-  Thing callFunction(const Expression::FunctionCall& functionCall,
-                     VariableUsageSet& variablesUsed, errors::Location location) {
-    vector<VariableUsageSet> subVariablesUsed;
-    subVariablesUsed.reserve(functionCall.parameters.size());
-
-    subVariablesUsed.emplace_back();
-    Thing function = dereference(
-        evaluate(*functionCall.function, subVariablesUsed.back()),
-        subVariablesUsed.back(), location);
-
-    vector<TupleElement> boundParameters;
-    for (auto& parameter: functionCall.parameters) {
-      subVariablesUsed.emplace_back();
-      // TODO:  Keyword args in AST.
-      boundParameters.emplace_back(nullptr, parameter.styleAllowance,
-                                   evaluate(*parameter.expression, subVariablesUsed.back()));
-    }
-
-    // TODO:  In theory we should wait until after casts before doing this merge, since casts could
-    //   have side effects (but shouldn't).  Note OTOH that binding alias parameters counts as a
-    //   *sequential* use because the use actually happens during the function call, which is
-    //   obviously after all parameters have been computed.
-    variablesUsed.merge(move(subVariablesUsed), context);
-
-    switch (function.getKind()) {
-      case Thing::Kind::ERROR:
-        return move(function);
-
-      case Thing::Kind::BOOLEAN:
-      case Thing::Kind::INTEGER:
-      case Thing::Kind::DOUBLE:
-      case Thing::Kind::TUPLE:
-      case Thing::Kind::ARRAY:
-        context.error(errors::error(functionCall.function->location, "Not a function"));
-        return Thing::fromError();
-
-      case Thing::Kind::ENTITY: {
-        Entity* entity = function.entity.entity;
-        if (Overload* overload = dynamic_cast<Overload*>(entity)) {
-          Maybe<Entity&> resolved = overload->resolve(boundParameters);
-          if (!resolved) {
-            context.error(errors::error(location, "No such overload."));
-            return Thing::fromError();
-          }
-          entity = &*resolved;
-        }
-
-        if (Function* functionEntity = dynamic_cast<Function*>(entity)) {
-          // It's a function!
-          const vector<Function::ParameterSpec>& specs = functionEntity->getParameters();
-          map<const Function::ParameterSpec*, TupleElement*> matchedSpecs;
-          int pos = 0;
-          for (TupleElement& input: boundParameters) {
-            if (input.name) {
-              const Function::ParameterSpec* match = nullptr;
-              for (auto& spec: specs) {
-                if (compare(*input.name, spec.entity->getName())) {
-                  match = &spec;
-                  break;
-                }
-              }
-
-              if (match == nullptr) {
-                // TODO: Better error.
-                context.error(errors::error(location, "No parameter matching name."));
-                return Thing::fromError();
-              } else if (!matchedSpecs.insert(std::make_pair(match, &input)).second) {
-                // TODO: Better error.
-                context.error(errors::error(location, "Named parameter already satisfied."));
-                return Thing::fromError();
-              }
-            } else {
-              int index = pos++;
-              if (index >= specs.size()) {
-                // TODO: Better error.
-                context.error(errors::error(location, "Too many parameters."));
-                return Thing::fromError();
-              } else if (!matchedSpecs.insert(std::make_pair(&specs[index], &input)).second) {
-                // TODO: Better error.
-                context.error(errors::error(location,
-                    "Positional parameter already satisfied by name."));
-                return Thing::fromError();
-              }
-            }
-          }
-
-          for (auto& spec: specs) {
-            if (dynamic_cast<Variable*>(spec.entity) != nullptr ||
-                dynamic_cast<Alias*>(spec.entity) != nullptr) {
-              auto iter = matchedSpecs.find(&spec);
-              if (iter != matchedSpecs.end()) {
-                // TODO:  Cast types and match references.  See also TODO above about variablesUsed.
-                #error "TODO"
-                function.entity.context.params.push_back(iter->second->value);
-              } else if (spec.defaultValue) {
-                function.entity.context.params.push_back(*spec.defaultValue);
-              } else {
-                // TODO: Better error.
-                context.error(errors::error(location, "Missing parameter."));
-                return Thing::fromError();
-              }
-            }
-          }
-
-          functionEntity->call(move(function.entity.context));
-        }
-      }
-
-      case Thing::Kind::DYNAMIC_VALUE:
-        // TODO:  Since functions must always resolve at compile time, the only possibility here
-        //   is that the value is a class with operator().  Deal with that.
-        throw "unimplemented";
-
-      case Thing::Kind::REFERENCE:
-      case Thing::Kind::DYNAMIC_REFERENCE:
-        throw "can't happen; dereferenced";
+        return errorCantUseHere(move(condition), conditionExpression);
     }
 
     throw "can't get here";
@@ -507,9 +765,9 @@ public:
     switch (expression.getType()) {
       case Expression::Type::ERROR: {
         for (auto& error: expression.error) {
-          context.error(error);
+          errorLocation(expression).error(error);
         }
-        return Thing::fromError();
+        return Thing::fromUnknown();
       }
 
       case Expression::Type::VARIABLE: {
@@ -517,12 +775,10 @@ public:
         if (binding) {
           // For now only the binding's identity is used.
           variablesUsed.addSequential(&*binding, VariableUsageSet::Style::IDENTITY,
-                                      expression.location);
+                                      errorLocation(expression));
           return Thing::fromReference(&*binding, EntityContext::forLocal(scope));
         } else {
-          context.error(errors::error(expression.location, "Unknown identifier: ",
-                                      expression.variable));
-          return Thing::fromError();
+          return error(expression, "Unknown identifier: ", expression.variable);
         }
       }
 
@@ -549,7 +805,7 @@ public:
         vector<VariableUsageSet> subVariablesUsed(2);
         Thing left = evaluate(*expression.binaryOperator.left, subVariablesUsed[0]);
         Thing right = evaluate(*expression.binaryOperator.right, subVariablesUsed[1]);
-        variablesUsed.merge(move(subVariablesUsed), context);
+        variablesUsed.merge(move(subVariablesUsed));
 
         return applyBinaryOperator(move(left), expression.binaryOperator.op, move(right));
       }
@@ -603,7 +859,7 @@ public:
       switch (statement.getType()) {
         case ast::Statement::Type::ERROR:
           for (auto& error: statement.error) {
-            context.error(error);
+            errorLocation(statement).error(error);
           }
           break;
 
@@ -613,14 +869,14 @@ public:
           switch (eval.getKind()) {
             case Evaluation::Kind::REFERENCE:
               if (eval.reference.getKind() != Reference::Kind::ANONYMOUS) {
-                context.error(errors::error(statement.location, "Statement has no effect."));
+                error(statement, "Statement has no effect.");
               }
               code.push_back(CxxStatement::addSemicolon(
                   move(eval.reference.anonymous.cxxExpression)));
               break;
             case Evaluation::Kind::THING:
               if (eval.thing.getKind() != Thing::Kind::RUNTIME_VALUE) {
-                context.error(errors::error(statement.location, "Statement has no effect."));
+                error(statement, "Statement has no effect.");
               }
               code.push_back(CxxStatement::addSemicolon(
                   move(eval.thing.runtimeValue.cxxExpression)));
@@ -635,7 +891,7 @@ public:
           OwnedPtr<Scope> subscope = scope.startBlock();
           CxxStatement cxxStatement(CxxExpression("{"));
           cxxStatement.blocks.emplace_back(
-              move(Compiler(context, *subscope).compileImperative(statement.block)),
+              move(Compiler(*subscope).compileImperative(statement.block)),
               CxxExpression("}"));
           code.push_back(move(cxxStatement));
           break;
@@ -651,14 +907,12 @@ public:
   }
 
 private:
-  Context& context;
   Scope& scope;
   Evaluator& evaluator;
 };
 
-vector<CxxStatement> compileImperative(Context& context, Scope& scope,
-                                       const vector<ast::Statement>& statements) {
-  return Compiler(context, scope).compileImperative(statements);
+vector<CxxStatement> compileImperative(Scope& scope, const vector<ast::Statement>& statements) {
+  return Compiler(scope).compileImperative(statements);
 }
 
 }  // namespace compiler

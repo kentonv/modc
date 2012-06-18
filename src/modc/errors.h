@@ -140,7 +140,7 @@ public:
 };
 
 template <typename... Parts>
-Error error(Location location, Parts... message) {
+Error error(Location location, Parts&&... message) {
   Error result;
   result.location = location;
   result.message = concat(std::forward<Parts>(message)...);
