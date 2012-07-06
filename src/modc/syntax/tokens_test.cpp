@@ -16,7 +16,7 @@
 
 #include "tokens.h"
 
-#include "errors.h"
+#include "../errors.h"
 #include "gtest.h"
 
 namespace modc {

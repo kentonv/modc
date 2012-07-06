@@ -22,9 +22,9 @@
 #include <map>
 
 #include "base/OwnedPtr.h"
-#include "Maybe.h"
-#include "errors.h"
-#include "macros.h"
+#include "../Maybe.h"
+#include "../errors.h"
+#include "../macros.h"
 
 namespace modc {
   class CodePrinter;

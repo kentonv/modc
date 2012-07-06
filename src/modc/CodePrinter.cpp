@@ -18,7 +18,7 @@
 #include "base/Debug.h"
 #include <assert.h>
 #include "Maybe.h"
-#include "chars.h"
+#include "syntax/chars.h"
 #include <limits>
 #include <ostream>
 #include <map>

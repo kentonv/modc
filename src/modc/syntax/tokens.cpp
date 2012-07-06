@@ -22,7 +22,7 @@
 
 #include "base/Debug.h"
 #include "chars.h"
-#include "errors.h"
+#include "../errors.h"
 
 namespace modc {
 namespace tokens {

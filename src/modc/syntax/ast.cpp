@@ -23,10 +23,10 @@
 #include <map>
 
 #include "tokens.h"
-#include "errors.h"
+#include "../errors.h"
 #include "parser.h"
 #include "base/Debug.h"
-#include "CodePrinter.h"
+#include "../CodePrinter.h"
 
 namespace modc {
 namespace ast {

@@ -23,9 +23,9 @@
 #include <vector>
 
 #include "base/OwnedPtr.h"
-#include "Maybe.h"
-#include "macros.h"
-#include "ast.h"
+#include "../Maybe.h"
+#include "../macros.h"
+#include "../syntax/ast.h"
 
 namespace modc {
 namespace compiler {

@@ -23,7 +23,7 @@
 
 #include "ast.h"
 #include "tokens.h"
-#include "errors.h"
+#include "../errors.h"
 #include "parser.h"
 #include "base/Debug.h"
 

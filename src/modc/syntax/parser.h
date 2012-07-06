@@ -25,7 +25,7 @@
 
 #include "base/OwnedPtr.h"
 #include "modc/errors.h"
-#include "Maybe.h"
+#include "../Maybe.h"
 
 namespace modc {
 namespace parser {

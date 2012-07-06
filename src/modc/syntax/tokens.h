@@ -23,8 +23,8 @@
 #include <stdint.h>
 
 #include "base/OwnedPtr.h"
-#include "Maybe.h"
-#include "errors.h"
+#include "../Maybe.h"
+#include "../errors.h"
 
 namespace modc {
   namespace chars {

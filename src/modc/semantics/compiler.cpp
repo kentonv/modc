@@ -17,7 +17,6 @@
 #include <stdexcept>
 
 #include "compiler.h"
-#include "CodePrinter.h"
 
 namespace modc {
 namespace compiler {
@@ -96,6 +95,7 @@ public:
             input.value.value.partialValue =
                 evaluator.readPointer(move(input.value.value.partialValue));
           }
+          #error "need to apply possibleTargets"
           return move(input);
         } else {
           // Already dereferenced.
@@ -230,7 +230,7 @@ public:
 
   // Called when a member is *dereferenced*, to decide its constraints based on its declared
   // constraints and the parent object's constraints.
-  void inheritConstraints(ValueDescriptor& member, const ValueConstraints& parent) {
+  void inheritValueConstraints(ValueDescriptor& member, const ValueConstraints& parent) {
     if (member.isAlias()) {
       if (!member.constraints.possibleTargets) {
         // Inherit possibleTargets from the parent object's transitiveAliases.
@@ -292,6 +292,20 @@ public:
     }
   }
 
+  void inheritPointerConstraints(ValueDescriptor& member, const ValueConstraints& parent) {
+    // We're forming a pointer to a member from a pointer to the object.  So, the object
+    // pointer's possible targets should simply be inherited.  Transitive aliases should
+    // also just be inherited *unless* either:
+    // - the new target member is a non-alias and declares its own transitive aliases,
+    //   which should simply be kept
+    // - the new target member is an alias and declares possible targets, in which case
+    //   those should be turned into our transitiveAliases.
+    // TODO:  Do we really want to inherit anything from the target value?  Will its
+    // constraints be applied in due course anyway, once the pointer is dereferenced?
+
+    member.constraints.possibleTargets = parent.possibleTargets;
+  }
+
   Thing getMember(Thing&& object, const string& memberName,
                   VariableUsageSet& variablesUsed, ErrorLocation location) {
     switch (object.getKind()) {
@@ -334,7 +348,7 @@ public:
               //   as if the object were unknown?
               ThingPort port = scope.makePortFor(boundMember.context);
               ValueDescriptor memberDescriptor = variable->getDeclaredDescriptor(port);
-              inheritConstraints(memberDescriptor, object.value.descriptor.constraints);
+              inheritValueConstraints(memberDescriptor, object.value.descriptor.constraints);
               return Thing::fromValue(move(memberDescriptor), move(memberValue));
             }
             throw "can't get here";
@@ -355,12 +369,19 @@ public:
               //   those should be turned into our transitiveAliases.
               // TODO:  Do we really want to inherit anything from the target value?  Will its
               // constraints be applied in due course anyway, once the pointer is dereferenced?
-              #error "TODO"
+
+              object.value.value = move(memberValue);
+              #error "shit, boundMember was clobbered to build memberValue"
+              ThingPort port = scope.makePortFor(boundMember.context);
+              object.value.descriptor.type = variable->getType(port);
+              #error "above isn't done at all"
+
+
             } else {
               // The object is a dynamic temporary.
               ThingPort port = scope.makePortFor(boundMember.context);
               ValueDescriptor memberDescriptor = variable->getDeclaredDescriptor(port);
-              inheritConstraints(memberDescriptor, object.value.descriptor.constraints);
+              inheritValueConstraints(memberDescriptor, object.value.descriptor.constraints);
               return Thing::fromValue(move(memberDescriptor), move(memberValue));
             }
           }
