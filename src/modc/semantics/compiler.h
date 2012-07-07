@@ -54,7 +54,6 @@ class ThingPort;
 
 // Value types.
 class Value;
-class DynamicValue;
 class Reference;
 class Thing;
 class CxxExpression;
@@ -335,6 +334,16 @@ public:
 
   Kind getKind() const { return kind; }
 
+  // The value.  May contain UNKNOWNs, either for the whole value or individual branches of an
+  // aggregate.  For CONSTANTs, the value is only UNKNOWN when sanity-checking (i.e. because
+  // compilation already failed, or checking an uninstantiated template).  For all other expression
+  // types, the value is just for optimization purposes.
+  Value value;
+
+  struct Constant {
+    VALUE_TYPE0(Constant);
+  };
+
   struct BinaryOperator {
     ast::BinaryOperator op;
     Indirect<BoundExpression> left;
@@ -449,20 +458,7 @@ public:
 private:
   Kind kind;
 
-  BoundExpression(Kind kind): kind(kind) {}
-};
-
-struct DynamicValue {
-  BoundExpression expression;
-
-  // If the expression is NOT a constant, but is some kind of aggregate where some of the content
-  // is actually known at compile time, then partialValue will be filled in with a value that has
-  // some UNKNOWN contents.  Otherwise, the partialValue itself is simply UNKNOWN.
-  Value partialValue;
-
-  VALUE_TYPE2(DynamicValue, BoundExpression&&, expression, Value&&, partialValue);
-  DynamicValue(BoundExpression&& expression)
-      : expression(move(expression)), partialValue(Value::fromUnknown()) {}
+  BoundExpression(Kind kind): value(Value::fromUnknown()), kind(kind) {}
 };
 
 // =======================================================================================
@@ -662,14 +658,14 @@ public:
 
   struct Rvalue {
     ValueDescriptor descriptor;
-    DynamicValue value;
+    BoundExpression expression;
 
-    VALUE_TYPE2(Rvalue, ValueDescriptor&&, descriptor, DynamicValue&&, value);
+    VALUE_TYPE2(Rvalue, ValueDescriptor&&, descriptor, BoundExpression&&, expression);
   };
 
   struct Lvalue {
-    // If present, the variable is a member of the given value.  Otherwise, the variable is a local
-    // variable.
+    // If present, the variable is a member of the given value, which is a pointer.  Otherwise, the
+    // variable is a local variable.
     Maybe<Rvalue> parent;
     Variable* variable;
   };
@@ -688,8 +684,8 @@ public:
 
   static Thing fromEntity(Bound<Entity>&& entity);
 
-  static Thing fromValue(ValueDescriptor&& descriptor, DynamicValue&& value);
-  static Thing fromValue(Rvalue&& value);
+  static Thing fromRvalue(ValueDescriptor&& descriptor, BoundExpression&& expression);
+  static Thing fromRvalue(Rvalue&& rvalue);
 
 private:
   Kind kind;
@@ -827,8 +823,6 @@ public:
   //   those side effects still take place...
   Value call(Context&& context, vector<Value>&& parameters);
 
-  Thing call(Thing::DynamicValue&& object, vector<Thing::DynamicValue>&& params);
-
   // TODO:  Implicit parameters, environment.
   //   Both may depend on compiling the function body.
 };
@@ -874,8 +868,8 @@ public:
   Maybe<Overload&> lookupLeftBinaryOperator(ast::BinaryOperator op);
   Maybe<Overload&> lookupRightBinaryOperator(ast::BinaryOperator op);
 
-  // NOTE:  interfaceType could be Bound<Interface, DynamicValue>...  but this probably forces
-  //   a copy that wouldn't otherwise be needed.
+  // NOTE:  interfaceType could be Bound<Interface>...  but this probably forces a copy that
+  //    wouldn't otherwise be needed.
   Maybe<ImplementedInterface&> findImplementedInterface(
       ThingPort& port, const Bound<Type>& interfaceType);
 

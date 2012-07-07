@@ -25,18 +25,19 @@ using std::move;
 using ast::Expression;
 using ast::Statement;
 
+template <typename ValueType>
 class Evaluator {
 public:
-  Value readPointer(Value&& pointer);
-  Value upcast(Value&& object, ImplementedInterface* interface);
+  ValueType readPointer(ValueType&& pointer);
+  ValueType upcast(ValueType&& object, ImplementedInterface* interface);
 
   // object must be a non-pointer.
-  Value getMember(Value&& object, Variable* member);
+  ValueType getMember(ValueType&& object, Variable* member);
 
   // object must be a pointer.
-  Value getPointerToMember(Value&& object, Variable* member);
+  ValueType getPointerToMember(ValueType&& object, Variable* member);
 
-  Value aliasTemporary(Value&& pureData);
+  ValueType aliasTemporary(ValueType&& pureData);
 };
 
 class Compiler {
@@ -73,23 +74,12 @@ public:
 
   Maybe<Thing::Rvalue> lvalueToRvalue(Thing::Lvalue&& lvalue, ErrorLocation location) {
     if (lvalue.parent) {
-      Thing::Rvalue rvalue = move(*lvalue.parent);
+      lvalue.parent->descriptor.pointer
 
-      if (rvalue.value.expression.getKind() == BoundExpression::Kind::CONSTANT) {
-        rvalue.value.expression.constant =
-            evaluator.getPointerToMember(
-                move(rvalue.value.expression.constant), lvalue.variable);
-        assert(rvalue.value.partialValue.getKind() == Value::Kind::UNKNOWN);
-      } else {
-        rvalue.value.expression =
-            BoundExpression::fromPointerToMember(
-                move(rvalue.value.expression), lvalue.variable);
-        rvalue.value.partialValue =
-            evaluator.getPointerToMember(
-                move(rvalue.value.partialValue), lvalue.variable);
-      }
+      lvalue.variable->getDescriptor(Context());
 
-      return move(rvalue);
+      return Thing::Rvalue(,
+          expressionBuilder.getPointerToMember(move(lvalue.parent->expression), lvalue.variable));
     } else {
       ValueDescriptor descriptor = scope.getVariableDescriptor(lvalue.variable);
 
@@ -1097,7 +1087,8 @@ public:
 
 private:
   Scope& scope;
-  Evaluator& evaluator;
+  Evaluator<Value>& evaluator;
+  Evaluator<BoundExpression>& expressionBuilder;
 };
 
 vector<CxxStatement> compileImperative(Scope& scope, const vector<ast::Statement>& statements) {
