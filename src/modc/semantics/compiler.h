@@ -149,8 +149,9 @@ public:
 
 // =======================================================================================
 
-template <typename T>
 struct Context {
+  class Binding;
+
   // Top-level scope containing all entities that share this context.
   //
   // Note that it does NOT make sense to bind the scope entity to the context itself, as the scope
@@ -170,26 +171,36 @@ struct Context {
   // If |scope| is not the current execution scope or one of its parents then |params| must be
   // filled in with the scope's parameters.  If the scope is a type, then the first param is always
   // "this" (an instance of the scope type).
-  Maybe<vector<T>> params;
+  Maybe<vector<Binding>> params;
 
-  VALUE_TYPE2(Context, Entity*, scope, Maybe<vector<T>>&&, params);
+  VALUE_TYPE2(Context, Entity*, scope, Maybe<vector<Binding>>&&, params);
 
-  Context(Entity* scope, T&& param): scope(scope), params(vector<T>()) {
-    params.push_back(move(param));
+  Context(Entity* scope, Binding&& param): scope(scope), params(vector<Binding>()) {
+    params->push_back(move(param));
   }
 };
 
-template <typename EntityType, typename ContextElementType>
+template <typename EntityType>
 struct Bound {
   EntityType* entity;
-  Context<ContextElementType> context;
+  Context context;
 
-  VALUE_TYPE2(Bound, EntityType*, entity, Context<ContextElementType>&&, context);
+  VALUE_TYPE2(Bound, EntityType*, entity, Context&&, context);
 
   template <typename OtherEntity>
-  Bound(Bound<OtherEntity, ContextElementType>&& other)
+  Bound(Bound<OtherEntity>&& other)
       : entity(other.entity), context(move(other.context)) {}
 };
+
+struct MemberPath {
+  // TODO:  What about array subscripts?
+  vector<Variable*> path;
+
+  VALUE_TYPE1(MemberPath, vector<Variable*>&&, path);
+  MemberPath() {}
+};
+
+class ContextBinding;
 
 class Value {
 public:
@@ -200,6 +211,7 @@ public:
     // or because there was an error when trying to evaluate the value.
     UNKNOWN,
 
+    // Pure data.
     BOOLEAN,
     INTEGER,
     DOUBLE,
@@ -207,25 +219,38 @@ public:
     OBJECT,
     ARRAY,
 
+    // Pointer.  Cannot assign to this, but can possibly assign to members.  Has been locked as
+    // appropriate for its exclusivity.
     POINTER,
-    INTERFACE_POINTER
+    INTERFACE_POINTER,
+
+    // Directly names a variable in the local scope, or member thereof.  Has not been locked.
+    LVALUE
   };
 
   Kind getKind() { return kind; }
 
   struct Object {
-    Bound<Type, Value> type;
+    Bound<Type> type;
     map<Variable*, Value> fields;
   };
 
   struct Array {
-    Bound<Type, Value> elementType;
+    Bound<Type> elementType;
     vector<Value> elements;
   };
 
   struct InterfacePointer {
-    Bound<Variable, Value> target;
+    Bound<Variable> target;
     ImplementedInterface* interface;
+  };
+
+  struct Lvalue {
+    // A local variable.
+    Variable* root;
+    MemberPath path;
+
+    VALUE_TYPE2(Lvalue, Variable*, root, MemberPath&&, path);
   };
 
   union {
@@ -236,8 +261,10 @@ public:
     Object object;
     Array array;
 
-    Bound<Variable, Value> pointer;
+    Bound<Variable> pointer;
     InterfacePointer interfacePointer;
+
+    Lvalue lvalue;
   };
 
   static Value fromUnknown();
@@ -246,11 +273,34 @@ public:
   static Value fromInteger(int value);
   static Value fromDouble(double value);
 
-  static Value fromPointer(Bound<Variable, Value>&& pointer);
+  static Value fromPointer(Bound<Variable>&& pointer);
 
 private:
   Kind kind;
 };
+
+class Context::Binding {
+public:
+  UNION_TYPE_BOILERPLATE(Binding);
+
+  enum class Kind {
+    VALUE,
+    ALIAS,
+    INTEGER_EXPRESSION
+  };
+
+  Kind getKind();
+
+  union {
+    Value value;
+    Value::Lvalue alias;
+    // TODO:  Integer expressions.
+  };
+
+  static Binding fromLvalue(Value::Lvalue&& lvalue);
+};
+
+// =======================================================================================
 
 class BoundExpression {
 public:
@@ -268,11 +318,17 @@ public:
 
     METHOD_CALL,
     SUBSCRIPT,
+
+    // Given a pure ("temporary") object, produce a member value.
     MEMBER_ACCESS,
 
+    // Given a pointer, produce a pointer to a member.
+    POINTER_TO_MEMBER,
+
+    // Given a pointer input, read its value.
     READ_POINTER,
 
-    // Given a non-pointer input, produce a const pointer to a "temporary" value.
+    // Given a pure-data input, produce a const pointer to a "temporary" value.
     ALIAS_TEMPORARY,
 
     // Simple upcast.
@@ -315,7 +371,9 @@ public:
 
   struct MethodCall {
     Function* method;
-    Indirect<BoundExpression> object;  // i.e., this
+
+    // "this" -- must be a pointer.  (Use ALIAS_TEMPORARY when calling a method on a temporary.)
+    Indirect<BoundExpression> object;
 
     // Just the variable parameters, since we've already matched them up against the function
     // signature.
@@ -326,8 +384,8 @@ public:
   };
 
   struct Subscript {
-    // Container must strictly be a built-in array.  Calls to an overloaded operator[] on a class
-    // would have been converted to MethodCall.
+    // Container must strictly be a built-in array (as pure data, not a pointer).  Calls to an
+    // overloaded operator[] on a class would have been converted to MethodCall.
     Indirect<BoundExpression> container;
     Indirect<BoundExpression> subscript;
 
@@ -357,6 +415,7 @@ public:
     MethodCall methodCall;
     Subscript subscript;
     MemberAccess memberAccess;
+    MemberAccess pointerToMember;
 
     Indirect<BoundExpression> readPointer;
     Indirect<BoundExpression> aliasTemporary;
@@ -382,6 +441,7 @@ public:
   static BoundExpression fromMemberAccess(BoundExpression&& object, Variable* member);
 
   static BoundExpression fromReadPointer(BoundExpression&& pointer);
+  static BoundExpression fromAliasTemporary(BoundExpression&& value);
 
   static BoundExpression fromUpcast(BoundExpression&& value, ImplementedInterface* interface);
 
@@ -411,25 +471,53 @@ struct EntityName {
   Maybe<vector<Thing>> parameters;
 };
 
-class ValueConstraints {
-public:
-  // If the value is an alias, these are the things it could possibly point at.  If not present,
-  // then the set of things it could point at is undeclared.
-  Maybe<vector<Bound<Variable, DynamicValue>>> possibleTargets;
+enum Exclusivity: char {
+  // Order is important:  Latter pointers can be coerced to former pointers.
+  IDENTITY,
+  SHARED,
+  EXCLUSIVE,
+  OWNED,
+};
+
+struct ValueConstraints {
+  struct PossiblePointer {
+    // The member which may contain the pointer.  The identified member itself may be the pointer,
+    // or it may contain it somewhere within an aggregate structure.  The MemberPath can be empty,
+    // indicating that any member could potentially contain the pointer.
+    //
+    // No element of this path is allowed to have static constraints declared in the code, since
+    // in that case it makes no sense for the container object to specify additional constraints.
+    // Also, only the last element of the path may itself be a pointer, in which case we're
+    // declaring what that exact pointer may point at -- not what the pointed-to value's members
+    // may point at.  The pointed-to value's possible pointers are either explicitly annotated on
+    // its type, or entirely unknown and presumed to be unchangable.
+    MemberPath member;
+
+    // The target of the pointer.  The pointer either points at exactly this target, or some member
+    // within the target, transitively.
+    //
+    // TODO:  Should we distinguish between exact pointers vs. pointers that point somewhere
+    //   within?  Could be useful.
+    Value::Lvalue target;
+
+    // The maximum exclusivity that the pointer might have.  The pointer could actually end up
+    // having a lesser exclusivity, but not greater.
+    Exclusivity exclusivity;
+
+    VALUE_TYPE3(PossiblePointer, MemberPath&&, member, Value::Lvalue&&, target,
+                Exclusivity, exclusivity);
+  };
 
   // Things which this value's unannotated alias members may point at.  If not present, then no
   // declaration has been made -- but if the type contains no unannotated aliases, then this is
   // equivalent to the list being empty.
-  enum class AliasType {
-    IDENTITY,
-    IMMUTABLE,
-    MUTABLE,
-    ENTANGLED
-  };
-  Maybe<vector<std::pair<Bound<Variable, DynamicValue>, AliasType>>> transitiveAliases;
+  Maybe<vector<std::pair<Value::Lvalue, Exclusivity>>> transitiveAliases;
 
-  // If the value is an integer, it is known to be in one of these ranges.  If this vector is
-  // empty then the integer is assumed to have maximum range.
+  // If the value (or pointed-at value) is an integer, it is known to be in one of these ranges.
+  // If this vector is empty then the integer is assumed to have maximum (32-bit) range.
+  //
+  // TODO:  These shouldn't be arbitrary Things.  They should be arithmetic expressions on constants
+  //   and lvalues, probably allowing only +, -, *, //.
   struct Range {
     Indirect<Thing> start;
     Indirect<Thing> end;
@@ -437,43 +525,78 @@ public:
   vector<Range> intRanges;
 };
 
+struct PointerConstraints {
+  Exclusivity exclusivity;
+
+  // Where this pointer came from.  Exclusivity constraints must be enforced on this lvalue
+  // until the pointer goes out of scope.  If multiple sources are listed, then the pointer may
+  // have come from any of them.  Note that the lvalues in this list are denormalized:  their
+  // paths contain no pointers.
+  //
+  // TODO:  Do we want to distinguish between "the pointer may point at exactly X" vs. "the
+  //   pointer may point at X or one of its members"?
+  vector<Value::Lvalue> possibleTargets;
+
+  // If true, then in addition to the lvalues in derivedFrom, the pointer may have been provided
+  // directly from the caller without any information about from where it was derived.
+  bool mayTargetCaller;
+
+  // Exclusive pointers in the current scope from which this pointer may have been derived.
+  // For example, say there is a variable called "foo" in current scope, which contains an
+  // exclusive pointer "foo.bar".  Say a new pointer "qux" is defined which points at
+  // "foo.bar.baz".  Then, qux is derived from "foo.bar" even though it does not point into foo.
+  // The difference between this and possibleTargets is:
+  // 1) foo can go out-of-scope before qux does, because qux does not actually point into foo.
+  //    Note that if this happens, qux's derivedFrom will be rewritten to substitute foo.bar's
+  //    derivedFrom, so that qux is now seen as derived directly from whatever foo.bar was derived
+  //    from.
+  // 2) foo.bar is only added to derivedFrom if it is an exclusive pointer.  If it is a
+  //    shared or identity pointer, there is no reason to track this relationship because it
+  //    would have no effect.  If it is an owned pointer, then it goes into possibleTargets
+  //    instead, because in this case foo.bar actually does need to outlive qux.
+  vector<Value::Lvalue> derivedFrom;
+
+  // TODO:  For an owned pointer, how do we track things it must outlive?
+};
+
 class ValueDescriptor {
 public:
-  Bound<Type, DynamicValue> type;
-  ast::Style style;
-  ValueConstraints constraints;
+  UNION_TYPE_BOILERPLATE(ValueDescriptor);
 
-  bool isPointer() const {
-    switch (style) {
-      case ast::Style::VALUE:
-      case ast::Style::CONSTANT:
-        return false;
+  enum Kind {
+    PURE_DATA,
+    POINTER,
+    LVALUE
+  };
+  Kind getKind();
 
-      case ast::Style::IMMUTABLE_REFERENCE:
-      case ast::Style::MUTABLE_REFERENCE:
-      case ast::Style::ENTANGLED_REFERENCE:
-      case ast::Style::HEAP_VALUE:
-        return true;
-    }
-    // Can't happen, make compiler happy.
-    return false;
-  }
+  struct PureData {
+    Bound<Type> type;
+    ValueConstraints constraints;
+  };
 
-  bool isAlias() const {
-    switch (style) {
-      case ast::Style::VALUE:
-      case ast::Style::CONSTANT:
-      case ast::Style::HEAP_VALUE:
-        return false;
+  struct Pointer {
+    PureData targetDescriptor;
+    PointerConstraints constraints;
+  };
 
-      case ast::Style::IMMUTABLE_REFERENCE:
-      case ast::Style::MUTABLE_REFERENCE:
-      case ast::Style::ENTANGLED_REFERENCE:
-        return true;
-    }
-    // Can't happen, make compiler happy.
-    return false;
-  }
+  struct Lvalue {
+    bool isDynamic;
+
+    union {
+      Pointer dynamicRoot;
+      Variable* staticRoot;
+    };
+
+    // Path to the member being accessed.
+    MemberPath memberPath;
+  };
+
+  union {
+    PureData pureData;
+    Pointer pointer;
+    Lvalue lvalue;
+  };
 };
 
 class TypeDescriptor {
@@ -544,20 +667,22 @@ public:
   struct DescribedValue {
     ValueDescriptor descriptor;
     DynamicValue value;
+
+    VALUE_TYPE2(DescribedValue, ValueDescriptor&&, descriptor, DynamicValue&&, value);
   };
 
   union {
     Unknown unknown;
     TypeDescriptor unknownType;
     DescribedValue value;
-    Bound<Entity, DynamicValue> entity;
+    Bound<Entity> entity;
     Tuple tuple;
   };
 
   static Thing fromUnknown();
   static Thing fromUnknownType(TypeDescriptor&& descriptor);
 
-  static Thing fromEntity(Bound<Entity, DynamicValue>&& entity);
+  static Thing fromEntity(Bound<Entity>&& entity);
 
   static Thing fromValue(ValueDescriptor&& descriptor, DynamicValue&& value);
   static Thing fromValue(DescribedValue&& value);
@@ -585,6 +710,8 @@ public:
     MEMBER_IMMUTABLE,
     ASSIGNMENT
   };
+
+  void addUsage(const Value::Lvalue& lvalue, Exclusivity exclusivity);
 
   void addUsage(const ValueDescriptor& valueDescriptor, Style style);
 
@@ -623,8 +750,8 @@ public:
   virtual const EntityName& getName() = 0;
   virtual Entity& getParent() = 0;
 
-  virtual ThingDescriptor getDescriptor(Context<DynamicValue>&& context) = 0;
-  virtual const vector<Thing>& getAnnotations(Context<DynamicValue>&& context) = 0;
+  virtual ThingDescriptor getDescriptor(Context&& context) = 0;
+  virtual const vector<Thing>& getAnnotations(Context&& context) = 0;
 
   // TODO:  style + style constraints
   // TODO:  visibility
@@ -632,7 +759,7 @@ public:
   // Read the entity.  If not known at compile time, returns a Thing of kind
   // DYNAMIC_{REFERENCE,VALUE} with code that simply reads the variable.
   // Recursively dereferences outer objects in the context.
-  virtual Thing dereference(Context<DynamicValue>&& context, VariableUsageSet& variablesUsed,
+  virtual Thing dereference(Context&& context, VariableUsageSet& variablesUsed,
                             Location location, VariableUsageSet::Style style) = 0;
 };
 
@@ -646,7 +773,7 @@ class Variable: public Entity {
 public:
   virtual ~Variable();
 
-  Bound<Type, DynamicValue> getType(ThingPort& port);
+  Bound<Type> getType(ThingPort& port);
 
   // This is the *original* descriptor for this variable, but during the course of a function the
   // variable can be modified, adding other annotations.
@@ -694,7 +821,7 @@ public:
   // dynamic or if the function implementation is unavailable.
   // TODO:  If a dynamic input is ignored but the computation had side effects we need to make sure
   //   those side effects still take place...
-  Value call(Context<DynamicValue>&& context, vector<Value>&& parameters);
+  Value call(Context&& context, vector<Value>&& parameters);
 
   Thing call(Thing::DynamicValue&& object, vector<Thing::DynamicValue>&& params);
 
@@ -736,7 +863,7 @@ public:
   Maybe<Overload&> getImplicitConstructor();
   Maybe<Overload&> lookupConstructor(const string& name);
 
-  Maybe<Function&> lookupConversion(ThingPort& port, const Bound<Type, DynamicValue>& to);
+  Maybe<Function&> lookupConversion(ThingPort& port, const Bound<Type>& to);
 
   Maybe<Function&> lookupPrefixOperator(ast::PrefixOperator op);
   Maybe<Function&> lookupPostfixOperator(ast::PostfixOperator op);
@@ -746,7 +873,7 @@ public:
   // NOTE:  interfaceType could be Bound<Interface, DynamicValue>...  but this probably forces
   //   a copy that wouldn't otherwise be needed.
   Maybe<ImplementedInterface&> findImplementedInterface(
-      ThingPort& port, const Bound<Type, DynamicValue>& interfaceType);
+      ThingPort& port, const Bound<Type>& interfaceType);
 
   // Returns whether this type is a subclass of the given type.  This is to be used for the purpose
   // of choosing an overload.  I.e. say for a one-argument function call there are two matching
@@ -754,7 +881,7 @@ public:
   // the overload taking Foo should be chosen.  If Bar is more specific than Foo, that overload
   // should be chosen.  If neither type is more specific than the other then the situation is
   // ambiguous and therefore an error.
-  bool isMoreSpecificThan(ThingPort& port, const Bound<Type, DynamicValue>& otherType);
+  bool isMoreSpecificThan(ThingPort& port, const Bound<Type>& otherType);
 
   // Does this type contain any aliases which are not annotated with their potential targets?  This
   // transitively includes members of by-value and heap members, but NOT members of alias members.
@@ -791,14 +918,14 @@ public:
 
 class ThingPort {
 public:
-  ThingPort(const Context<DynamicValue>& localContext, const Context<DynamicValue>& foreignContext);
+  ThingPort(const Context& localContext, const Context& foreignContext);
 
-  const Context<DynamicValue>& getContext();
+  const Context& getContext();
 
   Thing exportThing(Thing&& thing);
   Thing importThing(Thing&& thing);
 
-  Context<DynamicValue> exportContext(const Context<DynamicValue>& input);
+  Context exportContext(const Context& input);
 };
 
 class Scope {
@@ -807,12 +934,12 @@ class Scope {
 public:
   RESOURCE_TYPE_BOILERPLATE(Scope);
 
-  const Bound<Entity, DynamicValue>& getEntity();
+  const Bound<Entity>& getEntity();
 
   // If input.params is filled in, returns it.  Otherwise, finds the context corresponding to
   // input.scope and returns that.  In other words, this effectively fills in input.params if it
   // isn't filled in already.
-  const Context<DynamicValue>& fillContext(const Context<DynamicValue>& input);
+  const Context& fillContext(const Context& input);
 
   // Creates a ThingPort that can be used to port Things between this Scope's context and the
   // target context.  Note that the port is typically passed in whole into an Entity which
@@ -821,17 +948,16 @@ public:
   // instead of just "makePort".)
   //
   // The returned port references targetContext.
-  ThingPort makePortFor(const Context<DynamicValue>& targetContext);
+  ThingPort makePortFor(const Context& targetContext);
 
   // A variable may have additional constraints (beyond those explicitly declared) that change
   // over the course of a function body.  Only variables with local scope (including members of
   // locals) can have additional constraints, since at any time an exception could cause non-local
   // variables to be left in whatever state they are currently in, so that state must be consistent.
-  Maybe<const ValueConstraints&> getTransientConstraints(
-      const Bound<Variable, DynamicValue>& variable);
+  Maybe<const ValueConstraints&> getTransientConstraints(const Bound<Variable>& variable);
 
   // Get the variable's current descriptor including transient constraints.
-  ValueDescriptor getVariableDescriptor(const Bound<Variable, DynamicValue>& variable);
+  ValueDescriptor getVariableDescriptor(const Value::Lvalue& lvalue);
 
 
 

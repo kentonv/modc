@@ -33,6 +33,8 @@ public:
   // If the input is a pointer, the result will be a pointer.
   // If the input is a temporary, the result will be a temporary.
   Value getMember(Value&& object, Variable* member);
+
+  Value aliasTemporary(Value&& pureData);
 };
 
 class Compiler {
@@ -59,19 +61,131 @@ public:
 
   bool compare(const Thing& a, const Thing& b);
   bool compare(const EntityName& a, const EntityName& b);
-  bool compare(const Context<DynamicValue>& a, const Context<DynamicValue>& b);
+  bool compare(const Context& a, const Context& b);
   template <typename T, typename U>
-  bool compare(const Bound<T, DynamicValue>& a, const Bound<U, DynamicValue>& b);
+  bool compare(const Bound<T>& a, const Bound<U>& b);
 
   Thing call(Entity& entity, ThingPort& port, Tuple&& parameters);
 
-  Context<BoundExpression> discardPartialValues(Context<DynamicValue>&& context);
-  template <typename T>
-  Bound<T, BoundExpression> discardPartialValues(Bound<T, DynamicValue>&& context);
-  template <typename T>
-  Bound<T, BoundExpression> copyDiscardingPartialValues(const Bound<T, DynamicValue>& context);
-
   // -------------------------------------------------------------------------------------
+
+  Maybe<Thing::DescribedValue> coerceToValue(Thing&& input, ErrorLocation location) {
+    switch (input.getKind()) {
+      case Thing::Kind::UNKNOWN:
+        return nullptr;
+
+      case Thing::Kind::VALUE:
+        return Maybe<Thing::DescribedValue>(move(input.value));
+
+      case Thing::Kind::UNKNOWN_TYPE:
+      case Thing::Kind::ENTITY:
+      case Thing::Kind::TUPLE:
+        location.error("Can't use this thing here.");
+        return nullptr;
+    }
+  }
+
+  // Given a pointer to an object, get a pointer to one of its members.  If the member is itself
+  // a pointer, that pointer is returned (not a pointer to a pointer, which is anyway not
+  // supported).
+  Thing::DescribedValue pointerToMemberPointer(
+      ValueDescriptor::Pointer&& descriptor, DynamicValue&& value,
+      Variable* member) {
+    // To decide possibleTargets:
+    // - If there are no non-owned pointers in the chain, possibleTargets = the lvalue.
+    // - Otherwise, find the last non-owned pointer in the chain, and copy its possibleTargets.
+    //   - For exact targets, append the rest of the chain.  (As of this writing, exact targets
+    //     aren't supported.)
+    //   - For fuzzy targets, don't append anything; they remain fuzzy.
+    //   - Also copy mayTargetCaller.
+
+    // To decide derivedFrom:
+    // - If the desired exclusivity is identity, it's empty.
+    // - Otherwise, find the last non-owned pointer in the chain.
+    //   - If it is an exclusive pointer, then it goes in derivedFrom.
+    //   - Otherwise, derivedFrom is empty.
+  }
+
+  Maybe<Thing::DescribedValue> coerceToPointer(
+      Thing&& input, VariableUsageSet& variablesUsed,
+      Exclusivity exclusivity, ErrorLocation location) {
+    Maybe<Thing::DescribedValue> value = coerceToValue(move(input), location);
+    if (!value) {
+      return nullptr;
+    }
+
+    switch (value->descriptor.getKind()) {
+      case ValueDescriptor::Kind::PURE_DATA:
+        if (exclusivity != Exclusivity::SHARED) {
+          location.error("Cannot form pointer to temporary value.");
+        }
+
+        if (value->value.expression.getKind() == BoundExpression::Kind::CONSTANT) {
+          value->value.expression.constant =
+              evaluator.aliasTemporary(move(value->value.expression.constant));
+          assert(value->value.partialValue.getKind() == Value::Kind::UNKNOWN);
+        } else {
+          value->value.expression =
+              BoundExpression::fromAliasTemporary(move(value->value.expression));
+          value->value.partialValue =
+              evaluator.aliasTemporary(move(value->value.partialValue));
+        }
+        // TODO:  Fix descriptor.
+        return move(value);
+
+      case ValueDescriptor::Kind::POINTER:
+        if (exclusivity > value->descriptor.pointer.constraints.exclusivity) {
+          location.error("Cannot convert pointer to more-exclusive kind.");
+        }
+
+        value->descriptor.pointer.constraints.exclusivity = exclusivity;
+        return move(value);
+
+      case ValueDescriptor::Kind::LVALUE: {
+        Thing::DescribedValue pointer;
+
+        if (value->descriptor.lvalue.isDynamic) {
+          accumPointerConstraints = move(value->descriptor.lvalue.dynamicRoot.constraints);
+          accumValueConstraints =
+              move(value->descriptor.lvalue.dynamicRoot.targetDescriptor.constraints);
+        } else {
+          accumPointerConstraints.exclusivity = OWNED;
+          accumPointerConstraints.mayTargetCaller = false;
+          accumPointerConstraints.possibleTargets.emplace_back(
+              value->descriptor.lvalue.staticRoot, MemberPath());
+
+          ValueDescriptor baseDescriptor = scope.getVariableDescriptor(
+              Value::Lvalue(value->descriptor.lvalue.staticRoot, MemberPath()));
+          switch (baseDescriptor.getKind()) {
+            case ValueDescriptor::Kind::PURE_DATA:
+              accumValueConstraints = baseDescriptor.pureData.constraints;
+              break;
+            case ValueDescriptor::Kind::POINTER:
+              // todo
+              break;
+            case ValueDescriptor::Kind::LVALUE:
+              throw "Variable's value can't be an lvalue.";
+          }
+        }
+
+        // If the lvalue is static, add it to variablesUsed.  (If it is dynamic, the original
+        // source should already have been added to variablesUsed.)
+        //
+        // Exception:  If the lvalue contains any shared pointers, there's no need.
+        if (!value->descriptor.lvalue.isDynamic &&
+            accumPointerConstraints.exclusivity > Exclusivity::SHARED) {
+          Value::Lvalue temp(value->descriptor.lvalue.staticRoot,
+                             move(value->descriptor.lvalue.memberPath));
+          variablesUsed.addUsage(temp, exclusivity);
+          value->descriptor.lvalue.memberPath = move(temp.path);
+        }
+
+        // TODO:  Check that the final exclusivity is compatible.
+
+        break;
+      }
+    }
+  }
 
   // Dereferences the input if it is a pointer, or just returns it unchanged otherwise.  Reports an
   // error if the input is not a value.
