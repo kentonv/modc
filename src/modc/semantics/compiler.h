@@ -200,6 +200,15 @@ struct MemberPath {
   MemberPath() {}
 };
 
+struct LocalVariablePath {
+  Variable* root;
+  MemberPath member;
+
+  VALUE_TYPE2(LocalVariablePath, Variable*, root, MemberPath&&, member);
+
+  LocalVariablePath(Variable* root): root(root) {}
+};
+
 class ContextBinding;
 
 class Value {
@@ -222,10 +231,7 @@ public:
     // Pointer.  Cannot assign to this, but can possibly assign to members.  Has been locked as
     // appropriate for its exclusivity.
     POINTER,
-    INTERFACE_POINTER,
-
-    // Directly names a variable in the local scope, or member thereof.  Has not been locked.
-    LVALUE
+    INTERFACE_POINTER
   };
 
   Kind getKind() { return kind; }
@@ -245,14 +251,6 @@ public:
     ImplementedInterface* interface;
   };
 
-  struct Lvalue {
-    // A local variable.
-    Variable* root;
-    MemberPath path;
-
-    VALUE_TYPE2(Lvalue, Variable*, root, MemberPath&&, path);
-  };
-
   union {
     bool boolean;
     int integer;
@@ -263,8 +261,6 @@ public:
 
     Bound<Variable> pointer;
     InterfacePointer interfacePointer;
-
-    Lvalue lvalue;
   };
 
   static Value fromUnknown();
@@ -293,11 +289,11 @@ public:
 
   union {
     Value value;
-    Value::Lvalue alias;
+    LocalVariablePath alias;
     // TODO:  Integer expressions.
   };
 
-  static Binding fromLvalue(Value::Lvalue&& lvalue);
+  static Binding fromAlias(LocalVariablePath&& alias);
 };
 
 // =======================================================================================
@@ -308,6 +304,7 @@ public:
 
   enum class Kind {
     CONSTANT,
+    LOCAL_VARIABLE,
 
     // Note that the arithmetic operators here are strictly built-in.  Overloaded operators would
     // have been converted to function calls.
@@ -322,7 +319,8 @@ public:
     // Given a pure ("temporary") object, produce a member value.
     MEMBER_ACCESS,
 
-    // Given a pointer, produce a pointer to a member.
+    // Given a pointer, produce a pointer to a member.  If the member is itself a pointer, return
+    // that pointer, not a pointer to a pointer.
     POINTER_TO_MEMBER,
 
     // Given a pointer input, read its value.
@@ -406,6 +404,7 @@ public:
 
   union {
     Value constant;
+    Variable* localVariable;
 
     BinaryOperator binaryOperator;
     PrefixOperator prefixOperator;
@@ -426,6 +425,7 @@ public:
   static BoundExpression fromUnknown();  // = fromConstant(Value::fromUnknown())
 
   static BoundExpression fromConstant(Value&& value);
+  static BoundExpression fromLocalVariable(Variable* variable);
 
   static BoundExpression fromBinaryOperator(ast::BinaryOperator op, BoundExpression&& left,
                                             BoundExpression&& right);
@@ -439,6 +439,7 @@ public:
                                         vector<BoundExpression>&& parameters);
   static BoundExpression fromSubscript(BoundExpression&& container, BoundExpression&& key);
   static BoundExpression fromMemberAccess(BoundExpression&& object, Variable* member);
+  static BoundExpression fromPointerToMember(BoundExpression&& object, Variable* member);
 
   static BoundExpression fromReadPointer(BoundExpression&& pointer);
   static BoundExpression fromAliasTemporary(BoundExpression&& value);
@@ -498,20 +499,20 @@ struct ValueConstraints {
     //
     // TODO:  Should we distinguish between exact pointers vs. pointers that point somewhere
     //   within?  Could be useful.
-    Value::Lvalue target;
+    LocalVariablePath target;
 
     // The maximum exclusivity that the pointer might have.  The pointer could actually end up
     // having a lesser exclusivity, but not greater.
     Exclusivity exclusivity;
 
-    VALUE_TYPE3(PossiblePointer, MemberPath&&, member, Value::Lvalue&&, target,
+    VALUE_TYPE3(PossiblePointer, MemberPath&&, member, LocalVariablePath&&, target,
                 Exclusivity, exclusivity);
   };
 
   // Things which this value's unannotated alias members may point at.  If not present, then no
   // declaration has been made -- but if the type contains no unannotated aliases, then this is
   // equivalent to the list being empty.
-  Maybe<vector<std::pair<Value::Lvalue, Exclusivity>>> transitiveAliases;
+  Maybe<vector<PossiblePointer>> transitiveAliases;
 
   // If the value (or pointed-at value) is an integer, it is known to be in one of these ranges.
   // If this vector is empty then the integer is assumed to have maximum (32-bit) range.
@@ -526,6 +527,8 @@ struct ValueConstraints {
 };
 
 struct PointerConstraints {
+  PointerConstraints(): exclusivity(Exclusivity::EXCLUSIVE), mayTargetCaller(false) {}
+
   Exclusivity exclusivity;
 
   // Where this pointer came from.  Exclusivity constraints must be enforced on this lvalue
@@ -535,7 +538,7 @@ struct PointerConstraints {
   //
   // TODO:  Do we want to distinguish between "the pointer may point at exactly X" vs. "the
   //   pointer may point at X or one of its members"?
-  vector<Value::Lvalue> possibleTargets;
+  vector<LocalVariablePath> possibleTargets;
 
   // If true, then in addition to the lvalues in derivedFrom, the pointer may have been provided
   // directly from the caller without any information about from where it was derived.
@@ -554,7 +557,11 @@ struct PointerConstraints {
   //    shared or identity pointer, there is no reason to track this relationship because it
   //    would have no effect.  If it is an owned pointer, then it goes into possibleTargets
   //    instead, because in this case foo.bar actually does need to outlive qux.
-  vector<Value::Lvalue> derivedFrom;
+  vector<LocalVariablePath> derivedFrom;
+
+  // Local variables which need to be locked if and when this pointer is dereferenced or bound to
+  // a new name.
+  vector<LocalVariablePath> lockOnUse;
 
   // TODO:  For an owned pointer, how do we track things it must outlive?
 };
@@ -565,8 +572,7 @@ public:
 
   enum Kind {
     PURE_DATA,
-    POINTER,
-    LVALUE
+    POINTER
   };
   Kind getKind();
 
@@ -580,23 +586,12 @@ public:
     PointerConstraints constraints;
   };
 
-  struct Lvalue {
-    bool isDynamic;
-
-    union {
-      Pointer dynamicRoot;
-      Variable* staticRoot;
-    };
-
-    // Path to the member being accessed.
-    MemberPath memberPath;
-  };
-
   union {
     PureData pureData;
     Pointer pointer;
-    Lvalue lvalue;
   };
+
+  static ValueDescriptor fromPointer(PureData&& targetDescriptor, PointerConstraints&& constraints);
 };
 
 class TypeDescriptor {
@@ -653,7 +648,8 @@ public:
   enum class Kind {
     UNKNOWN,
     UNKNOWN_TYPE,
-    VALUE,
+    RVALUE,
+    LVALUE,
     ENTITY,  // i.e. type, function, or overload -- never a variable
     TUPLE
   };
@@ -664,17 +660,25 @@ public:
     VALUE_TYPE0(Unknown);
   };
 
-  struct DescribedValue {
+  struct Rvalue {
     ValueDescriptor descriptor;
     DynamicValue value;
 
-    VALUE_TYPE2(DescribedValue, ValueDescriptor&&, descriptor, DynamicValue&&, value);
+    VALUE_TYPE2(Rvalue, ValueDescriptor&&, descriptor, DynamicValue&&, value);
+  };
+
+  struct Lvalue {
+    // If present, the variable is a member of the given value.  Otherwise, the variable is a local
+    // variable.
+    Maybe<Rvalue> parent;
+    Variable* variable;
   };
 
   union {
     Unknown unknown;
     TypeDescriptor unknownType;
-    DescribedValue value;
+    Rvalue rvalue;
+    Lvalue lvalue;
     Bound<Entity> entity;
     Tuple tuple;
   };
@@ -685,7 +689,7 @@ public:
   static Thing fromEntity(Bound<Entity>&& entity);
 
   static Thing fromValue(ValueDescriptor&& descriptor, DynamicValue&& value);
-  static Thing fromValue(DescribedValue&& value);
+  static Thing fromValue(Rvalue&& value);
 
 private:
   Kind kind;
@@ -956,8 +960,12 @@ public:
   // variables to be left in whatever state they are currently in, so that state must be consistent.
   Maybe<const ValueConstraints&> getTransientConstraints(const Bound<Variable>& variable);
 
-  // Get the variable's current descriptor including transient constraints.
-  ValueDescriptor getVariableDescriptor(const Value::Lvalue& lvalue);
+  // Get the local variable's current descriptor including transient constraints.
+  ValueDescriptor getVariableDescriptor(Variable* variable);
+
+  // Get the variable's value, if it is known.
+  // TODO:  What about partial values?
+  Maybe<Value> getVariableValue(Variable* variable);
 
 
 

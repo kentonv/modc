@@ -30,9 +30,11 @@ public:
   Value readPointer(Value&& pointer);
   Value upcast(Value&& object, ImplementedInterface* interface);
 
-  // If the input is a pointer, the result will be a pointer.
-  // If the input is a temporary, the result will be a temporary.
+  // object must be a non-pointer.
   Value getMember(Value&& object, Variable* member);
+
+  // object must be a pointer.
+  Value getPointerToMember(Value&& object, Variable* member);
 
   Value aliasTemporary(Value&& pureData);
 };
@@ -69,26 +71,60 @@ public:
 
   // -------------------------------------------------------------------------------------
 
-  Maybe<Thing::DescribedValue> coerceToValue(Thing&& input, ErrorLocation location) {
-    switch (input.getKind()) {
-      case Thing::Kind::UNKNOWN:
-        return nullptr;
+  Maybe<Thing::Rvalue> lvalueToRvalue(Thing::Lvalue&& lvalue, ErrorLocation location) {
+    if (lvalue.parent) {
+      Thing::Rvalue rvalue = move(*lvalue.parent);
 
-      case Thing::Kind::VALUE:
-        return Maybe<Thing::DescribedValue>(move(input.value));
+      if (rvalue.value.expression.getKind() == BoundExpression::Kind::CONSTANT) {
+        rvalue.value.expression.constant =
+            evaluator.getPointerToMember(
+                move(rvalue.value.expression.constant), lvalue.variable);
+        assert(rvalue.value.partialValue.getKind() == Value::Kind::UNKNOWN);
+      } else {
+        rvalue.value.expression =
+            BoundExpression::fromPointerToMember(
+                move(rvalue.value.expression), lvalue.variable);
+        rvalue.value.partialValue =
+            evaluator.getPointerToMember(
+                move(rvalue.value.partialValue), lvalue.variable);
+      }
 
-      case Thing::Kind::UNKNOWN_TYPE:
-      case Thing::Kind::ENTITY:
-      case Thing::Kind::TUPLE:
-        location.error("Can't use this thing here.");
-        return nullptr;
+      return move(rvalue);
+    } else {
+      ValueDescriptor descriptor = scope.getVariableDescriptor(lvalue.variable);
+
+      switch (descriptor.getKind()) {
+        case ValueDescriptor::Kind::PURE_DATA: {
+          // Form a pointer to the local variable.
+          PointerConstraints constraints;
+          constraints.possibleTargets.push_back(LocalVariablePath(lvalue.variable));
+          constraints.lockOnUse.push_back(LocalVariablePath(lvalue.variable));
+          return Thing::Rvalue(
+              ValueDescriptor::fromPointer(move(descriptor.pureData), move(constraints)),
+              DynamicValue(BoundExpression::fromConstant(Value::fromPointer(Bound<Variable>(
+                  lvalue.variable, Context(scope.getEntity().entity, nullptr))))));
+        }
+
+        case ValueDescriptor::Kind::POINTER: {
+          // Read the variable.
+          Maybe<Value> value = scope.getVariableValue(lvalue.variable);
+          if (value) {
+            return Thing::Rvalue(move(descriptor),
+                                 DynamicValue(BoundExpression::fromConstant(move(*value))));
+          } else {
+            return Thing::Rvalue(move(descriptor),
+                DynamicValue(BoundExpression::fromLocalVariable(lvalue.variable)));
+          }
+        }
+      }
+
     }
   }
 
   // Given a pointer to an object, get a pointer to one of its members.  If the member is itself
   // a pointer, that pointer is returned (not a pointer to a pointer, which is anyway not
   // supported).
-  Thing::DescribedValue pointerToMemberPointer(
+  Thing::Rvalue pointerToMemberPointer(
       ValueDescriptor::Pointer&& descriptor, DynamicValue&& value,
       Variable* member) {
     // To decide possibleTargets:
@@ -106,10 +142,10 @@ public:
     //   - Otherwise, derivedFrom is empty.
   }
 
-  Maybe<Thing::DescribedValue> coerceToPointer(
+  Maybe<Thing::Rvalue> coerceToPointer(
       Thing&& input, VariableUsageSet& variablesUsed,
       Exclusivity exclusivity, ErrorLocation location) {
-    Maybe<Thing::DescribedValue> value = coerceToValue(move(input), location);
+    Maybe<Thing::Rvalue> value = coerceToValue(move(input), location);
     if (!value) {
       return nullptr;
     }
@@ -142,7 +178,7 @@ public:
         return move(value);
 
       case ValueDescriptor::Kind::LVALUE: {
-        Thing::DescribedValue pointer;
+        Thing::Rvalue pointer;
 
         if (value->descriptor.lvalue.isDynamic) {
           accumPointerConstraints = move(value->descriptor.lvalue.dynamicRoot.constraints);
@@ -224,6 +260,24 @@ public:
 
     throw "can't get here";
   }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   // -------------------------------------------------------------------------------------
 
