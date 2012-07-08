@@ -151,31 +151,36 @@ public:
 struct Context {
   class Binding;
 
-  // Top-level scope containing all entities that share this context.
-  //
-  // Note that it does NOT make sense to bind the scope entity to the context itself, as the scope
-  // entity actually lives in its parent's context.  The scope entity merely defines a new context
-  // for all its children.
-  //
-  // For example, take this code:
-  //   class Foo {
-  //     class Bar {
-  //       var baz: Integer;
-  //     }
-  //   }
-  // Bar's context contains an instance of Foo.  baz's context contains an instance of Bar.  baz's
-  // context's "scope" is Bar.  Bar's context's "scope" is Foo.
-  Entity* scope;
+  // How many Bindings are visible in this Context?
+  vector<Binding>::size_type depth;
 
-  // If |scope| is not the current execution scope or one of its parents then |params| must be
-  // filled in with the scope's parameters.  If the scope is a type, then the first param is always
-  // "this" (an instance of the scope type).
-  Maybe<vector<Binding>> params;
+  // The set of bindings which are not shared with the underlay.  These are the last bindings in
+  // the context.
+  vector<Binding> suffix;
 
-  VALUE_TYPE2(Context, Entity*, scope, Maybe<vector<Binding>>&&, params);
+  // Bindings not covered by the suffix can be found in the underlay.  If suffix.size() == depth,
+  // then the underlay may be null.
+  const Context* underlay;
 
-  Context(Entity* scope, Binding&& param): scope(scope), params(vector<Binding>()) {
-    params->push_back(move(param));
+  const Binding& operator[](vector<Binding>::size_type index) const {
+    assert(index < depth);
+    vector<Binding>::size_type overlayStart = depth - suffix.size();
+    if (index < overlayStart) {
+      return (*underlay)[index];
+    } else {
+      return suffix[index - overlayStart];
+    }
+  }
+
+  Context(vector<Binding>::size_type depth, vector<Binding>&& suffix, const Context& underlay)
+      : depth(depth), suffix(move(suffix)), underlay(&underlay) {
+    assert(suffix.size() <= depth);
+  }
+  Context(vector<Binding>&& suffix)
+      : depth(suffix.size()), suffix(move(suffix)), underlay(nullptr) {}
+  Context(const Context& underlay, Binding&& suffix)
+      : depth(underlay.depth + 1), underlay(&underlay) {
+    this->suffix.push_back(move(suffix));
   }
 };
 
@@ -246,7 +251,7 @@ public:
   };
 
   struct InterfacePointer {
-    Bound<Variable> target;
+    Value* target;
     ImplementedInterface* interface;
   };
 
@@ -258,7 +263,7 @@ public:
     Object object;
     Array array;
 
-    Bound<Variable> pointer;
+    Value* pointer;
     InterfacePointer interfacePointer;
   };
 
@@ -268,7 +273,7 @@ public:
   static Value fromInteger(int value);
   static Value fromDouble(double value);
 
-  static Value fromPointer(Bound<Variable>&& pointer);
+  static Value fromPointer(Value* pointer);
 
 private:
   Kind kind;
@@ -508,7 +513,7 @@ struct ValueConstraints {
   // Things which this value's unannotated alias members may point at.  If not present, then no
   // declaration has been made -- but if the type contains no unannotated aliases, then this is
   // equivalent to the list being empty.
-  Maybe<vector<PossiblePointer>> transitiveAliases;
+  Maybe<vector<PossiblePointer>> possiblePointers;
 
   // If the value (or pointed-at value) is an integer, it is known to be in one of these ranges.
   // If this vector is empty then the integer is assumed to have maximum (32-bit) range.
@@ -557,6 +562,9 @@ struct PointerConstraints {
 
   // Local variables which need to be locked if and when this pointer is dereferenced or bound to
   // a new name.
+  //
+  // TODO(kenton):  This is also used in lvalueToRvalue() as a convenient way to obtain a local
+  //   variable path if needed.  Should it be renamed?
   vector<LocalVariablePath> lockOnUse;
 
   // TODO:  For an owned pointer, how do we track things it must outlive?
@@ -750,7 +758,7 @@ public:
   virtual const EntityName& getName() = 0;
   virtual Entity& getParent() = 0;
 
-  virtual ThingDescriptor getDescriptor(Context&& context) = 0;
+//  virtual ThingDescriptor getDescriptor(Context&& context) = 0;
   virtual const vector<Thing>& getAnnotations(Context&& context) = 0;
 
   // TODO:  style + style constraints
@@ -773,20 +781,23 @@ class Variable: public Entity {
 public:
   virtual ~Variable();
 
-  Bound<Type> getType(ThingPort& port);
+  // Get the declared descriptor for the variable.  Note that this only contains constraints that
+  // were explicitly declared in the code along with the variable's declaration.  Additional
+  // knowledge may be available within the context where the variable is accessed, e.g. it may be
+  // known that an alias variable points at a specific target even if its descriptor says it's
+  // unknown.
+  ValueDescriptor getDescriptor(const Context& context);
 
-  // This is the *original* descriptor for this variable, but during the course of a function the
-  // variable can be modified, adding other annotations.
-  // TODO(kenton):  I wonder if, instead of allowing modifications over time, we should require
-  //   that the declared constraints be the maximum needed over the value's lifetime?  One problem
-  //   is that means they can't be inferred.
-  ValueDescriptor getDeclaredDescriptor(ThingPort& port);
-
-  bool assign(Thing&& value, VariableUsageSet& variablesUsed, ErrorLocation location);
-
-  // TODO:  May need context if VariableUsageSet does.
-  void entangle(VariableUsageSet::Style style, VariableUsageSet& variablesUsed,
-                ErrorLocation location);
+  // Attempts to create a descriptor for a member variable based on the parent type's context and a
+  // (possibly incomplete) Value representing "this".  Returns null if a complete context could not
+  // be constructed because thisValue contains UNKNOWNs.  In this case, the caller will need to
+  // bind "this" to a local variable so that a Context can be created referencing it.
+  //
+  // In most cases, the descriptor for a member does not depend on the instance, so this will
+  // succeed even if thisValue is entirely UNKNOWN.  The instance only matters if the member's
+  // type is dependent on the instance or other members, e.g. because it is a parameterized type
+  // or an inner type.
+  Maybe<ValueDescriptor> getDescriptor(const Context& thisTypeContext, const Value& thisValue);
 };
 
 class Alias: public Entity {
@@ -932,6 +943,8 @@ class Scope {
 public:
   RESOURCE_TYPE_BOILERPLATE(Scope);
 
+  const Context& getContext();
+
   const Bound<Entity>& getEntity();
 
   // If input.params is filled in, returns it.  Otherwise, finds the context corresponding to
@@ -948,18 +961,12 @@ public:
   // The returned port references targetContext.
   ThingPort makePortFor(const Context& targetContext);
 
-  // A variable may have additional constraints (beyond those explicitly declared) that change
-  // over the course of a function body.  Only variables with local scope (including members of
-  // locals) can have additional constraints, since at any time an exception could cause non-local
-  // variables to be left in whatever state they are currently in, so that state must be consistent.
-  Maybe<const ValueConstraints&> getTransientConstraints(const Bound<Variable>& variable);
-
   // Get the local variable's current descriptor including transient constraints.
   ValueDescriptor getVariableDescriptor(Variable* variable);
 
-  // Get the variable's value, if it is known.
-  // TODO:  What about partial values?
-  Maybe<Value> getVariableValue(Variable* variable);
+  // Get a pointer to the variable's value.  May be a partial value.  If the caller is simulating
+  // changes to the value, it should modify the value directly.
+  Value* getVariable(Variable* variable);
 
 
 
