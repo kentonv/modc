@@ -43,6 +43,8 @@ class CodePrinter;
 class Scope;
 class Entity;
 class Variable;
+class ValueVariable;
+class PointerVariable;
 class Type;
 class Class;
 class Interface;
@@ -231,28 +233,22 @@ public:
 
     OBJECT,
     ARRAY,
-
-    // Pointer.  Cannot assign to this, but can possibly assign to members.  Has been locked as
-    // appropriate for its exclusivity.
-    POINTER,
-    INTERFACE_POINTER
   };
 
   Kind getKind() { return kind; }
 
   struct Object {
     Bound<Type> type;
-    map<Variable*, Value> fields;
+
+    map<ValueVariable*, Value> fields;
+
+    // null pointers are unknown.
+    map<PointerVariable*, Value*> pointerFields;
   };
 
   struct Array {
     Bound<Type> elementType;
     vector<Value> elements;
-  };
-
-  struct InterfacePointer {
-    Value* target;
-    ImplementedInterface* interface;
   };
 
   union {
@@ -262,9 +258,6 @@ public:
 
     Object object;
     Array array;
-
-    Value* pointer;
-    InterfacePointer interfacePointer;
   };
 
   static Value fromUnknown();
@@ -272,8 +265,6 @@ public:
   static Value fromBoolean(bool value);
   static Value fromInteger(int value);
   static Value fromDouble(double value);
-
-  static Value fromPointer(Value* pointer);
 
 private:
   Kind kind;
@@ -284,27 +275,30 @@ public:
   UNION_TYPE_BOILERPLATE(Binding);
 
   enum class Kind {
-    VALUE,
-    ALIAS,
+    CONSTANT,
+    POINTER,
     INTEGER_EXPRESSION
   };
 
   Kind getKind();
 
   union {
-    Value value;
-    LocalVariablePath alias;
+    Value constant;
+    LocalVariablePath pointer;
     // TODO:  Integer expressions.
   };
 
-  static Binding fromAlias(LocalVariablePath&& alias);
+  static Binding fromPointer(LocalVariablePath&& pointer);
 };
 
 // =======================================================================================
 
-class BoundExpression {
+class DynamicPointer;
+class DynamicValueOrPointer;
+
+class DynamicValue {
 public:
-  UNION_TYPE_BOILERPLATE(BoundExpression);
+  UNION_TYPE_BOILERPLATE(DynamicValue);
 
   enum class Kind {
     CONSTANT,
@@ -318,107 +312,71 @@ public:
     TERNARY_OPERATOR,
 
     METHOD_CALL,
-    SUBSCRIPT,
 
     // Given a pure ("temporary") object, produce a member value.
-    MEMBER_ACCESS,
-
-    // Given a pointer, produce a pointer to a member.  If the member is itself a pointer, return
-    // that pointer, not a pointer to a pointer.
-    POINTER_TO_MEMBER,
+    READ_MEMBER,
 
     // Given a pointer input, read its value.
     READ_POINTER,
-
-    // Given a pure-data input, produce a const pointer to a "temporary" value.
-    ALIAS_TEMPORARY,
-
-    // Simple upcast.
-    UPCAST
   };
 
   Kind getKind() const { return kind; }
 
-  // The value.  May contain UNKNOWNs, either for the whole value or individual branches of an
-  // aggregate.  For CONSTANTs, the value is only UNKNOWN when sanity-checking (i.e. because
-  // compilation already failed, or checking an uninstantiated template).  For all other expression
-  // types, the value is just for optimization purposes.
-  Value value;
-
-  struct Constant {
-    VALUE_TYPE0(Constant);
-  };
-
   struct BinaryOperator {
     ast::BinaryOperator op;
-    Indirect<BoundExpression> left;
-    Indirect<BoundExpression> right;
+    Indirect<DynamicValue> left;
+    Indirect<DynamicValue> right;
 
-    VALUE_TYPE3(BinaryOperator, ast::BinaryOperator, op, BoundExpression&&, left,
-                BoundExpression&&, right);
+    VALUE_TYPE3(BinaryOperator, ast::BinaryOperator, op, DynamicValue&&, left,
+                DynamicValue&&, right);
   };
 
   struct PrefixOperator {
     ast::PrefixOperator op;
-    Indirect<BoundExpression> operand;
+    Indirect<DynamicValue> operand;
 
-    VALUE_TYPE2(PrefixOperator, ast::PrefixOperator, op, BoundExpression&&, operand);
+    VALUE_TYPE2(PrefixOperator, ast::PrefixOperator, op, DynamicValue&&, operand);
   };
 
   struct PostfixOperator {
-    Indirect<BoundExpression> operand;
+    Indirect<DynamicValue> operand;
     ast::PostfixOperator op;
 
-    VALUE_TYPE2(PostfixOperator, BoundExpression&&, operand, ast::PostfixOperator, op);
+    VALUE_TYPE2(PostfixOperator, DynamicValue&&, operand, ast::PostfixOperator, op);
   };
 
   struct TernaryOperator {
-    Indirect<BoundExpression> condition;
-    Indirect<BoundExpression> trueClause;
-    Indirect<BoundExpression> falseClause;
+    Indirect<DynamicValue> condition;
+    Indirect<DynamicValue> trueClause;
+    Indirect<DynamicValue> falseClause;
 
-    VALUE_TYPE3(TernaryOperator, BoundExpression&&, condition, BoundExpression&&, trueClause,
-                BoundExpression&&, falseClause);
+    VALUE_TYPE3(TernaryOperator, DynamicValue&&, condition, DynamicValue&&, trueClause,
+                DynamicValue&&, falseClause);
   };
 
   struct MethodCall {
     Function* method;
 
-    // "this" -- must be a pointer.  (Use ALIAS_TEMPORARY when calling a method on a temporary.)
-    Indirect<BoundExpression> object;
+    Indirect<DynamicPointer> object;
 
     // Just the variable parameters, since we've already matched them up against the function
     // signature.
-    vector<BoundExpression> parameters;
+    vector<DynamicValueOrPointer> parameters;
 
-    VALUE_TYPE3(MethodCall, Function*, method, BoundExpression&&, object,
-                vector<BoundExpression>&&, parameters);
+    VALUE_TYPE3(MethodCall, Function*, method, DynamicPointer&&, object,
+                vector<DynamicValueOrPointer>&&, parameters);
   };
 
-  struct Subscript {
-    // Container must strictly be a built-in array (as pure data, not a pointer).  Calls to an
-    // overloaded operator[] on a class would have been converted to MethodCall.
-    Indirect<BoundExpression> container;
-    Indirect<BoundExpression> subscript;
+  struct ReadMember {
+    Indirect<DynamicValue> object;
+    ValueVariable* member;
 
-    VALUE_TYPE2(Subscript, BoundExpression&&, container, BoundExpression&&, subscript);
-  };
-
-  struct MemberAccess {
-    Indirect<BoundExpression> object;
-    Variable* member;
-
-    VALUE_TYPE2(MemberAccess, BoundExpression&&, object, Variable*, member);
-  };
-
-  struct Upcast {
-    Indirect<BoundExpression> value;
-    ImplementedInterface* interface;
+    VALUE_TYPE2(ReadMember, DynamicValue&&, object, ValueVariable*, member);
   };
 
   union {
     Value constant;
-    Variable* localVariable;
+    ValueVariable* localVariable;
 
     BinaryOperator binaryOperator;
     PrefixOperator prefixOperator;
@@ -426,44 +384,154 @@ public:
     TernaryOperator ternaryOperator;
 
     MethodCall methodCall;
-    Subscript subscript;
-    MemberAccess memberAccess;
-    MemberAccess pointerToMember;
+    ReadMember readMember;
 
-    Indirect<BoundExpression> readPointer;
-    Indirect<BoundExpression> aliasTemporary;
-
-    Upcast upcast;
+    Indirect<DynamicValue> readPointer;
   };
 
-  static BoundExpression fromUnknown();  // = fromConstant(Value::fromUnknown())
+  static DynamicValue fromConstant(Value&& value);
+  static DynamicValue fromLocalVariable(ValueVariable* variable);
 
-  static BoundExpression fromConstant(Value&& value);
-  static BoundExpression fromLocalVariable(Variable* variable);
+  static DynamicValue fromBinaryOperator(ast::BinaryOperator op, DynamicValue&& left,
+                                         DynamicValue&& right);
+  static DynamicValue fromPrefixOperator(ast::PrefixOperator op, DynamicValue&& exp);
+  static DynamicValue fromPostfixOperator(DynamicValue&& exp, ast::PostfixOperator op);
+  static DynamicValue fromTernaryOperator(DynamicValue&& condition,
+                                          DynamicValue&& trueClause,
+                                          DynamicValue&& falseClause);
 
-  static BoundExpression fromBinaryOperator(ast::BinaryOperator op, BoundExpression&& left,
-                                            BoundExpression&& right);
-  static BoundExpression fromPrefixOperator(ast::PrefixOperator op, BoundExpression&& exp);
-  static BoundExpression fromPostfixOperator(BoundExpression&& exp, ast::PostfixOperator op);
-  static BoundExpression fromTernaryOperator(BoundExpression&& condition,
-                                             BoundExpression&& trueClause,
-                                             BoundExpression&& falseClause);
+  static DynamicValue fromMethodCall(Function* method, DynamicPointer&& object,
+                                     vector<DynamicValueOrPointer>&& parameters);
+  static DynamicValue fromReadMember(DynamicValue&& object, ValueVariable* member);
 
-  static BoundExpression fromMethodCall(Function* method, BoundExpression&& object,
-                                        vector<BoundExpression>&& parameters);
-  static BoundExpression fromSubscript(BoundExpression&& container, BoundExpression&& key);
-  static BoundExpression fromMemberAccess(BoundExpression&& object, Variable* member);
-  static BoundExpression fromPointerToMember(BoundExpression&& object, Variable* member);
-
-  static BoundExpression fromReadPointer(BoundExpression&& pointer);
-  static BoundExpression fromAliasTemporary(BoundExpression&& value);
-
-  static BoundExpression fromUpcast(BoundExpression&& value, ImplementedInterface* interface);
+  static DynamicValue fromReadPointer(DynamicPointer&& pointer);
 
 private:
   Kind kind;
 
-  BoundExpression(Kind kind): value(Value::fromUnknown()), kind(kind) {}
+  DynamicValue(Kind kind): kind(kind) {}
+};
+
+class DynamicPointer {
+public:
+  UNION_TYPE_BOILERPLATE(DynamicPointer);
+
+  enum class Kind {
+    LOCAL_VARIABLE,
+
+    TERNARY_OPERATOR,
+
+    METHOD_CALL,
+    SUBSCRIPT,
+
+    // Given a pure ("temporary") object, read a member pointer.
+    READ_MEMBER,
+
+    // Given a pointer, read a member pointer.
+    READ_POINTER_MEMBER,
+
+    // Given a pointer, produce a pointer to a value member.
+    POINTER_TO_MEMBER,
+  };
+
+  Kind getKind() const { return kind; }
+
+  struct TernaryOperator {
+    Indirect<DynamicValue> condition;
+    Indirect<DynamicPointer> trueClause;
+    Indirect<DynamicPointer> falseClause;
+
+    VALUE_TYPE3(TernaryOperator, DynamicValue&&, condition, DynamicPointer&&, trueClause,
+                DynamicPointer&&, falseClause);
+  };
+
+  struct MethodCall {
+    Function* method;
+
+    Indirect<DynamicPointer> object;
+
+    // Just the variable parameters, since we've already matched them up against the function
+    // signature.
+    vector<DynamicValueOrPointer> parameters;
+
+    VALUE_TYPE3(MethodCall, Function*, method, DynamicPointer&&, object,
+                vector<DynamicValueOrPointer>&&, parameters);
+  };
+
+  struct Subscript {
+    // Container must strictly be a built-in array.  Calls to an overloaded operator[] on a class
+    // would have been converted to MethodCall.
+    Indirect<DynamicPointer> container;
+    Indirect<DynamicValue> subscript;
+
+    VALUE_TYPE2(Subscript, DynamicPointer&&, container, DynamicValue&&, subscript);
+  };
+
+  struct ReadMember {
+    Indirect<DynamicValue> object;
+    PointerVariable* member;
+
+    VALUE_TYPE2(ReadMember, DynamicValue&&, object, PointerVariable*, member);
+  };
+
+  struct ReadPointerMember {
+    Indirect<DynamicPointer> object;
+    PointerVariable* member;
+
+    VALUE_TYPE2(ReadPointerMember, DynamicPointer&&, object, PointerVariable*, member);
+  };
+
+  struct PointerToMember {
+    Indirect<DynamicPointer> object;
+    Variable* member;
+
+    VALUE_TYPE2(PointerToMember, DynamicPointer&&, object, Variable*, member);
+  };
+
+  union {
+    PointerVariable* localVariable;
+
+    TernaryOperator ternaryOperator;
+
+    MethodCall methodCall;
+    Subscript subscript;
+    ReadMember readMember;
+    ReadPointerMember readPointerMember;
+    PointerToMember pointerToMember;
+  };
+
+  static DynamicPointer fromLocalVariable(PointerVariable* variable);
+
+  static DynamicPointer fromTernaryOperator(DynamicValue&& condition,
+                                            DynamicPointer&& trueClause,
+                                            DynamicPointer&& falseClause);
+
+  static DynamicPointer fromMethodCall(Function* method, DynamicPointer&& object,
+                                        vector<DynamicValueOrPointer>&& parameters);
+  static DynamicPointer fromSubscript(DynamicPointer&& container, DynamicValue&& key);
+  static DynamicPointer fromPointerToMember(DynamicPointer&& object, Variable* member);
+
+private:
+  Kind kind;
+
+  DynamicPointer(Kind kind): kind(kind) {}
+};
+
+class DynamicValueOrPointer {
+public:
+  UNION_TYPE_BOILERPLATE(DynamicValueOrPointer);
+
+  enum Kind {
+    VALUE,
+    POINTER,
+  };
+
+  Kind getKind();
+
+  union {
+    DynamicValue value;
+    DynamicPointer pointer;
+  };
 };
 
 // =======================================================================================
@@ -563,76 +631,34 @@ struct PointerConstraints {
   // Local variables which need to be locked if and when this pointer is dereferenced or bound to
   // a new name.
   //
-  // TODO(kenton):  This is also used in lvalueToRvalue() as a convenient way to obtain a local
+  // TODO:  This is also used in lvalueToRvalue() as a convenient way to obtain a local
   //   variable path if needed.  Should it be renamed?
+  // TODO:  It feels like maybe this actually belongs in Thing::DescribedPointer, because
+  //   PointerVariable::GetDescriptor() would never return a descriptor that contained lockOnUse...
   vector<LocalVariablePath> lockOnUse;
 
   // TODO:  For an owned pointer, how do we track things it must outlive?
 };
 
-class ValueDescriptor {
-public:
-  UNION_TYPE_BOILERPLATE(ValueDescriptor);
+struct ValueDescriptor {
+  Bound<Type> type;
+  ValueConstraints constraints;
 
-  enum Kind {
-    PURE_DATA,
-    POINTER
-  };
-  Kind getKind();
+  VALUE_TYPE2(ValueDescriptor, Bound<Type>&&, type, ValueConstraints&&, constraints);
+};
 
-  struct PureData {
-    Bound<Type> type;
-    ValueConstraints constraints;
-  };
+struct PointerDescriptor {
+  ValueDescriptor targetDescriptor;
+  PointerConstraints constraints;
 
-  struct Pointer {
-    PureData targetDescriptor;
-    PointerConstraints constraints;
-  };
-
-  union {
-    PureData pureData;
-    Pointer pointer;
-  };
-
-  static ValueDescriptor fromPointer(PureData&& targetDescriptor, PointerConstraints&& constraints);
+  VALUE_TYPE2(PointerDescriptor, ValueDescriptor&&, targetDescriptor,
+              PointerConstraints&&, constraints);
 };
 
 class TypeDescriptor {
 public:
   vector<Thing> supertypes;
   vector<Thing> subtypes;
-};
-
-class FunctionDescriptor {
-public:
-  // We don't know anything about functions unless we know the specific function.  So there
-  // is nothing to describe.
-  VALUE_TYPE0(FunctionDescriptor);
-};
-
-// Contains information known at compile time about a Thing, where the Thing itself is not known
-// at compile time.
-// TODO:  I don't think we actually need this.  Delete?
-class ThingDescriptor {
-public:
-  UNION_TYPE_BOILERPLATE(ThingDescriptor);
-
-  enum class Kind {
-    VALUE,
-    TYPE,
-    FUNCTION  // (possibly overloaded)
-  };
-
-  Kind getKind() const;
-
-  union {
-    ValueDescriptor value;
-    TypeDescriptor type;
-    FunctionDescriptor function;
-  };
-
-  static ThingDescriptor fromValue(ValueDescriptor&& descriptor);
 };
 
 struct Tuple {
@@ -652,7 +678,8 @@ public:
   enum class Kind {
     UNKNOWN,
     UNKNOWN_TYPE,
-    RVALUE,
+    VALUE,
+    POINTER,
     LVALUE,
     ENTITY,  // i.e. type, function, or overload -- never a variable
     TUPLE
@@ -664,24 +691,36 @@ public:
     VALUE_TYPE0(Unknown);
   };
 
-  struct Rvalue {
+  struct DescribedValue {
     ValueDescriptor descriptor;
-    BoundExpression expression;
+    DynamicValue value;
+    Value staticValue;
 
-    VALUE_TYPE2(Rvalue, ValueDescriptor&&, descriptor, BoundExpression&&, expression);
+    VALUE_TYPE3(DescribedValue, ValueDescriptor&&, descriptor, DynamicValue&&, value,
+                Value&&, staticValue);
+  };
+
+  struct DescribedPointer {
+    PointerDescriptor descriptor;
+    DynamicPointer pointer;
+    Maybe<Value&> staticPointer;
+
+    VALUE_TYPE3(DescribedPointer, PointerDescriptor&&, descriptor, DynamicPointer&&, pointer,
+                Maybe<Value&>, staticPointer);
   };
 
   struct Lvalue {
-    // If present, the variable is a member of the given value, which is a pointer.  Otherwise, the
-    // variable is a local variable.
-    Maybe<Rvalue> parent;
+    // If present, the variable is a member of the given pointer.  Otherwise, the variable is a
+    // local variable.
+    Maybe<DescribedPointer> parent;
     Variable* variable;
   };
 
   union {
     Unknown unknown;
     TypeDescriptor unknownType;
-    Rvalue rvalue;
+    DescribedValue value;
+    DescribedPointer pointer;
     Lvalue lvalue;
     Bound<Entity> entity;
     Tuple tuple;
@@ -692,8 +731,10 @@ public:
 
   static Thing fromEntity(Bound<Entity>&& entity);
 
-  static Thing fromRvalue(ValueDescriptor&& descriptor, BoundExpression&& expression);
-  static Thing fromRvalue(Rvalue&& rvalue);
+  static Thing fromValue(ValueDescriptor&& descriptor, DynamicValue&& value);
+  static Thing fromValue(DescribedValue&& value);
+  static Thing fromPointer(PointerDescriptor&& descriptor, DynamicPointer&& pointer);
+  static Thing fromPointer(DescribedPointer&& pointer);
 
 private:
   Kind kind;
@@ -719,9 +760,7 @@ public:
     ASSIGNMENT
   };
 
-  void addUsage(const Value::Lvalue& lvalue, Exclusivity exclusivity);
-
-  void addUsage(const ValueDescriptor& valueDescriptor, Style style);
+  void addUsage(const LocalVariablePath& variable, Exclusivity exclusivity);
 
   // TODO:  Does this need context?  We do need to distinguish between the same member of
   //   different parents.  Maybe it just needs a path?
@@ -743,7 +782,7 @@ private:
     Style style;
     ErrorLocation location;
 
-    VALUE_TYPE2(Usage, Style, style, ErrorLocation, location);
+    Usage(Style style, ErrorLocation location): style(style), location(location) {}
   };
 
   map<Variable*, Usage> variablesUsed;
@@ -758,7 +797,6 @@ public:
   virtual const EntityName& getName() = 0;
   virtual Entity& getParent() = 0;
 
-//  virtual ThingDescriptor getDescriptor(Context&& context) = 0;
   virtual const vector<Thing>& getAnnotations(Context&& context) = 0;
 
   // TODO:  style + style constraints
@@ -777,9 +815,13 @@ public:
 };
 
 class Variable: public Entity {
-  // Variable keeps track of knowledge about a named value in the current scope.
 public:
   virtual ~Variable();
+};
+
+class ValueVariable: public Variable {
+public:
+  virtual ~ValueVariable();
 
   // Get the declared descriptor for the variable.  Note that this only contains constraints that
   // were explicitly declared in the code along with the variable's declaration.  Additional
@@ -798,6 +840,29 @@ public:
   // type is dependent on the instance or other members, e.g. because it is a parameterized type
   // or an inner type.
   Maybe<ValueDescriptor> getDescriptor(const Context& thisTypeContext, const Value& thisValue);
+};
+
+class PointerVariable: public Variable {
+public:
+  virtual ~PointerVariable();
+
+  // Get the declared descriptor for the variable.  Note that this only contains constraints that
+  // were explicitly declared in the code along with the variable's declaration.  Additional
+  // knowledge may be available within the context where the variable is accessed, e.g. it may be
+  // known that an alias variable points at a specific target even if its descriptor says it's
+  // unknown.
+  PointerDescriptor getDescriptor(const Context& context);
+
+  // Attempts to create a descriptor for a member variable based on the parent type's context and a
+  // (possibly incomplete) Value representing "this".  Returns null if a complete context could not
+  // be constructed because thisValue contains UNKNOWNs.  In this case, the caller will need to
+  // bind "this" to a local variable so that a Context can be created referencing it.
+  //
+  // In most cases, the descriptor for a member does not depend on the instance, so this will
+  // succeed even if thisValue is entirely UNKNOWN.  The instance only matters if the member's
+  // type is dependent on the instance or other members, e.g. because it is a parameterized type
+  // or an inner type.
+  Maybe<PointerDescriptor> getDescriptor(const Context& thisTypeContext, const Value& thisValue);
 };
 
 class Alias: public Entity {
@@ -962,7 +1027,8 @@ public:
   ThingPort makePortFor(const Context& targetContext);
 
   // Get the local variable's current descriptor including transient constraints.
-  ValueDescriptor getVariableDescriptor(Variable* variable);
+  ValueDescriptor getVariableDescriptor(ValueVariable* variable);
+  PointerDescriptor getVariableDescriptor(PointerVariable* variable);
 
   // Get a pointer to the variable's value.  May be a partial value.  If the caller is simulating
   // changes to the value, it should modify the value directly.

@@ -25,20 +25,19 @@ using std::move;
 using ast::Expression;
 using ast::Statement;
 
-template <typename ValueType>
+template <typename ValueType, typename PointerType>
 class Evaluator {
 public:
-  // When ValueType = BoundExpression, this returns a CONSTANT if the value is complete.
-  ValueType readLocalVariable(Variable* variable);
+  ValueType readLocalVariable(ValueVariable* variable);
+  PointerType readLocalVariable(PointerVariable* variable);
+  PointerType makePointerToLocalVariable(ValueVariable* variable);
 
-  ValueType readPointer(ValueType&& pointer);
-  ValueType upcast(ValueType&& object, ImplementedInterface* interface);
+  ValueType readPointer(PointerType&& pointer);
 
-  // object must be a non-pointer.
-  ValueType getMember(ValueType&& object, Variable* member);
-
-  // object must be a pointer.
-  ValueType getPointerToMember(ValueType&& object, Variable* member);
+  ValueType readMember(ValueType&& object, ValueVariable* member);
+  PointerType readMember(ValueType&& object, PointerVariable* member);
+  PointerType readMember(PointerType&& object, PointerVariable* member);
+  PointerType getPointerToMember(PointerType&& object, ValueVariable* member);
 
   ValueType aliasTemporary(ValueType&& pureData);
 };
@@ -81,98 +80,150 @@ public:
   // pointer is returned, otherwise a pointer to the target of the lvalue is returned.
   //
   // Returns null on error or incomplete information.
-  Maybe<Thing::Rvalue> lvalueToPointer(Thing::Lvalue&& lvalue, ErrorLocation location) {
+  Maybe<Thing::DescribedPointer> lvalueToPointer(Thing::Lvalue&& lvalue, ErrorLocation location) {
     if (lvalue.parent) {
-      assert(lvalue.parent->descriptor.getKind() == ValueDescriptor::Kind::POINTER);
-      ValueDescriptor::Pointer& ptrDesc = lvalue.parent->descriptor.pointer;
+      PointerDescriptor& ptrDesc = lvalue.parent->descriptor;
 
-      // Get the descriptor for the member variable.
-      Maybe<ValueDescriptor> newDesc = lvalue.variable->getDescriptor(
-          ptrDesc.targetDescriptor.type.context, lvalue.parent->expression.value);
+      if (PointerVariable* variable = dynamic_cast<PointerVariable*>(lvalue.variable)) {
+        // Get the descriptor for the member variable.
+        Maybe<PointerDescriptor> memberDesc = nullptr;
 
-      if (!newDesc) {
-        // Member type is dependent on dynamic instance details.  We need to find a local path to
-        // the instance.
-        if (ptrDesc.constraints.lockOnUse.size() == 1) {
-          LocalVariablePath& path = ptrDesc.constraints.lockOnUse[0];
-          Context subContext(ptrDesc.targetDescriptor.type.context,
-                             Context::Binding::fromAlias(move(path)));
-          newDesc = lvalue.variable->getDescriptor(subContext);
-          // Move back into place.
-          path = move(subContext.suffix.back().alias);
-        } else {
-          // TODO:  Bind the pointer to a local variable scoped to just this statement.
-          location.error("Unimplemented:  Accessing member whose type is dependent on the object "
-                         "instance, where the object is a temporary.");
-          return nullptr;
+        if (lvalue.parent->staticPointer) {
+          memberDesc = variable->getDescriptor(
+              ptrDesc.targetDescriptor.type.context, *lvalue.parent->staticPointer);
         }
-      }
 
-      assert(newDesc);
+        if (!memberDesc) {
+          // Member type is dependent on dynamic instance details.  We need to find a local path to
+          // the instance.
+          if (ptrDesc.constraints.lockOnUse.size() == 1) {
+            LocalVariablePath& path = ptrDesc.constraints.lockOnUse[0];
+            Context subContext(ptrDesc.targetDescriptor.type.context,
+                               Context::Binding::fromPointer(move(path)));
+            memberDesc = variable->getDescriptor(subContext);
+            // Move back into place.
+            path = move(subContext.suffix.back().pointer);
+          } else {
+            // TODO:  Bind the pointer to a local variable scoped to just this statement.
+            location.error("Unimplemented:  Accessing member whose type is dependent on the object "
+                           "instance, where the object is a temporary.");
+            return nullptr;
+          }
+        }
 
-      // Inherit constraints from the parent poniter.
-      switch (newDesc->getKind()) {
-        case ValueDescriptor::Kind::PURE_DATA:
-          if (!newDesc->pureData.constraints.possiblePointers &&
-              ptrDesc.targetDescriptor.constraints.possiblePointers) {
-            // The member does not declare what pointers it may contain, but the parent object did,
-            // so inherit those.
-            for (auto& possiblePointer: *ptrDesc.targetDescriptor.constraints.possiblePointers) {
-              if (possiblePointer.member.path.empty()) {
-                // It's unspecified which member of the parent could contain this pointer, so
-                // assume this one could.
-                newDesc->pureData.constraints.possiblePointers->push_back(possiblePointer);
-              } else if (possiblePointer.member.path.front() == lvalue.variable) {
-                // The parent declared that this possible pointer specifically applies to this
-                // member variable, or a further member thereof.  Chop off the first element in the
-                // path to make the path relative to this member.
-                newDesc->pureData.constraints.possiblePointers->emplace_back(
-                    possiblePointer.member.path.begin() + 1, possiblePointer.member.path.end());
+        assert(memberDesc);
+
+        if (ptrDesc.targetDescriptor.constraints.possiblePointers) {
+          for (auto& possiblePointer: *ptrDesc.targetDescriptor.constraints.possiblePointers) {
+            // Does this possible pointer apply to us?
+            if (possiblePointer.member.path.empty() ||
+                possiblePointer.member.path.front() == lvalue.variable) {
+              assert(possiblePointer.member.path.size() <= 1);
+              if (memberDesc->constraints.exclusivity <= possiblePointer.exclusivity) {
+                memberDesc->constraints.possibleTargets.push_back(possiblePointer.target);
               }
             }
           }
-          break;
+        }
 
-        case ValueDescriptor::Kind::POINTER:
-          if (ptrDesc.targetDescriptor.constraints.possiblePointers) {
-            for (auto& possiblePointer: *ptrDesc.targetDescriptor.constraints.possiblePointers) {
-              // Does this possible pointer apply to us?
-              if (possiblePointer.member.path.empty() ||
-                  possiblePointer.member.path.front() == lvalue.variable) {
-                assert(possiblePointer.member.path.size() <= 1);
-                if (newDesc->pointer.constraints.exclusivity <= possiblePointer.exclusivity) {
-                  newDesc->pointer.constraints.possibleTargets.push_back(possiblePointer.target);
-                }
-              }
+        // Restrict pointer constraints based on parent pointer.
+        memberDesc->constraints.exclusivity = std::min(memberDesc->constraints.exclusivity,
+                                                       ptrDesc.constraints.exclusivity);
+        for (auto& varToLock: ptrDesc.constraints.lockOnUse) {
+          if (ptrDesc.constraints.exclusivity == Exclusivity::EXCLUSIVE) {
+            memberDesc->constraints.derivedFrom.push_back(varToLock);
+          }
+          varToLock.member.path.push_back(variable);
+          memberDesc->constraints.lockOnUse.push_back(move(varToLock));
+        }
+
+        return Thing::DescribedPointer(move(*memberDesc),
+            expressionBuilder.readMember(move(lvalue.parent->pointer), variable),
+            evaluator.readMember(move(lvalue.parent->staticPointer), variable));
+      } else if (ValueVariable* variable = dynamic_cast<ValueVariable*>(lvalue.variable)) {
+        // Get the descriptor for the member variable.
+        Maybe<ValueDescriptor> memberDesc = nullptr;
+
+        if (lvalue.parent->staticPointer) {
+          memberDesc = variable->getDescriptor(
+              ptrDesc.targetDescriptor.type.context, *lvalue.parent->staticPointer);
+        }
+
+        if (!memberDesc) {
+          // Member type is dependent on dynamic instance details.  We need to find a local path to
+          // the instance.
+          if (ptrDesc.constraints.lockOnUse.size() == 1) {
+            LocalVariablePath& path = ptrDesc.constraints.lockOnUse[0];
+            Context subContext(ptrDesc.targetDescriptor.type.context,
+                               Context::Binding::fromPointer(move(path)));
+            memberDesc = variable->getDescriptor(subContext);
+            // Move back into place.
+            path = move(subContext.suffix.back().pointer);
+          } else {
+            // TODO:  Bind the pointer to a local variable scoped to just this statement.
+            location.error("Unimplemented:  Accessing member whose type is dependent on the object "
+                           "instance, where the object is a temporary.");
+            return nullptr;
+          }
+        }
+
+        assert(memberDesc);
+
+        if (!memberDesc->constraints.possiblePointers &&
+            ptrDesc.targetDescriptor.constraints.possiblePointers) {
+          // The member does not declare what pointers it may contain, but the parent object did,
+          // so inherit those.
+          for (auto& possiblePointer: *ptrDesc.targetDescriptor.constraints.possiblePointers) {
+            if (possiblePointer.member.path.empty()) {
+              // It's unspecified which member of the parent could contain this pointer, so
+              // assume this one could.
+              memberDesc->constraints.possiblePointers->push_back(possiblePointer);
+            } else if (possiblePointer.member.path.front() == lvalue.variable) {
+              // The parent declared that this possible pointer specifically applies to this
+              // member variable, or a further member thereof.  Chop off the first element in the
+              // path to make the path relative to this member.
+              memberDesc->constraints.possiblePointers->emplace_back(
+                  possiblePointer.member.path.begin() + 1, possiblePointer.member.path.end());
             }
           }
-          break;
-      }
+        }
 
-      return Thing::Rvalue(move(*newDesc),
-          expressionBuilder.getPointerToMember(move(lvalue.parent->expression), lvalue.variable));
+        // Inherit pointer constraints.  Need to update them to add this variable to all the
+        // lockOnUse paths.
+        for (auto& varToLock: ptrDesc.constraints.lockOnUse) {
+          varToLock.member.path.push_back(variable);
+        }
+
+        return Thing::DescribedPointer(
+            PointerDescriptor(move(*memberDesc), move(ptrDesc.constraints)),
+            expressionBuilder.getPointerToMember(move(lvalue.parent->pointer), variable),
+            evaluator.getPointerToMember(move(lvalue.parent->staticPointer), variable));
+      } else {
+        throw "Variable is not ValueVariable or PointerVariable?";
+      }
 
     } else {
       // The lvalue names a local variable.
-      ValueDescriptor descriptor = scope.getVariableDescriptor(lvalue.variable);
+      if (PointerVariable* variable = dynamic_cast<PointerVariable*>(lvalue.variable)) {
+        PointerDescriptor descriptor = scope.getVariableDescriptor(variable);
 
-      switch (descriptor.getKind()) {
-        case ValueDescriptor::Kind::PURE_DATA: {
-          // Form a pointer to the local variable.
-          PointerConstraints constraints;
-          constraints.possibleTargets.push_back(LocalVariablePath(lvalue.variable));
-          constraints.lockOnUse.push_back(LocalVariablePath(lvalue.variable));
-          return Thing::Rvalue(
-              ValueDescriptor::fromPointer(move(descriptor.pureData), move(constraints)),
-              BoundExpression::fromConstant(Value::fromPointer(
-                  scope.getVariable(lvalue.variable))));
-        }
+        return Thing::DescribedPointer(move(descriptor),
+            expressionBuilder.readLocalVariable(variable),
+            evaluator.readLocalVariable(variable));
+      } else if (ValueVariable* variable = dynamic_cast<ValueVariable*>(lvalue.variable)) {
+        // Read the variable.
+        ValueDescriptor descriptor = scope.getVariableDescriptor(variable);
 
-        case ValueDescriptor::Kind::POINTER: {
-          // Read the variable.
-          return Thing::Rvalue(move(descriptor),
-              expressionBuilder.readLocalVariable(lvalue.variable));
-        }
+        // Form a pointer to the local variable.
+        PointerConstraints constraints;
+        constraints.possibleTargets.push_back(LocalVariablePath(lvalue.variable));
+        constraints.lockOnUse.push_back(LocalVariablePath(lvalue.variable));
+        return Thing::DescribedPointer(
+            PointerDescriptor(move(descriptor), move(constraints)),
+            expressionBuilder.makePointerToLocalVariable(variable),
+            evaluator.makePointerToLocalVariable(variable));
+      } else {
+        throw "Variable is not ValueVariable or PointerVariable?";
       }
     }
   }
@@ -1169,8 +1220,8 @@ public:
 
 private:
   Scope& scope;
-  Evaluator<Value>& evaluator;
-  Evaluator<BoundExpression>& expressionBuilder;
+  Evaluator<Value, Maybe<Value&>>& evaluator;
+  Evaluator<DynamicValue, DynamicPointer>& expressionBuilder;
 };
 
 vector<CxxStatement> compileImperative(Scope& scope, const vector<ast::Statement>& statements) {
