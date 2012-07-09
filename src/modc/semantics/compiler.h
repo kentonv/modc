@@ -184,6 +184,8 @@ struct Context {
       : depth(underlay.depth + 1), underlay(&underlay) {
     this->suffix.push_back(move(suffix));
   }
+
+  bool operator==(const Context& other) const;
 };
 
 template <typename EntityType>
@@ -549,6 +551,16 @@ enum Exclusivity: char {
   OWNED,
 };
 
+enum TargetSpecificity: char {
+  EXACT_TARGET,
+  TARGET_OR_MEMBER
+};
+
+enum AdditionalTargets: char {
+  NONE,
+  FROM_CALLER
+};
+
 struct ValueConstraints {
   struct PossiblePointer {
     // The member which may contain the pointer.  The identified member itself may be the pointer,
@@ -574,70 +586,70 @@ struct ValueConstraints {
     // having a lesser exclusivity, but not greater.
     Exclusivity exclusivity;
 
-    VALUE_TYPE3(PossiblePointer, MemberPath&&, member, LocalVariablePath&&, target,
-                Exclusivity, exclusivity);
+    // Whether or not the pointer could point at one of the target's members, in addition to the
+    // target itself.
+    TargetSpecificity targetSpecificity;
+
+    VALUE_TYPE4(PossiblePointer, MemberPath&&, member, LocalVariablePath&&, target,
+                Exclusivity, exclusivity, TargetSpecificity, targetSpecificity);
   };
 
-  // Things which this value's unannotated alias members may point at.  If not present, then no
-  // declaration has been made -- but if the type contains no unannotated aliases, then this is
-  // equivalent to the list being empty.
-  Maybe<vector<PossiblePointer>> possiblePointers;
+  // Things which this value's unannotated alias members may point at.
+  vector<PossiblePointer> possiblePointers;
+  AdditionalTargets additionalPointers;
+
+  // TODO:  Track things which might have a pointer *to* this?  Unclear if/when this is necessary.
+  //   Seems like it would only be needed in cases where we can't declare the opposite relationship,
+  //   but when would that be?  I guess in cases where the pointer (or object containing the
+  //   pointer) has explicit constraints which do not cover this new pointer...  then it's up to
+  //   the pointee to satisfy the constraints.  But, practically speaking, when does that happen?
 
   // If the value (or pointed-at value) is an integer, it is known to be in one of these ranges.
   // If this vector is empty then the integer is assumed to have maximum (32-bit) range.
   //
   // TODO:  These shouldn't be arbitrary Things.  They should be arithmetic expressions on constants
   //   and lvalues, probably allowing only +, -, *, //.
+  // TODO:  Union this with pointer-related stuff above that doesn't apply to integers?
   struct Range {
     Indirect<Thing> start;
     Indirect<Thing> end;
   };
   vector<Range> intRanges;
+
+  VALUE_TYPE3(ValueConstraints, vector<PossiblePointer>&&, possiblePointers,
+              AdditionalTargets, additionalPointers, vector<Range>&&, intRanges);
+
+  ValueConstraints(vector<PossiblePointer>&& possiblePointers,
+                   AdditionalTargets additionalPointers)
+      : possiblePointers(move(possiblePointers)), additionalPointers(additionalPointers) {}
+  ValueConstraints(vector<Range>&& intRanges)
+      : additionalPointers(AdditionalTargets::NONE), intRanges(move(intRanges)) {}
 };
 
 struct PointerConstraints {
-  PointerConstraints(): exclusivity(Exclusivity::EXCLUSIVE), mayTargetCaller(false) {}
+  struct PossibleTarget {
+    // If a path goes out-of-scope, the portion of the path up to and including the first pointer
+    // in the path must be replaced with the path's own derivedFrom.  If there is no pointer in the
+    // path, then the pointer is no longer valid.
+    LocalVariablePath path;
 
-  Exclusivity exclusivity;
+    // Whether or not the pointer could point at one of the target's members, in addition to the
+    // target itself.
+    TargetSpecificity specificity;
 
-  // Where this pointer came from.  Exclusivity constraints must be enforced on this lvalue
-  // until the pointer goes out of scope.  If multiple sources are listed, then the pointer may
-  // have come from any of them.  Note that the lvalues in this list are denormalized:  their
-  // paths contain no pointers.
-  //
-  // TODO:  Do we want to distinguish between "the pointer may point at exactly X" vs. "the
-  //   pointer may point at X or one of its members"?
-  vector<LocalVariablePath> possibleTargets;
+    VALUE_TYPE2(PossibleTarget, LocalVariablePath&&, path, TargetSpecificity, specificity);
+  };
 
-  // If true, then in addition to the lvalues in derivedFrom, the pointer may have been provided
-  // directly from the caller without any information about from where it was derived.
-  bool mayTargetCaller;
+  // Things that this pointer may point at.
+  vector<PossibleTarget> possibleTargets;
+  AdditionalTargets additionalTargets;
 
-  // Exclusive pointers in the current scope from which this pointer may have been derived.
-  // For example, say there is a variable called "foo" in current scope, which contains an
-  // exclusive pointer "foo.bar".  Say a new pointer "qux" is defined which points at
-  // "foo.bar.baz".  Then, qux is derived from "foo.bar" even though it does not point into foo.
-  // The difference between this and possibleTargets is:
-  // 1) foo can go out-of-scope before qux does, because qux does not actually point into foo.
-  //    Note that if this happens, qux's derivedFrom will be rewritten to substitute foo.bar's
-  //    derivedFrom, so that qux is now seen as derived directly from whatever foo.bar was derived
-  //    from.
-  // 2) foo.bar is only added to derivedFrom if it is an exclusive pointer.  If it is a
-  //    shared or identity pointer, there is no reason to track this relationship because it
-  //    would have no effect.  If it is an owned pointer, then it goes into possibleTargets
-  //    instead, because in this case foo.bar actually does need to outlive qux.
-  vector<LocalVariablePath> derivedFrom;
+  VALUE_TYPE2(PointerConstraints, vector<PossibleTarget>&&, possibleTargets,
+              AdditionalTargets, additionalTargets)
 
-  // Local variables which need to be locked if and when this pointer is dereferenced or bound to
-  // a new name.
-  //
-  // TODO:  This is also used in lvalueToRvalue() as a convenient way to obtain a local
-  //   variable path if needed.  Should it be renamed?
-  // TODO:  It feels like maybe this actually belongs in Thing::DescribedPointer, because
-  //   PointerVariable::GetDescriptor() would never return a descriptor that contained lockOnUse...
-  vector<LocalVariablePath> lockOnUse;
-
-  // TODO:  For an owned pointer, how do we track things it must outlive?
+  PointerConstraints(PossibleTarget&& target): additionalTargets(AdditionalTargets::NONE) {
+    possibleTargets.push_back(move(target));
+  }
 };
 
 struct ValueDescriptor {
@@ -649,10 +661,11 @@ struct ValueDescriptor {
 
 struct PointerDescriptor {
   ValueDescriptor targetDescriptor;
+  Exclusivity exclusivity;
   PointerConstraints constraints;
 
-  VALUE_TYPE2(PointerDescriptor, ValueDescriptor&&, targetDescriptor,
-              PointerConstraints&&, constraints);
+  VALUE_TYPE3(PointerDescriptor, ValueDescriptor&&, targetDescriptor,
+              Exclusivity, exclusivity, PointerConstraints&&, constraints);
 };
 
 class TypeDescriptor {
@@ -678,10 +691,14 @@ public:
   enum class Kind {
     UNKNOWN,
     UNKNOWN_TYPE,
+
     VALUE,
     POINTER,
     LVALUE,
-    ENTITY,  // i.e. type, function, or overload -- never a variable
+    POINTER_LVALUE,
+
+    FUNCTION,
+    TYPE,
     TUPLE
   };
 
@@ -713,16 +730,32 @@ public:
     // If present, the variable is a member of the given pointer.  Otherwise, the variable is a
     // local variable.
     Maybe<DescribedPointer> parent;
-    Variable* variable;
+    ValueVariable* variable;
+  };
+
+  struct PointerLvalue {
+    // If present, the variable is a member of the given pointer.  Otherwise, the variable is a
+    // local variable.
+    Maybe<DescribedPointer> parent;
+    PointerVariable* variable;
+  };
+
+  struct ConstrainedType {
+    Bound<Type> type;
+    Maybe<ValueConstraints> constraints;
   };
 
   union {
     Unknown unknown;
     TypeDescriptor unknownType;
+
     DescribedValue value;
     DescribedPointer pointer;
     Lvalue lvalue;
-    Bound<Entity> entity;
+    PointerLvalue pointerLvalue;
+
+    Bound<Overload> function;
+    ConstrainedType type;
     Tuple tuple;
   };
 
@@ -817,52 +850,47 @@ public:
 class Variable: public Entity {
 public:
   virtual ~Variable();
-};
 
-class ValueVariable: public Variable {
-public:
-  virtual ~ValueVariable();
-
-  // Get the declared descriptor for the variable.  Note that this only contains constraints that
+  // Get the declared type for the variable.  Note that this only contains constraints that
   // were explicitly declared in the code along with the variable's declaration.  Additional
-  // knowledge may be available within the context where the variable is accessed, e.g. it may be
-  // known that an alias variable points at a specific target even if its descriptor says it's
-  // unknown.
-  ValueDescriptor getDescriptor(const Context& context);
+  // knowledge may be available within the context where the variable is accessed, e.g. even if
+  // the variable does not declare what it might point at, if its containing object does, then
+  // these constraints can be derived.
+  //
+  // For pointer variables, getType() returns the type of the pointed-to value.
+  Thing::ConstrainedType getType(const Context& context);
 
-  // Attempts to create a descriptor for a member variable based on the parent type's context and a
-  // (possibly incomplete) Value representing "this".  Returns null if a complete context could not
-  // be constructed because thisValue contains UNKNOWNs.  In this case, the caller will need to
-  // bind "this" to a local variable so that a Context can be created referencing it.
+  // Like getType(Context), but accepts a Context which is lacking the object instance of which
+  // this variable is a member.  So, the context is for the variable's containing type, not the
+  // variable itself.  Also provided is a Value which represents what is known about the containing
+  // object.  This may be a partial Value, i.e. it can contain UNKNOWNs.  If the Value is sufficient
+  // to construct the fully-described type of the variable, then it is returned.  Otherwise, null
+  // is returned.
   //
   // In most cases, the descriptor for a member does not depend on the instance, so this will
   // succeed even if thisValue is entirely UNKNOWN.  The instance only matters if the member's
   // type is dependent on the instance or other members, e.g. because it is a parameterized type
   // or an inner type.
-  Maybe<ValueDescriptor> getDescriptor(const Context& thisTypeContext, const Value& thisValue);
+  //
+  // When this returns null, the caller will need to bind the parent object to a local variable
+  // so that it can construct a Context that contains it.
+  Maybe<Thing::ConstrainedType> getType(const Context& containingTypeContext,
+                                        const Value& containingObject);
+};
+
+class ValueVariable: public Variable {
+public:
+  virtual ~ValueVariable();
 };
 
 class PointerVariable: public Variable {
 public:
   virtual ~PointerVariable();
 
-  // Get the declared descriptor for the variable.  Note that this only contains constraints that
-  // were explicitly declared in the code along with the variable's declaration.  Additional
-  // knowledge may be available within the context where the variable is accessed, e.g. it may be
-  // known that an alias variable points at a specific target even if its descriptor says it's
-  // unknown.
-  PointerDescriptor getDescriptor(const Context& context);
+  Exclusivity getExclusivity();
 
-  // Attempts to create a descriptor for a member variable based on the parent type's context and a
-  // (possibly incomplete) Value representing "this".  Returns null if a complete context could not
-  // be constructed because thisValue contains UNKNOWNs.  In this case, the caller will need to
-  // bind "this" to a local variable so that a Context can be created referencing it.
-  //
-  // In most cases, the descriptor for a member does not depend on the instance, so this will
-  // succeed even if thisValue is entirely UNKNOWN.  The instance only matters if the member's
-  // type is dependent on the instance or other members, e.g. because it is a parameterized type
-  // or an inner type.
-  Maybe<PointerDescriptor> getDescriptor(const Context& thisTypeContext, const Value& thisValue);
+  // Get declared constraints for this pointer.
+  Maybe<PointerConstraints> getConstraints(const Context& context);
 };
 
 class Alias: public Entity {
