@@ -296,7 +296,7 @@ void TokenSequence::getErrors(std::vector<errors::Error>& errors) const {
 
 void TokenStatement::getErrors(std::vector<errors::Error>& errors) const {
   tokens.getErrors(errors);
-  if (block) {
+  if (block != nullptr) {
     for (auto& statement: *block) {
       statement.getErrors(errors);
     }
@@ -442,14 +442,14 @@ static void write(std::ostream& os, const TokenStatement& statement, int indent)
     os << "  ";
   }
   os << statement.tokens;
-  if (statement.block) {
+  if (statement.block == nullptr) {
+    os << ";\n";
+  } else {
     os << " {\n";
     for (const TokenStatement& subStatement : *statement.block) {
       write(os, subStatement, indent + 1);
     }
     os << "}\n";
-  } else {
-    os << ";\n";
   }
 }
 

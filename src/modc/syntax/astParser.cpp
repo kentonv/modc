@@ -104,11 +104,11 @@ public:
   Maybe<Located<SubOutput>> operator()(TokenParserInput& input) const {
     auto start = input.getPosition();
     Maybe<SubOutput> subResult = subParser(input);
-    if (subResult) {
+    if (subResult == nullptr) {
+      return nullptr;
+    } else {
       return errors::Located<SubOutput>(start->location.to(input.getPosition()->location),
                                         *subResult);
-    } else {
-      return nullptr;
     }
   }
 
@@ -148,7 +148,7 @@ parseTokenSequence(const TokenSequence& sequence, const Parser& subParser) {
   typedef typename parser::ExtractParserType<Parser>::OutputType Result;
   Maybe<Result> parseResult = subParser(input);
 
-  if (parseResult && input.atEnd()) {
+  if (parseResult != nullptr && input.atEnd()) {
     return *parseResult;
   } else {
     vector<errors::Error> errors = sequence.getErrors();
@@ -343,8 +343,8 @@ const ExpressionParser atomicExpression = oneOf(
         [](Loc l, vector<ListElement>&& elements) {
           if (elements.size() == 1 &&
               elements[0].ranges.empty() &&
-              !elements[0].condition &&
-              !elements[0].name) {
+              elements[0].condition == nullptr &&
+              elements[0].name == nullptr) {
             return move(elements[0].value);
           } else {
             return Expression::fromTuple(l, move(elements));
@@ -381,7 +381,7 @@ auto styleAllowance = oneOfKeywordsTo<StyleAllowance>({
 parser::Parser<TokenParserInput, Expression::FunctionCall::Parameter> functionCallParameter =
     transform(sequence(optional(styleAllowance), generalExpression),
         [](Loc l, Maybe<StyleAllowance>&& prefix, Expression&& exp) {
-          StyleAllowance style = prefix ? *prefix : StyleAllowance::VALUE;
+          StyleAllowance style = prefix == nullptr ? StyleAllowance::VALUE : *prefix;
           return Expression::FunctionCall::Parameter(style, move(exp));
         });
 
@@ -396,7 +396,7 @@ auto prefixOp = [](TokenParserInput& input) -> Maybe<ast::PrefixOperator> {
   }
 
   Maybe<ast::PrefixOperator> result = ast::findPrefixOperator(input.current().keyword);
-  if (result) {
+  if (result != nullptr) {
     input.next();
   }
   return result;
@@ -408,7 +408,7 @@ auto postfixOp = [](TokenParserInput& input) -> Maybe<ast::PostfixOperator> {
   }
 
   Maybe<ast::PostfixOperator> result = ast::findPostfixOperator(input.current().keyword);
-  if (result) {
+  if (result != nullptr) {
     input.next();
   }
   return result;
@@ -473,7 +473,7 @@ const ExpressionParser prefixedExpression =
 Maybe<Expression> parseBinaryOp(TokenParserInput& input, int minPriority) {
   auto start = input.getPosition();
   Maybe<Expression> left = prefixedExpression(input);
-  if (left) {
+  if (left != nullptr) {
     while (!input.atEnd() && input.current().getType() == Token::Type::KEYWORD) {
       Maybe<const ast::BinaryOperatorInfo&> info =
           ast::findBinaryOperatorInfo(input.current().keyword);
@@ -485,7 +485,7 @@ Maybe<Expression> parseBinaryOp(TokenParserInput& input, int minPriority) {
       TokenParserInput subInput(input);
       subInput.next();
       Maybe<Expression> right = parseBinaryOp(subInput, info->priority + 1);
-      if (!right) {
+      if (right == nullptr) {
         break;
       }
 
@@ -510,7 +510,7 @@ auto ternarySuffix = transform(
 const ExpressionParser generalExpression = transform(
     sequence(binaryOpExpression, optional(move(ternarySuffix))),
     [](Loc l, Expression&& condition, Maybe<std::pair<Expression, Expression>>&& clauses) {
-      if (clauses) {
+      if (clauses != nullptr) {
         return Expression::fromTernaryOperator(
             l, move(condition), move(clauses->first), move(clauses->second));
       } else {
@@ -528,7 +528,7 @@ const ListElementParser listElement = transform(
         Maybe<Expression>&& condition,
         Maybe<string>&& name,
         Expression&& value) {
-      if (!ranges) {
+      if (ranges == nullptr) {
         ranges = vector<Declaration>();
       }
       return ListElement(move(*ranges), move(condition), move(name), move(value));
@@ -568,10 +568,10 @@ auto visibilityType = oneOfKeywordsTo<Visibility::Type>({
 auto visibility = transform(
     sequence(visibilityType, optional(parenthesizedList(generalExpression))),
     [](Loc l, Visibility::Type type, Maybe<vector<Expression>>&& friends) {
-      if (friends) {
-        return Visibility(type, move(*friends));
-      } else {
+      if (friends == nullptr) {
         return Visibility(type, vector<Expression>());
+      } else {
+        return Visibility(type, move(*friends));
       }
     });
 
@@ -590,7 +590,7 @@ const DeclarationParser declaration = transform(
              optional(sequence(keyword(":"), optional(generalExpression))),
              repeated(annotation)),
     [] (Loc l,
-        bool isDefault,
+        Maybe<parser::Void> isDefault,
         Declaration::Kind kind,
         Maybe<Style>&& thisStyle,
         Maybe<Located<string>>&& name,
@@ -599,12 +599,12 @@ const DeclarationParser declaration = transform(
         Maybe<Maybe<Expression>>&& type,
         vector<Annotation>&& annotations) {
       Declaration result(l, kind);
-      result.isDefault = isDefault;
-      result.thisStyle = thisStyle ? *thisStyle : Style::VALUE;
-      result.style = style ? *style : Style::VALUE;
+      result.isDefault = isDefault != nullptr;
+      result.thisStyle = thisStyle == nullptr ? Style::VALUE : *thisStyle;
+      result.style = style == nullptr ? Style::VALUE : *style;
       result.name = move(name);
       result.parameters = move(parameters);
-      if (type) {
+      if (type != nullptr) {
         result.type = *type;
       } else if (kind == Declaration::Kind::FUNCTION) {
         result.type = Expression::fromTuple(Location(), vector<ListElement>());
@@ -628,7 +628,7 @@ const DeclarationParser implicitVarDeclaration = transform(
         vector<Annotation>&& annotations) {
       Declaration result(l, Declaration::Kind::VARIABLE);
       result.name = move(name);
-      if (parameters) {
+      if (parameters != nullptr) {
         result.parameters = vector<ParameterDeclaration>();
         result.parameters->reserve(parameters->size());
         for (auto& param: *parameters) {
@@ -636,7 +636,7 @@ const DeclarationParser implicitVarDeclaration = transform(
               param.location, move(param)));
         }
       }
-      result.style = style ? *style : Style::VALUE;
+      result.style = style == nullptr ? Style::VALUE : *style;
       result.type = move(type);
       result.annotations = move(annotations);
       return move(result);
@@ -653,7 +653,7 @@ const DeclarationParser quickRangeDeclaration = transform(
         Maybe<Expression>&& range) {
       Declaration result(l, Declaration::Kind::VARIABLE);
       result.name = move(name);
-      if (parameters) {
+      if (parameters != nullptr) {
         result.parameters = vector<ParameterDeclaration>();
         result.parameters->reserve(parameters->size());
         for (auto& param: *parameters) {
@@ -684,7 +684,7 @@ const ParameterDeclarationParser parameterDeclaration = oneOf(
     transform(sequence(visible(oneOf(declaration, implicitVarDeclaration)),
           optional(sequence(keyword("="), generalExpression))),
       [](Loc l, Declaration&& declaration, Maybe<Expression>&& definition){
-      if (definition) {
+      if (definition != nullptr) {
         declaration.definition = Declaration::Definition::fromExpression(move(*definition));
       }
       return ParameterDeclaration::fromVariable(l, move(declaration));
@@ -696,7 +696,7 @@ const ParameterDeclarationParser parameterDeclaration = oneOf(
 const DeclarationParser declarationMaybeAssignment = transform(
     sequence(declaration, optional(sequence(keyword("="), generalExpression))),
     [](Loc l, Declaration&& declaration, Maybe<Expression>&& expression) {
-      if (expression) {
+      if (expression != nullptr) {
         declaration.definition = Declaration::Definition::fromExpression(move(*expression));
       }
       return move(declaration);
@@ -806,10 +806,10 @@ StatementParser parallelStatement = transform(keyword("parallel"),
 StatementParser returnStatement = transform(
     sequence(keyword("return"), optional(generalExpression)),
     [](Loc l, Maybe<Expression>&& expression) {
-      if (expression) {
-        return Statement::fromReturn(l, move(*expression));
-      } else {
+      if (expression == nullptr) {
         return Statement::fromReturn(l, Expression::fromTuple(l.last(0), vector<ListElement>()));
+      } else {
+        return Statement::fromReturn(l, move(*expression));
       }
     });
 
@@ -826,7 +826,7 @@ StatementParser breakContinueStatement = transform(
       Statement result = isBreak ?
           Statement::fromBreak(l, move(loopName)) :
           Statement::fromContinue(l, move(loopName));
-      if (condition) {
+      if (condition != nullptr) {
         result = Statement::fromIf(l, move(*condition), move(result));
       }
       return result;
@@ -1033,7 +1033,7 @@ bool attachBlock(Statement& statement, const vector<TokenStatement>& block) {
 }
 
 void attachComment(Statement& statement, const Maybe<Located<string>>& comment) {
-  if (comment) {
+  if (comment != nullptr) {
     switch (statement.getType()) {
       case Statement::Type::ERROR:
       case Statement::Type::EXPRESSION:
@@ -1074,46 +1074,46 @@ void attachComment(Statement& statement, const Maybe<Located<string>>& comment) 
 }
 
 Statement parseImperative(const TokenStatement& input) {
-  if (input.block) {
+  if (input.block == nullptr) {
+    Statement result = parseTokenSequence(input.tokens, imperativeLineStatement);
+    attachComment(result, input.comment);
+    return result;
+  } else {
     Statement result = parseTokenSequence(input.tokens, imperativeBlockStatement);
     attachComment(result, input.comment);
     if (!attachBlock(result, *input.block)) {
       throw "bad block";
     }
     return result;
-  } else {
-    Statement result = parseTokenSequence(input.tokens, imperativeLineStatement);
-    attachComment(result, input.comment);
-    return result;
   }
 }
 
 Statement parseDeclarative(const TokenStatement& input) {
-  if (input.block) {
+  if (input.block == nullptr) {
+    Statement result = parseTokenSequence(input.tokens, declarativeLineStatement);
+    attachComment(result, input.comment);
+    return result;
+  } else {
     Statement result = parseTokenSequence(input.tokens, declarativeBlockStatement);
     attachComment(result, input.comment);
     if (!attachBlock(result, *input.block)) {
       throw "bad block";
     }
     return result;
-  } else {
-    Statement result = parseTokenSequence(input.tokens, declarativeLineStatement);
-    attachComment(result, input.comment);
-    return result;
   }
 }
 
 Declaration parseUnionMember(const TokenStatement& input) {
-  if (input.block) {
+  if (input.block == nullptr) {
+    Declaration result = parseTokenSequence(input.tokens, unionLineMember);
+    result.comment = input.comment;
+    return result;
+  } else {
     Declaration result = parseTokenSequence(input.tokens, unionBlockMember);
     result.comment = input.comment;
     if (!attachBlock(result, *input.block)) {
       throw "bad block";
     }
-    return result;
-  } else {
-    Declaration result = parseTokenSequence(input.tokens, unionLineMember);
-    result.comment = input.comment;
     return result;
   }
 }

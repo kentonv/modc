@@ -770,10 +770,10 @@ CodePrinter& operator<<(CodePrinter& printer, const ListElement& element) {
   if (!element.ranges.empty()) {
     printer << "for (" << element.ranges << ") " << breakable(1);
   }
-  if (element.condition) {
+  if (element.condition != nullptr) {
     printer << "if (" << *element.condition << ") " << breakable(1);
   }
-  if (element.name) {
+  if (element.name != nullptr) {
     printer << *element.name << " = ";
   }
 
@@ -801,7 +801,7 @@ CodePrinter& operator<<(CodePrinter& printer, const Visibility& visibility) {
 }
 
 void Declaration::print(CodePrinter& printer, bool asStatement) const {
-  if (visibility) {
+  if (visibility != nullptr) {
     printer << *visibility;
   }
 
@@ -834,12 +834,12 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
   }
 
   printer << thisStyle;
-  if (name) {
-    printer << formatted(format::DECLARATION, name->value);
-  } else {
+  if (name == nullptr) {
     printer << noSpace;
+  } else {
+    printer << formatted(format::DECLARATION, name->value);
   }
-  if (parameters) {
+  if (parameters != nullptr) {
     printer << "(" << startParameters(0);
     writeList(printer, *parameters, nextParameter);
     printer << ")" << endParameters;
@@ -847,7 +847,7 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
   printer << style;
 
   if (kind == Kind::FUNCTION) {
-    if (!type) {
+    if (type == nullptr) {
       printer << breakable(5) << ": ";
     } else if (type->getType() == Expression::Type::TUPLE && type->tuple.empty()) {
       // empty tuple return -- nothing to print
@@ -855,7 +855,7 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
       printer << breakable(5) << ": " << *type;
     }
   } else {
-    if (type) {
+    if (type != nullptr) {
       printer << breakable(5) << ": " << *type;
     }
   }
@@ -869,12 +869,12 @@ void Declaration::print(CodePrinter& printer, bool asStatement) const {
       case Annotation::Relationship::ANNOTATION: printer << space << ":: "; break;
     }
 
-    if (ann.param) {
+    if (ann.param != nullptr) {
       printer << *ann.param;
     }
   }
 
-  if (definition) {
+  if (definition != nullptr) {
     switch (definition->getType()) {
       case Declaration::Definition::Type::EXPRESSION:
         printer << space << "= " << breakable(5) << definition->expression;
@@ -941,7 +941,7 @@ CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
       return printer;
     case Statement::Type::ASSIGNMENT:
       printer << stmt.assignment.variable << space;
-      if (stmt.assignment.compoundOp) {
+      if (stmt.assignment.compoundOp != nullptr) {
         printer << formatted(format::OPERATOR,
                              getBinaryOperatorInfo(*stmt.assignment.compoundOp).name);
       }
@@ -987,7 +987,7 @@ CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
       return printer;
     case Statement::Type::LOOP:
       printer << "loop ";
-      if (stmt.loop.name) {
+      if (stmt.loop.name != nullptr) {
         printer << *stmt.loop.name << space;
       }
       if (stmt.loop.body->getType() != Statement::Type::BLOCK) {
@@ -1013,14 +1013,14 @@ CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
       break;
     case Statement::Type::BREAK:
       printer << "break";
-      if (stmt.break_) {
+      if (stmt.break_ != nullptr) {
         printer << space << *stmt.break_;
       }
       printer << ";";
       break;
     case Statement::Type::CONTINUE:
       printer << "continue";
-      if (stmt.continue_) {
+      if (stmt.continue_ != nullptr) {
         printer << space << *stmt.continue_;
       }
       printer << ";";
@@ -1048,7 +1048,7 @@ CodePrinter& operator<<(CodePrinter& printer, const Statement& stmt) {
       break;
   }
 
-  if (stmt.comment) {
+  if (stmt.comment != nullptr) {
     auto formatScope = printer.addFormat(format::COMMENT);
     printer << space << "# " << stmt.comment->value;
   }

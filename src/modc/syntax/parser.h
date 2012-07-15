@@ -458,11 +458,11 @@ public:
           any<typename ExtractParserType<FirstSubParser>::OutputType>(),
           any<typename ExtractParserType<SubParsers>::OutputType>()...))> {
     auto firstResult = first(input);
-    if (firstResult) {
+    if (firstResult == nullptr) {
+      return nullptr;
+    } else {
       return rest.parseNext(input, std::forward<InitialParams>(initialParams)...,
                             move(*firstResult));
-    } else {
-      return nullptr;
     }
   }
 
@@ -516,11 +516,11 @@ public:
       typename ExtractParserType<SubParser>::InputType subInput(input);
       auto subResult = subParser(subInput);
 
-      if (subResult) {
+      if (subResult == nullptr) {
+        break;
+      } else {
         subInput.advanceParent();
         results.push_back(move(*subResult));
-      } else {
-        break;
       }
     }
 
@@ -566,11 +566,11 @@ public:
     typename ExtractParserType<SubParser>::InputType subInput(input);
     auto subResult = subParser(subInput);
 
-    if (subResult) {
+    if (subResult == nullptr) {
+      return Result(nullptr);
+    } else {
       subInput.advanceParent();
       return Result(move(*subResult));
-    } else {
-      return Result(nullptr);
     }
   }
 
@@ -605,7 +605,7 @@ public:
       Input subInput(input);
       Maybe<Output> firstResult = first(subInput);
 
-      if (firstResult) {
+      if (firstResult != nullptr) {
         // MAYBE: Should we try parsing with "rest" in order to check for ambiguities?
         subInput.advanceParent();
         return move(firstResult);
@@ -662,10 +662,10 @@ public:
   Maybe<Output> operator()(InputType& input) const {
     auto start = input.getPosition();
     Maybe<SubOutput> subResult = subParser(input);
-    if (subResult) {
-      return applyTuple(transform, move(*subResult), std::make_pair(start, input.getPosition()));
-    } else {
+    if (subResult == nullptr) {
       return nullptr;
+    } else {
+      return applyTuple(transform, move(*subResult), std::make_pair(start, input.getPosition()));
     }
   }
 

@@ -50,20 +50,20 @@ TEST(Parsers, ExactElementParser) {
   Input input(text.begin(), text.end());
 
   Maybe<Void> result = exactChar('f')(input);
-  EXPECT_TRUE(result);
+  EXPECT_TRUE(result != nullptr);
   EXPECT_FALSE(input.atEnd());
 
   result = exactChar('o')(input);
-  EXPECT_TRUE(result);
+  EXPECT_TRUE(result != nullptr);
   EXPECT_FALSE(input.atEnd());
 
   result = exactChar('x')(input);
-  EXPECT_FALSE(result);
+  EXPECT_TRUE(result == nullptr);
   EXPECT_FALSE(input.atEnd());
 
   Parser<Input, Void> wrapped = exactChar('o');
   result = wrapped(input);
-  EXPECT_TRUE(result);
+  EXPECT_TRUE(result != nullptr);
   EXPECT_TRUE(input.atEnd());
 }
 
@@ -73,35 +73,35 @@ TEST(Parsers, SequenceParser) {
   {
     Input input(text.begin(), text.end());
     Maybe<Void> result = sequence(exactChar('f'), exactChar('o'), exactChar('o'))(input);
-    EXPECT_TRUE(result);
+    EXPECT_TRUE(result != nullptr);
     EXPECT_TRUE(input.atEnd());
   }
 
   {
     Input input(text.begin(), text.end());
     Maybe<Void> result = sequence(exactChar('f'), exactChar('o'))(input);
-    EXPECT_TRUE(result);
+    EXPECT_TRUE(result != nullptr);
     EXPECT_FALSE(input.atEnd());
   }
 
   {
     Input input(text.begin(), text.end());
     Maybe<Void> result = sequence(exactChar('x'), exactChar('o'), exactChar('o'))(input);
-    EXPECT_FALSE(result);
+    EXPECT_TRUE(result == nullptr);
     EXPECT_FALSE(input.atEnd());
   }
 
   {
     Input input(text.begin(), text.end());
     Maybe<Void> result = sequence(sequence(exactChar('f'), exactChar('o')), exactChar('o'))(input);
-    EXPECT_TRUE(result);
+    EXPECT_TRUE(result != nullptr);
     EXPECT_TRUE(input.atEnd());
   }
 
   {
     Input input(text.begin(), text.end());
     Maybe<Void> result = sequence(sequence(exactChar('f')), exactChar('o'), exactChar('o'))(input);
-    EXPECT_TRUE(result);
+    EXPECT_TRUE(result != nullptr);
     EXPECT_TRUE(input.atEnd());
   }
 
@@ -109,7 +109,7 @@ TEST(Parsers, SequenceParser) {
     Input input(text.begin(), text.end());
     Maybe<int> result = sequence(transform(exactChar('f'), [](TestLocation){return 123;}),
                                  exactChar('o'), exactChar('o'))(input);
-    ASSERT_TRUE(result);
+    ASSERT_TRUE(result != nullptr);
     EXPECT_EQ(123, *result);
     EXPECT_TRUE(input.atEnd());
   }
@@ -128,7 +128,7 @@ TEST(Parsers, TransformParser) {
   {
     Input input(text.begin(), text.end());
     Maybe<int> result = parser(input);
-    ASSERT_TRUE(result);
+    ASSERT_TRUE(result != nullptr);
     EXPECT_EQ(123, *result);
     EXPECT_TRUE(input.atEnd());
   }
@@ -166,7 +166,7 @@ TEST(Parsers, TransformParser_MaybeRef) {
   {
     Input input(text.begin(), text.end());
     Maybe<int> result = parser(input);
-    ASSERT_TRUE(result);
+    ASSERT_TRUE(result != nullptr);
     EXPECT_EQ(12 + 34 + 56, *result);
     EXPECT_TRUE(input.atEnd());
   }
@@ -182,7 +182,7 @@ TEST(Parsers, RepeatedParser) {
   {
     Input input(text.begin(), text.begin() + 3);
     Maybe<int> result = parser(input);
-    ASSERT_TRUE(result);
+    ASSERT_TRUE(result != nullptr);
     EXPECT_EQ(2, *result);
     EXPECT_TRUE(input.atEnd());
   }
@@ -190,7 +190,7 @@ TEST(Parsers, RepeatedParser) {
   {
     Input input(text.begin(), text.begin() + 5);
     Maybe<int> result = parser(input);
-    ASSERT_TRUE(result);
+    ASSERT_TRUE(result != nullptr);
     EXPECT_EQ(4, *result);
     EXPECT_TRUE(input.atEnd());
   }
@@ -198,7 +198,7 @@ TEST(Parsers, RepeatedParser) {
   {
     Input input(text.begin(), text.end());
     Maybe<int> result = parser(input);
-    ASSERT_TRUE(result);
+    ASSERT_TRUE(result != nullptr);
     EXPECT_EQ(4, *result);
     EXPECT_FALSE(input.atEnd());
   }
@@ -215,7 +215,7 @@ TEST(Parsers, OneOfParser) {
     string text = "foo";
     Input input(text.begin(), text.end());
     Maybe<string> result = parser(input);
-    ASSERT_TRUE(result);
+    ASSERT_TRUE(result != nullptr);
     EXPECT_EQ("foo", *result);
     EXPECT_TRUE(input.atEnd());
   }
@@ -224,7 +224,7 @@ TEST(Parsers, OneOfParser) {
     string text = "bar";
     Input input(text.begin(), text.end());
     Maybe<string> result = parser(input);
-    ASSERT_TRUE(result);
+    ASSERT_TRUE(result != nullptr);
     EXPECT_EQ("bar", *result);
     EXPECT_TRUE(input.atEnd());
   }

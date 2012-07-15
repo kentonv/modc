@@ -86,7 +86,7 @@ public:
           parent.descriptor.targetDescriptor.type.context, *parent.staticPointer);
     }
 
-    if (!result) {
+    if (result == nullptr) {
       // Member type is dependent on dynamic instance details.  We need to find a local path to
       // the instance.
       const vector<PointerConstraints::PossibleTarget>& possibleTargets =
@@ -111,9 +111,24 @@ public:
   //
   // Returns null on error or incomplete information.
   Maybe<Thing::DescribedPointer> toPointer(Thing::Lvalue&& lvalue, ErrorLocation location) {
-    if (lvalue.parent) {
+    if (lvalue.parent == nullptr) {
+      // The lvalue names a local variable.
+      // Read the variable.
+      ValueDescriptor descriptor = scope.getVariableDescriptor(lvalue.variable);
+
+      // Form a pointer to the local variable.
+      PointerConstraints constraints(
+          PointerConstraints::PossibleTarget(
+              LocalVariablePath(lvalue.variable),
+              TargetSpecificity::EXACT_TARGET));
+      return Thing::DescribedPointer(
+          PointerDescriptor(move(descriptor), Exclusivity::OWNED, move(constraints)),
+          expressionBuilder.makePointerToLocalVariable(lvalue.variable),
+          evaluator.makePointerToLocalVariable(lvalue.variable));
+
+    } else {
       Maybe<Thing::ConstrainedType> type = getMemberType(*lvalue.parent, lvalue.variable, location);
-      if (!type) {
+      if (type == nullptr) {
         return nullptr;
       }
 
@@ -125,7 +140,7 @@ public:
         // We can keep going here rather than return null, since we know what the code meant.
       }
 
-      if (!type->constraints) {
+      if (type->constraints == nullptr) {
         vector<ValueConstraints::PossiblePointer> possiblePointers;
 
         // The member does not declare what pointers it may contain, so inherit from the parent.
@@ -148,7 +163,7 @@ public:
             parentDesc.targetDescriptor.constraints.additionalPointers);
       }
 
-      assert(type->constraints);
+      assert(type->constraints != nullptr);
 
       // Inherit pointer constraints.
       for (auto& possibleTarget: parentDesc.constraints.possibleTargets) {
@@ -173,21 +188,6 @@ public:
               move(parentDesc.constraints)),
           expressionBuilder.getPointerToMember(move(lvalue.parent->pointer), lvalue.variable),
           evaluator.getPointerToMember(move(lvalue.parent->staticPointer), lvalue.variable));
-
-    } else {
-      // The lvalue names a local variable.
-      // Read the variable.
-      ValueDescriptor descriptor = scope.getVariableDescriptor(lvalue.variable);
-
-      // Form a pointer to the local variable.
-      PointerConstraints constraints(
-          PointerConstraints::PossibleTarget(
-              LocalVariablePath(lvalue.variable),
-              TargetSpecificity::EXACT_TARGET));
-      return Thing::DescribedPointer(
-          PointerDescriptor(move(descriptor), Exclusivity::OWNED, move(constraints)),
-          expressionBuilder.makePointerToLocalVariable(lvalue.variable),
-          evaluator.makePointerToLocalVariable(lvalue.variable));
     }
   }
 
@@ -196,9 +196,17 @@ public:
   //
   // Returns null on error or incomplete information.
   Maybe<Thing::DescribedPointer> toPointer(Thing::PointerLvalue&& lvalue, ErrorLocation location) {
-    if (lvalue.parent) {
+    if (lvalue.parent == nullptr) {
+      // The lvalue names a local variable.
+      PointerDescriptor descriptor = scope.getVariableDescriptor(lvalue.variable);
+
+      return Thing::DescribedPointer(move(descriptor),
+          expressionBuilder.readLocalVariable(lvalue.variable),
+          evaluator.readLocalVariable(lvalue.variable));
+
+    } else {
       Maybe<Thing::ConstrainedType> type = getMemberType(*lvalue.parent, lvalue.variable, location);
-      if (!type) {
+      if (type == nullptr) {
         return nullptr;
       }
 
@@ -246,7 +254,27 @@ public:
         Maybe<UnboundPointerConstraints> unboundConstraints =
             lvalue.variable->getUnboundConstraints(parentDesc.targetDescriptor.type.context);
 
-        if (unboundConstraints) {
+        if (unboundConstraints == nullptr) {
+          // No explicit constraints, so infer them from the parent's possiblePointers.
+
+          vector<PointerConstraints::PossibleTarget> possibleTargets;
+
+          for (auto& pointer: parentDesc.targetDescriptor.constraints.possiblePointers) {
+            // Does the possiblePointer apply to this member, and does this member match its
+            // exclusivity limit?
+            if ((pointer.member.path.empty() ||
+                 pointer.member.path.front() == lvalue.variable) &&
+                memberExclusivity <= pointer.exclusivity) {
+              assert(pointer.member.path.size() <= 1);
+              possibleTargets.push_back(PointerConstraints::PossibleTarget(
+                  move(pointer.target), pointer.targetSpecificity));
+            }
+          }
+
+          parentDesc.constraints = PointerConstraints(move(possibleTargets),
+              parentDesc.targetDescriptor.constraints.additionalPointers);
+
+        } else {
           // We need to fill out the possibleTargets missing from
           // unboundConstraints->parentIndependentConstraints using
           // unboundConstraints->innerPointers.
@@ -278,33 +306,13 @@ public:
 
           // Now that it's filled in, just use it.
           parentDesc.constraints = move(unboundConstraints->parentIndependentConstraints);
-
-        } else {
-          // No explicit constraints, so infer them from the parent's possiblePointers.
-
-          vector<PointerConstraints::PossibleTarget> possibleTargets;
-
-          for (auto& pointer: parentDesc.targetDescriptor.constraints.possiblePointers) {
-            // Does the possiblePointer apply to this member, and does this member match its
-            // exclusivity limit?
-            if ((pointer.member.path.empty() ||
-                 pointer.member.path.front() == lvalue.variable) &&
-                memberExclusivity <= pointer.exclusivity) {
-              assert(pointer.member.path.size() <= 1);
-              possibleTargets.push_back(PointerConstraints::PossibleTarget(
-                  move(pointer.target), pointer.targetSpecificity));
-            }
-          }
-
-          parentDesc.constraints = PointerConstraints(move(possibleTargets),
-              parentDesc.targetDescriptor.constraints.additionalPointers);
         }
       }
 
       // OK, parentDesc.constraints now actually describe the member's constraints, not the
       // parent's.  God, in-place modification creates so much confusion.
 
-      if (!type->constraints) {
+      if (type->constraints == nullptr) {
         // No constraints were declared on the pointer's target, so we must invent some.
         if (type->type.entity->hasUnannotatedAliases()) {
           // The target type has aliases, but it was never declared what they might point at.  This
@@ -321,7 +329,7 @@ public:
         }
       }
 
-      assert(type->constraints);
+      assert(type->constraints != nullptr);
 
       return Thing::DescribedPointer(
           PointerDescriptor(
@@ -330,13 +338,6 @@ public:
               move(parentDesc.constraints)),
           expressionBuilder.readMember(move(lvalue.parent->pointer), lvalue.variable),
           evaluator.readMember(move(lvalue.parent->staticPointer), lvalue.variable));
-    } else {
-      // The lvalue names a local variable.
-      PointerDescriptor descriptor = scope.getVariableDescriptor(lvalue.variable);
-
-      return Thing::DescribedPointer(move(descriptor),
-          expressionBuilder.readLocalVariable(lvalue.variable),
-          evaluator.readLocalVariable(lvalue.variable));
     }
   }
 

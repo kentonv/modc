@@ -16,9 +16,9 @@
 
 #include <iostream>
 #include <string>
-#include "tokens.h"
-#include "astParser.h"
-#include "ast.h"
+#include "syntax/tokens.h"
+#include "syntax/astParser.h"
+#include "syntax/ast.h"
 #include "errors.h"
 #include "CodePrinter.h"
 

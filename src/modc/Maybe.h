@@ -65,7 +65,6 @@ public:
     new (&value) T(std::forward(params)...);
   }
 
-  inline operator bool() const { return isSet; }
   inline T& operator*() { return value; }
   inline const T& operator*() const { return value; }
   inline T* operator->() { return &value; }
@@ -108,6 +107,9 @@ public:
     return false;
   }
   inline bool operator!=(const Maybe& other) const { return !(*this == other); }
+
+  inline bool operator==(std::nullptr_t) const { return !isSet; }
+  inline bool operator!=(std::nullptr_t) const { return isSet; }
 
 private:
   bool isSet;
