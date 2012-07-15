@@ -434,6 +434,9 @@ public:
 
     // Given a pointer, produce a pointer to a value member.
     POINTER_TO_MEMBER,
+
+    // Upcast to an interface.
+    UPCAST,
   };
 
   Kind getKind() const { return kind; }
@@ -490,6 +493,13 @@ public:
     VALUE_TYPE2(PointerToMember, DynamicPointer&&, object, Variable*, member);
   };
 
+  struct Upcast {
+    Indirect<DynamicPointer> object;
+    ImplementedInterface* interface;
+
+    VALUE_TYPE2(Upcast, DynamicPointer&&, object, ImplementedInterface*, interface);
+  };
+
   union {
     PointerVariable* localVariable;
 
@@ -500,6 +510,7 @@ public:
     ReadMember readMember;
     ReadPointerMember readPointerMember;
     PointerToMember pointerToMember;
+    Upcast upcast;
   };
 
   static DynamicPointer fromLocalVariable(PointerVariable* variable);
@@ -512,6 +523,7 @@ public:
                                         vector<DynamicValueOrPointer>&& parameters);
   static DynamicPointer fromSubscript(DynamicPointer&& container, DynamicValue&& key);
   static DynamicPointer fromPointerToMember(DynamicPointer&& object, Variable* member);
+  static DynamicPointer fromUpcast(DynamicPointer&& object, ImplementedInterface* interface);
 
 private:
   Kind kind;
@@ -694,7 +706,6 @@ public:
 };
 
 struct Tuple {
-public:
   struct Element;
 
   vector<Element> positionalElements;
@@ -734,6 +745,8 @@ public:
 
     VALUE_TYPE3(DescribedValue, ValueDescriptor&&, descriptor, DynamicValue&&, value,
                 Value&&, staticValue);
+
+    static DescribedValue fromUnknown(Bound<Type>&& type);
   };
 
   struct DescribedPointer {
@@ -743,6 +756,8 @@ public:
 
     VALUE_TYPE3(DescribedPointer, PointerDescriptor&&, descriptor, DynamicPointer&&, pointer,
                 Maybe<Value&>, staticPointer);
+
+    static DescribedPointer fromUnknown(Bound<Type>&& type, Exclusivity exclusivity);
   };
 
   struct Lvalue {
@@ -780,13 +795,24 @@ public:
 
   static Thing fromUnknown();
   static Thing fromUnknownType(TypeDescriptor&& descriptor);
+  static Thing fromUnknownValue(Bound<Type>&& type);
 
   static Thing fromEntity(Bound<Entity>&& entity);
 
-  static Thing fromValue(ValueDescriptor&& descriptor, DynamicValue&& value);
+  static Thing fromValue(ValueDescriptor&& descriptor, DynamicValue&& value, Value staticValue);
   static Thing fromValue(DescribedValue&& value);
-  static Thing fromPointer(PointerDescriptor&& descriptor, DynamicPointer&& pointer);
+  static Thing fromPointer(PointerDescriptor&& descriptor, DynamicPointer&& pointer,
+                           Maybe<Value&> staticPointer);
   static Thing fromPointer(DescribedPointer&& pointer);
+  static Thing fromLvalue(DescribedPointer&& parent, ValueVariable* variable);
+  static Thing fromLvalue(DescribedPointer&& parent, PointerVariable* variable);
+  static Thing fromLvalue(ValueVariable* variable);
+  static Thing fromLvalue(PointerVariable* variable);
+
+  static Thing fromOverload(Bound<Overload>&& overload);
+
+  static Thing fromType(Bound<Type>&& type);
+  static Thing fromType(Bound<Type>&& type, ValueConstraints&& constraints);
 
 private:
   Kind kind;
@@ -797,6 +823,29 @@ struct Tuple::Element {
   Indirect<Thing> value;
 
   VALUE_TYPE2(Element, ast::StyleAllowance, styleAllowance, Thing&&, value);
+};
+
+class DescribedPointerOrValue {
+public:
+  UNION_TYPE_BOILERPLATE(DescribedPointerOrValue);
+
+  enum Kind {
+    POINTER,
+    VALUE
+  };
+
+  Kind getKind() { return kind; }
+
+  union {
+    Thing::DescribedPointer pointer;
+    Thing::DescribedValue value;
+  };
+
+  DescribedPointerOrValue from(Thing::DescribedPointer&& pointer);
+  DescribedPointerOrValue from(Thing::DescribedValue&& pointer);
+
+private:
+  Kind kind;
 };
 
 // TODO:  EntityUsageSet?  Could be useful in determining dependencies and forward declarations?
@@ -812,7 +861,9 @@ public:
     ASSIGNMENT
   };
 
-  void addUsage(const LocalVariablePath& variable, Exclusivity exclusivity);
+  void addUsage(const PointerConstraints& pointer, Exclusivity exclusivity, ErrorLocation location);
+
+  void addUsage(const LocalVariablePath& variable, Exclusivity exclusivity, ErrorLocation location);
 
   // TODO:  Does this need context?  We do need to distinguish between the same member of
   //   different parents.  Maybe it just needs a path?
@@ -987,7 +1038,7 @@ public:
 
   // Note that constructors, unlike all other members, have context matching the type's context.
   // All other members have a context containing one element:  the instance.
-  Maybe<Overload&> getImplicitConstructor();
+  Overload* getImplicitConstructor();
   Maybe<Overload&> lookupConstructor(const string& name);
 
   Maybe<Function&> lookupConversion(ThingPort& port, const Bound<Type>& to);
@@ -1094,7 +1145,7 @@ public:
 
   Thing lookupBuiltinType(BuiltinType::Builtin type);
 
-  Maybe<Entity&> lookupBinding(const string& name);
+  Maybe<Thing> lookupBinding(const string& name);
   // Note that this may instantiate a template.
   // Note also that this returns a proxy specific to the current scope.
 

@@ -38,8 +38,7 @@ public:
   PointerType readMember(ValueType&& object, PointerVariable* member);
   PointerType readMember(PointerType&& object, PointerVariable* member);
   PointerType getPointerToMember(PointerType&& object, ValueVariable* member);
-
-  ValueType aliasTemporary(ValueType&& pureData);
+  PointerType upcast(PointerType&& object, ImplementedInterface* interface);
 };
 
 class Compiler {
@@ -54,27 +53,22 @@ public:
   template <typename... Parts>
   Thing error(const ast::Statement& location, Parts&&... parts);
 
-  Thing errorCantUseHere(Thing&& value, ErrorLocation location) {
-    // TODO:  Improve error message.
-    location.error("Can't use this thing here.");
-    return Thing::fromUnknown();
-  }
-
   ErrorLocation errorLocation(const Expression& expression);
 
   CxxExpression asCxx(Thing&& value);
 
-  bool compare(const Thing& a, const Thing& b);
-  bool compare(const EntityName& a, const EntityName& b);
-  bool compare(const Context& a, const Context& b);
+  bool areEqual(const Thing& a, const Thing& b);
+  bool areEqual(const EntityName& a, const EntityName& b);
+  bool areEqual(const Context& a, const Context& b);
   template <typename T, typename U>
-  bool compare(const Bound<T>& a, const Bound<U>& b);
+  bool areEqual(const Bound<T>& a, const Bound<U>& b);
 
   Thing call(Entity& entity, ThingPort& port, Tuple&& parameters);
 
   bool isComplete(const Value& value);
 
   // -------------------------------------------------------------------------------------
+  // toPointer
 
   // Get the type of a member variable given its parent pointer.
   Maybe<Thing::ConstrainedType> getMemberType(const Thing::DescribedPointer& parent,
@@ -135,7 +129,7 @@ public:
       PointerDescriptor& parentDesc = lvalue.parent->descriptor;
 
       if (parentDesc.exclusivity <= Exclusivity::IDENTITY) {
-        // TODO(kenton):  Allow reading of constant members of identity pointers.
+        // TODO:  Allow reading of constant members of identity pointers.
         location.error("Cannot access member of identity alias.");
         // We can keep going here rather than return null, since we know what the code meant.
       }
@@ -213,7 +207,7 @@ public:
       PointerDescriptor& parentDesc = lvalue.parent->descriptor;
 
       if (parentDesc.exclusivity <= Exclusivity::IDENTITY) {
-        // TODO(kenton):  Allow reading of constant members of identity pointers.
+        // TODO:  Allow reading of constant members of identity pointers.
         location.error("Cannot access member of identity alias.");
         // We can keep going here rather than return null, since we know what the code meant.
       }
@@ -228,7 +222,7 @@ public:
         // before the copy, then the copy's possibleTargets will need to be replaced at that time
         // by substituting in the source's possibleTargets.
         //
-        // TODO(kenton):  Do we want to compute the eventual replacement targets now?  Unclear if
+        // TODO:  Do we want to compute the eventual replacement targets now?  Unclear if
         //   it will be hard to do later, when the substitution actually happens.
 
         for (auto& target: parentDesc.constraints.possibleTargets) {
@@ -341,6 +335,223 @@ public:
     }
   }
 
+  // -------------------------------------------------------------------------------------
+  // dereference
+
+  Thing::DescribedValue dereference(Thing::DescribedPointer&& input,
+                                    VariableUsageSet& variablesUsed,
+                                    ErrorLocation location) {
+    variablesUsed.addUsage(input.descriptor.constraints, input.descriptor.exclusivity, location);
+
+    return Thing::DescribedValue(
+        move(input.descriptor.targetDescriptor),
+        expressionBuilder.readPointer(move(input.pointer)),
+        evaluator.readPointer(move(input.staticPointer)));
+  }
+
+  // -------------------------------------------------------------------------------------
+  // convertToValue
+
+  Thing::DescribedValue convertToValue(Thing::DescribedValue&& input, Bound<Type>&& targetType,
+                                       ErrorLocation location) {
+    if (areEqual(input.descriptor.type, targetType)) {
+      return move(input);
+    }
+
+    // Look for conversions on the source type.
+    ThingPort inputTypePort = scope.makePortFor(input.descriptor.type.context);
+    Maybe<Function&> conversion =
+        input.descriptor.type.entity->lookupConversion(inputTypePort, targetType);
+    if (conversion != nullptr) {
+      DescribedPointerOrValue result = callMethod(move(input), &*conversion, {}, location);
+      assert(result.getKind() == DescribedPointerOrValue::Kind::VALUE);
+      assert(areEqual(result.value.descriptor.type, targetType));
+      return move(result.value);
+    }
+
+    // Look for a constructor on the destination type.
+    Overload* constructor = targetType.entity->getImplicitConstructor();
+    Thing result = callFunction(Bound<Overload>(constructor, move(targetType.context)),
+                                Tuple::fromSingleValue(Thing::fromValue(move(input))),
+                                location);
+    if (result.getKind() == Thing::Kind::UNKNOWN) {
+      return Thing::DescribedValue::fromUnknown(move(targetType));
+    } else {
+      assert(result.getKind() == Thing::Kind::VALUE);
+      return move(result.value);
+    }
+  }
+
+  Thing::DescribedValue convertToValue(Thing::DescribedPointer&& input, Bound<Type>&& targetType,
+                                       VariableUsageSet& variablesUsed, ErrorLocation location) {
+    // TODO: Do we want to try to find a constructor on the target type that accepts a pointer?
+    //   Probably -- it's useful for pointer wrappers.
+    return convertToValue(dereference(move(input), variablesUsed, location),
+                          move(targetType), location);
+  }
+
+  Thing::DescribedValue convertToValue(Thing&& input, Bound<Type>&& targetType,
+                                       VariableUsageSet& variablesUsed, ErrorLocation location) {
+    switch (input.getKind()) {
+      case Thing::Kind::UNKNOWN:
+        return Thing::DescribedValue::fromUnknown(move(targetType));
+
+      case Thing::Kind::UNKNOWN_TYPE:
+      case Thing::Kind::TYPE:
+      case Thing::Kind::FUNCTION:
+        location.error("Not a value.");
+        return Thing::DescribedValue::fromUnknown(move(targetType));
+
+      case Thing::Kind::VALUE:
+        return convertToValue(move(input.value), move(targetType), location);
+
+      case Thing::Kind::POINTER:
+        return convertToValue(move(input.pointer), move(targetType), variablesUsed, location);
+
+      case Thing::Kind::LVALUE: {
+        Maybe<Thing::DescribedPointer> ptr = toPointer(move(input.lvalue), location);
+        if (ptr == nullptr) {
+          return Thing::DescribedValue::fromUnknown(move(targetType));
+        } else {
+          return convertToValue(move(*ptr), move(targetType), variablesUsed, location);
+        }
+      }
+
+      case Thing::Kind::POINTER_LVALUE: {
+        Maybe<Thing::DescribedPointer> ptr = toPointer(move(input.pointerLvalue), location);
+        if (ptr == nullptr) {
+          return Thing::DescribedValue::fromUnknown(move(targetType));
+        } else {
+          return convertToValue(move(*ptr), move(targetType), variablesUsed, location);
+        }
+      }
+
+      case Thing::Kind::TUPLE: {
+        Overload* constructor = targetType.entity->getImplicitConstructor();
+        Thing result = callFunction(Bound<Overload>(constructor, move(targetType.context)),
+                                    move(input.tuple), location);
+        if (result.getKind() == Thing::Kind::UNKNOWN) {
+          return Thing::DescribedValue::fromUnknown(move(targetType));
+        } else {
+          assert(result.getKind() == Thing::Kind::VALUE);
+          return move(result.value);
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------------------
+  // convertToPointer
+
+  Thing::DescribedPointer convertToPointer(Thing::DescribedPointer&& input,
+                                           Bound<Type>&& targetType,
+                                           Exclusivity targetExclusivity,
+                                           VariableUsageSet& variablesUsed,
+                                           ErrorLocation location) {
+    if (!areEqual(input.descriptor.targetDescriptor.type, targetType)) {
+      if (dynamic_cast<Interface*>(targetType.entity) == nullptr) {
+        location.error("Type mismatch.");
+      } else {
+        ThingPort inputPort = scope.makePortFor(input.descriptor.targetDescriptor.type.context);
+        Maybe<ImplementedInterface&> interface =
+            input.descriptor.targetDescriptor.type.entity->findImplementedInterface(
+                inputPort, targetType);
+        if (interface == nullptr) {
+          location.error("Object does not implement desired interface.");
+        } else {
+          input.descriptor.targetDescriptor.type = targetType;
+          input.pointer = expressionBuilder.upcast(move(input.pointer), &*interface);
+          input.staticPointer = evaluator.upcast(move(input.staticPointer), &*interface);
+        }
+      }
+    }
+
+    if (input.descriptor.exclusivity >= targetExclusivity) {
+      // We now know that the pointer is going to be used with this exclusivity, so mark it used.
+      variablesUsed.addUsage(input.descriptor.constraints, targetExclusivity, location);
+    } else {
+      location.error("Pointer has insufficient exclusivity to be used here.");
+    }
+
+    return move(input);
+  }
+
+  Thing::DescribedPointer convertToPointer(Thing&& input, Bound<Type>&& targetType,
+                                           Exclusivity targetExclusivity,
+                                           VariableUsageSet& variablesUsed,
+                                           ErrorLocation location) {
+    switch (input.getKind()) {
+      case Thing::Kind::UNKNOWN:
+        return Thing::DescribedPointer::fromUnknown(move(targetType), targetExclusivity);
+
+      case Thing::Kind::UNKNOWN_TYPE:
+      case Thing::Kind::TYPE:
+      case Thing::Kind::FUNCTION:
+      case Thing::Kind::VALUE:
+      case Thing::Kind::LVALUE:
+      case Thing::Kind::TUPLE:
+        // TODO:  If non-exclusive, try convertToValue() then take pointer-to-temporary?
+        location.error("Not a pointer.");
+        return Thing::DescribedPointer::fromUnknown(move(targetType), targetExclusivity);
+
+      case Thing::Kind::POINTER:
+        return convertToPointer(move(input.pointer), move(targetType), targetExclusivity,
+                                variablesUsed, location);
+
+      case Thing::Kind::POINTER_LVALUE: {
+        Maybe<Thing::DescribedPointer> ptr = toPointer(move(input.pointerLvalue), location);
+        if (ptr == nullptr) {
+          return Thing::DescribedPointer::fromUnknown(move(targetType), targetExclusivity);
+        } else {
+          return convertToPointer(move(*ptr), move(targetType), targetExclusivity,
+                                  variablesUsed, location);
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------------------
+  // checkConstraints
+
+  bool checkConstraints(const ValueConstraints& actual, const ValueConstraints& desired);
+  bool checkConstraints(const PointerConstraints& actual, const PointerConstraints& desired);
+
+  // -------------------------------------------------------------------------------------
+  // getMember
+
+  Thing::DescribedValue getMember(Thing::DescribedValue&& object, ValueVariable* member,
+                                  ErrorLocation location);
+  Thing::DescribedPointer getMember(Thing::DescribedValue&& object, PointerVariable* member,
+                                    ErrorLocation location);
+  Thing::Lvalue getMember(Thing::DescribedPointer&& object, ValueVariable* member,
+                          ErrorLocation location);
+  Thing::PointerLvalue getMember(Thing::DescribedPointer&& object, PointerVariable* member,
+                                 ErrorLocation location);
+
+  // -------------------------------------------------------------------------------------
+  // callFunction / callMethod
+
+  Thing callFunction(Bound<Function> function, vector<DescribedPointerOrValue>&& parameters,
+                     ErrorLocation location);
+  DescribedPointerOrValue callMethod(
+      Thing::DescribedValue&& object, Function* method,
+      vector<DescribedPointerOrValue>&& parameters, ErrorLocation location);
+
+  Thing callFunction(Bound<Overload>&& overload, Tuple&& input, ErrorLocation location);
+  DescribedPointerOrValue callMethod(
+      Thing::DescribedValue&& object, Overload* method, Tuple&& input, ErrorLocation location);
+
+  // -------------------------------------------------------------------------------------
+
+  Thing lookupBinding(string&& name, ErrorLocation location) {
+    Maybe<Thing> thing = scope.lookupBinding(name);
+    if (thing == nullptr) {
+      location.error("\"", name, "\" is not declared.");
+      return Thing::fromUnknown();
+    } else {
+      return move(*thing);
+    }
+  }
 
 
 
@@ -1142,7 +1353,7 @@ public:
             return evaluate(falseClause, variablesUsed);
           }
         } else {
-          // TODO(kenton):  Need to create sub-scopes or something to track the fact that only one
+          // TODO:  Need to create sub-scopes or something to track the fact that only one
           //   of the two branches' side effects will occur.
           Thing trueThing = evaluate(trueClause, variablesUsed);
           Thing falseThing = evaluate(falseClause, variablesUsed);
@@ -1168,7 +1379,7 @@ public:
           trueThing = castTo(move(trueThing), commonDescriptor.,
                              variablesUsed, errorLocation(trueClause));
 
-          // TODO(kenton):  If both branches are references, we actually want to return a reference...
+          // TODO:  If both branches are references, we actually want to return a reference...
           return Thing::fromValue(
               move(commonDescriptor),
               BoundExpression::fromTernaryOperator(
@@ -1306,7 +1517,7 @@ public:
               break;
           }
 
-          // TODO(kenton):  Verify no conflicting variable usage.
+          // TODO:  Verify no conflicting variable usage.
           break;
         }
 
