@@ -119,6 +119,12 @@ public:
 
       PointerDescriptor& parentDesc = lvalue.parent->descriptor;
 
+      if (parentDesc.exclusivity <= Exclusivity::IDENTITY) {
+        // TODO(kenton):  Allow reading of constant members of identity pointers.
+        location.error("Cannot access member of identity alias.");
+        // We can keep going here rather than return null, since we know what the code meant.
+      }
+
       if (!type->constraints) {
         vector<ValueConstraints::PossiblePointer> possiblePointers;
 
@@ -198,57 +204,132 @@ public:
 
       PointerDescriptor& parentDesc = lvalue.parent->descriptor;
 
-      // Have to get PointerConstraints...  If the member has no declared constraints we just
-      // derive them from the parent pointer.  Otherwise:
-      // - For each possible target of the parent pointer
-      //   - If it's an exact target, use it as the object instance to build a context and
-      //     call variable.getConstraints().
-      //   - Otherwise, if the pointer has constraints, they are either inner pointers, in
-      //     which case we keep the same fuzzy constraint, or they are pointers to something in
-      //     the type's context (without the instance), so we can figure those out...  hmm...
-      //
-      // What it seems like we need to do here is record, for each PossibleTarget, the
-      // PointerConstraints to replace it with when that target goes out of scope, or at least
-      // enough info to deduce that later.  Remember that the first pointer in the path always goes
-      // out of scope first.  Problem with deducing constraints later is that if the parent targets
-      // are fuzzy then we'll just inherit them without recording which particular pointers within
-      // were accessed, so we won't know where to substitute later.
-
-
-      for (auto& possibleParent: parentDesc.constraints.possibleTargets) {
-        possibleParent.specificity
+      if (parentDesc.exclusivity <= Exclusivity::IDENTITY) {
+        // TODO(kenton):  Allow reading of constant members of identity pointers.
+        location.error("Cannot access member of identity alias.");
+        // We can keep going here rather than return null, since we know what the code meant.
       }
 
+      Exclusivity memberExclusivity = lvalue.variable->getExclusivity();
 
+      if (memberExclusivity >= Exclusivity::EXCLUSIVE) {
+        // This is an exclusive pointer.  While the copy that we're making exists, the original
+        // pointer can no longer be treated as exclusive.  Therefore, copy's constraints must
+        // explicitly list the source pointer in its possibleTargets, so that we can keep track of
+        // the fact that the source is no longer exclusive.  If the source pointer is destroyed
+        // before the copy, then the copy's possibleTargets will need to be replaced at that time
+        // by substituting in the source's possibleTargets.
+        //
+        // TODO(kenton):  Do we want to compute the eventual replacement targets now?  Unclear if
+        //   it will be hard to do later, when the substitution actually happens.
 
-      if (parentDesc.targetDescriptor.constraints.possiblePointers) {
-        for (auto& possiblePointer: *parentDesc.targetDescriptor.constraints.possiblePointers) {
-          // Does this possible pointer apply to us?
-          if (possiblePointer.member.path.empty() ||
-              possiblePointer.member.path.front() == lvalue.variable) {
-            assert(possiblePointer.member.path.size() <= 1);
-            if (memberDesc->constraints.exclusivity <= possiblePointer.exclusivity) {
-              memberDesc->constraints.possibleTargets.push_back(possiblePointer.target);
-            }
+        for (auto& target: parentDesc.constraints.possibleTargets) {
+          switch (target.specificity) {
+            case TargetSpecificity::EXACT_TARGET:
+              // Since this is an exact path, we can append the new variable to the path.
+              target.path.member.path.push_back(lvalue.variable);
+              break;
+
+            case TargetSpecificity::TARGET_OR_MEMBER:
+              // We only know that the member being read is nested somewhere inside a larger
+              // object.  Since we don't know exactly which member, this pointer will have to be
+              // invalidated when the outer object goes out-of-scope, even though the pointer itself
+              // may point to a longer-lived object.
+              break;
           }
         }
-      }
+      } else {
+        // Since this is a shared or identity pointer, making a copy of it does not affect its
+        // exclusivity level.  Therefore, we can derive the copied pointer's possible targets
+        // directly from the pointer member's possible targets, with no later substitution.
 
-      // Restrict pointer constraints based on parent pointer.
-      memberDesc->constraints.exclusivity = std::min(memberDesc->constraints.exclusivity,
-                                                     parentDesc.constraints.exclusivity);
-      for (auto& varToLock: parentDesc.constraints.lockOnUse) {
-        if (parentDesc.constraints.exclusivity == Exclusivity::EXCLUSIVE) {
-          memberDesc->constraints.derivedFrom.push_back(varToLock);
+        Maybe<UnboundPointerConstraints> unboundConstraints =
+            lvalue.variable->getUnboundConstraints(parentDesc.targetDescriptor.type.context);
+
+        if (unboundConstraints) {
+          // We need to fill out the possibleTargets missing from
+          // unboundConstraints->parentIndependentConstraints using
+          // unboundConstraints->innerPointers.
+          for (auto& parent: parentDesc.constraints.possibleTargets) {
+            switch (parent.specificity) {
+              case TargetSpecificity::EXACT_TARGET:
+                // Append each inner pointer to this exact target to form a new exact target.
+                for (const auto& target: unboundConstraints->innerPointers) {
+                  LocalVariablePath newPath = parent.path;  // intentional copy
+                  newPath.member.path.push_back(target.path.root);
+                  newPath.member.path.insert(newPath.member.path.end(),
+                      target.path.member.path.begin(), target.path.member.path.end());
+
+                  unboundConstraints->parentIndependentConstraints.possibleTargets.push_back(
+                      PointerConstraints::PossibleTarget(move(newPath), target.specificity));
+                }
+                break;
+
+              case TargetSpecificity::TARGET_OR_MEMBER:
+                // All we know is that if there are any inner pointers, they also point somewhere
+                // inside this target.
+                if (!unboundConstraints->innerPointers.empty()) {
+                  unboundConstraints->parentIndependentConstraints.possibleTargets.push_back(
+                      move(parent));
+                }
+                break;
+            }
+          }
+
+          // Now that it's filled in, just use it.
+          parentDesc.constraints = move(unboundConstraints->parentIndependentConstraints);
+
+        } else {
+          // No explicit constraints, so infer them from the parent's possiblePointers.
+
+          vector<PointerConstraints::PossibleTarget> possibleTargets;
+
+          for (auto& pointer: parentDesc.targetDescriptor.constraints.possiblePointers) {
+            // Does the possiblePointer apply to this member, and does this member match its
+            // exclusivity limit?
+            if ((pointer.member.path.empty() ||
+                 pointer.member.path.front() == lvalue.variable) &&
+                memberExclusivity <= pointer.exclusivity) {
+              assert(pointer.member.path.size() <= 1);
+              possibleTargets.push_back(PointerConstraints::PossibleTarget(
+                  move(pointer.target), pointer.targetSpecificity));
+            }
+          }
+
+          parentDesc.constraints = PointerConstraints(move(possibleTargets),
+              parentDesc.targetDescriptor.constraints.additionalPointers);
         }
-        varToLock.member.path.push_back(lvalue.variable);
-        memberDesc->constraints.lockOnUse.push_back(move(varToLock));
       }
 
-      return Thing::DescribedPointer(move(*memberDesc),
+      // OK, parentDesc.constraints now actually describe the member's constraints, not the
+      // parent's.  God, in-place modification creates so much confusion.
+
+      if (!type->constraints) {
+        // No constraints were declared on the pointer's target, so we must invent some.
+        if (type->type.entity->hasUnannotatedAliases()) {
+          // The target type has aliases, but it was never declared what they might point at.  This
+          // can only be the case for parameters since local variables would have had the
+          // constraints inferred.  So, assume the pointers point at stuff in the caller's scope.
+          type->constraints = ValueConstraints(
+              vector<ValueConstraints::PossiblePointer>(),
+              AdditionalTargets::FROM_CALLER);
+        } else {
+          // The target contains no unannotated aliases.
+          type->constraints = ValueConstraints(
+              vector<ValueConstraints::PossiblePointer>(),
+              AdditionalTargets::NONE);
+        }
+      }
+
+      assert(type->constraints);
+
+      return Thing::DescribedPointer(
+          PointerDescriptor(
+              ValueDescriptor(move(type->type), move(*type->constraints)),
+              std::min(parentDesc.exclusivity, memberExclusivity),
+              move(parentDesc.constraints)),
           expressionBuilder.readMember(move(lvalue.parent->pointer), lvalue.variable),
           evaluator.readMember(move(lvalue.parent->staticPointer), lvalue.variable));
-
     } else {
       // The lvalue names a local variable.
       PointerDescriptor descriptor = scope.getVariableDescriptor(lvalue.variable);

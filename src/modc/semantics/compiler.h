@@ -628,9 +628,14 @@ struct ValueConstraints {
 
 struct PointerConstraints {
   struct PossibleTarget {
-    // If a path goes out-of-scope, the portion of the path up to and including the first pointer
-    // in the path must be replaced with the path's own derivedFrom.  If there is no pointer in the
-    // path, then the pointer is no longer valid.
+    // The elements of the path are strictly exclusive pointers, owned pointers, or values.  Shared
+    // or identity pointers are replaced with their targets at the time the contraints are built,
+    // because there is no need to track exactly what pointer they were derived from.  On the other
+    // hand, when a pointer is derived from an existing exclusive pointer, that existing exclusive
+    // pointer is no longer exclusive, so this relationship must be tracked.
+    //
+    // When an exclusive pointer in the path goes out-of-scope, the portion of the path up to and
+    // including that pointer must be replaced with the pointer's own possible targets.
     LocalVariablePath path;
 
     // Whether or not the pointer could point at one of the target's members, in addition to the
@@ -650,6 +655,20 @@ struct PointerConstraints {
   PointerConstraints(PossibleTarget&& target): additionalTargets(AdditionalTargets::NONE) {
     possibleTargets.push_back(move(target));
   }
+};
+
+// Description of pointer constraints that doesn't require a specific binding for the object
+// of which this variable is a member.
+struct UnboundPointerConstraints {
+  // Constraints that don't reference the object at all, but rather something in the pointer's
+  // context, or the calling scope.
+  PointerConstraints parentIndependentConstraints;
+
+  // Additional possible targets of this pointer which point at sibling variables -- i.e. other
+  // members of the same object.  Each path is rooted at such a sibling variable, which means
+  // they must be grafted to some path rooted in a local variable before they can be used in
+  // any other context.
+  vector<PointerConstraints::PossibleTarget> innerPointers;
 };
 
 struct ValueDescriptor {
@@ -889,8 +908,14 @@ public:
 
   Exclusivity getExclusivity();
 
+  bool hasConstraints();
+
   // Get declared constraints for this pointer.
   Maybe<PointerConstraints> getConstraints(const Context& context);
+
+  // Get constraints independently of any binding for the object of which this variable is a member.
+  // Instead, the object's type's context is provided.
+  Maybe<UnboundPointerConstraints> getUnboundConstraints(const Context& containingTypeContext);
 };
 
 class Alias: public Entity {
