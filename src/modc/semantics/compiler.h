@@ -53,6 +53,7 @@ class Enum;
 class Function;
 class Overload;
 class ThingPort;
+class Compiler;
 
 // Value types.
 class Value;
@@ -206,6 +207,8 @@ struct MemberPath {
 
   VALUE_TYPE1(MemberPath, vector<Variable*>&&, path);
   MemberPath() {}
+
+  bool isPrefix(const MemberPath& other) const;
 };
 
 struct LocalVariablePath {
@@ -215,6 +218,8 @@ struct LocalVariablePath {
   VALUE_TYPE2(LocalVariablePath, Variable*, root, MemberPath&&, member);
 
   LocalVariablePath(Variable* root): root(root) {}
+
+  bool isPrefix(const LocalVariablePath& other) const;
 };
 
 class ContextBinding;
@@ -694,15 +699,51 @@ struct PointerDescriptor {
   ValueDescriptor targetDescriptor;
   Exclusivity exclusivity;
   PointerConstraints constraints;
+  bool canAddConstraints;
 
   VALUE_TYPE3(PointerDescriptor, ValueDescriptor&&, targetDescriptor,
               Exclusivity, exclusivity, PointerConstraints&&, constraints);
 };
 
-class TypeDescriptor {
+struct DescribedValue {
+  ValueDescriptor descriptor;
+  DynamicValue value;
+  Value staticValue;
+
+  VALUE_TYPE3(DescribedValue, ValueDescriptor&&, descriptor, DynamicValue&&, value,
+              Value&&, staticValue);
+};
+
+struct DescribedPointer {
+  PointerDescriptor descriptor;
+  DynamicPointer pointer;
+  Maybe<Value&> staticPointer;
+
+  VALUE_TYPE3(DescribedPointer, PointerDescriptor&&, descriptor, DynamicPointer&&, pointer,
+              Maybe<Value&>, staticPointer);
+};
+
+class DescribedPointerOrValue {
 public:
-  vector<Thing> supertypes;
-  vector<Thing> subtypes;
+  UNION_TYPE_BOILERPLATE(DescribedPointerOrValue);
+
+  enum Kind {
+    POINTER,
+    VALUE
+  };
+
+  Kind getKind() { return kind; }
+
+  union {
+    DescribedPointer pointer;
+    DescribedValue value;
+  };
+
+  DescribedPointerOrValue from(DescribedPointer&& pointer);
+  DescribedPointerOrValue from(DescribedValue&& pointer);
+
+private:
+  Kind kind;
 };
 
 struct Tuple {
@@ -720,7 +761,6 @@ public:
 
   enum class Kind {
     UNKNOWN,
-    UNKNOWN_TYPE,
 
     VALUE,
     POINTER,
@@ -728,6 +768,7 @@ public:
     POINTER_LVALUE,
 
     FUNCTION,
+    METHOD,
     TYPE,
     TUPLE
   };
@@ -738,33 +779,14 @@ public:
     VALUE_TYPE0(Unknown);
   };
 
-  struct DescribedValue {
-    ValueDescriptor descriptor;
-    DynamicValue value;
-    Value staticValue;
-
-    VALUE_TYPE3(DescribedValue, ValueDescriptor&&, descriptor, DynamicValue&&, value,
-                Value&&, staticValue);
-
-    static DescribedValue fromUnknown(Bound<Type>&& type);
-  };
-
-  struct DescribedPointer {
-    PointerDescriptor descriptor;
-    DynamicPointer pointer;
-    Maybe<Value&> staticPointer;
-
-    VALUE_TYPE3(DescribedPointer, PointerDescriptor&&, descriptor, DynamicPointer&&, pointer,
-                Maybe<Value&>, staticPointer);
-
-    static DescribedPointer fromUnknown(Bound<Type>&& type, Exclusivity exclusivity);
-  };
-
   struct Lvalue {
     // If present, the variable is a member of the given pointer.  Otherwise, the variable is a
     // local variable.
     Maybe<DescribedPointer> parent;
     ValueVariable* variable;
+
+    VALUE_TYPE2(Lvalue, DescribedPointer&&, parent, ValueVariable*, variable);
+    Lvalue(ValueVariable* variable): parent(nullptr), variable(variable) {}
   };
 
   struct PointerLvalue {
@@ -772,6 +794,14 @@ public:
     // local variable.
     Maybe<DescribedPointer> parent;
     PointerVariable* variable;
+
+    VALUE_TYPE2(PointerLvalue, DescribedPointer&&, parent, PointerVariable*, variable);
+    PointerLvalue(PointerVariable* variable): parent(nullptr), variable(variable) {}
+  };
+
+  struct Method {
+    DescribedPointerOrValue object;
+    Overload* method;
   };
 
   struct ConstrainedType {
@@ -781,7 +811,6 @@ public:
 
   union {
     Unknown unknown;
-    TypeDescriptor unknownType;
 
     DescribedValue value;
     DescribedPointer pointer;
@@ -789,13 +818,12 @@ public:
     PointerLvalue pointerLvalue;
 
     Bound<Overload> function;
+    Method method;
     ConstrainedType type;
     Tuple tuple;
   };
 
   static Thing fromUnknown();
-  static Thing fromUnknownType(TypeDescriptor&& descriptor);
-  static Thing fromUnknownValue(Bound<Type>&& type);
 
   static Thing fromEntity(Bound<Entity>&& entity);
 
@@ -809,7 +837,8 @@ public:
   static Thing fromLvalue(ValueVariable* variable);
   static Thing fromLvalue(PointerVariable* variable);
 
-  static Thing fromOverload(Bound<Overload>&& overload);
+  static Thing fromFunction(Bound<Overload>&& overload);
+  static Thing fromMethod(DescribedValue&& object, Overload* method);
 
   static Thing fromType(Bound<Type>&& type);
   static Thing fromType(Bound<Type>&& type, ValueConstraints&& constraints);
@@ -823,29 +852,6 @@ struct Tuple::Element {
   Indirect<Thing> value;
 
   VALUE_TYPE2(Element, ast::StyleAllowance, styleAllowance, Thing&&, value);
-};
-
-class DescribedPointerOrValue {
-public:
-  UNION_TYPE_BOILERPLATE(DescribedPointerOrValue);
-
-  enum Kind {
-    POINTER,
-    VALUE
-  };
-
-  Kind getKind() { return kind; }
-
-  union {
-    Thing::DescribedPointer pointer;
-    Thing::DescribedValue value;
-  };
-
-  DescribedPointerOrValue from(Thing::DescribedPointer&& pointer);
-  DescribedPointerOrValue from(Thing::DescribedValue&& pointer);
-
-private:
-  Kind kind;
 };
 
 // TODO:  EntityUsageSet?  Could be useful in determining dependencies and forward declarations?
@@ -983,58 +989,52 @@ public:
 
 class Function: public Entity {
 public:
-  struct ParameterSpec {
-    Entity* entity;
-    Maybe<Thing> defaultValue;
-    bool positional;
-  };
-
-  const vector<ParameterSpec>& getParameters();
-
-  // The return type doesn't depend on the inputs, but the return descriptor does.
-  Type* getReturnType();
-  ValueDescriptor getReturnDescriptor(ValueDescriptor&& object, vector<ValueDescriptor>&& params);
-
-  // context.params must be filled in to match the Variables and Aliases in getParameters() --
-  // but not the Constants.
-  // Returns a FUNCTION_CALL BoundExpression if the call cannot be computed due to inputs being
-  // dynamic or if the function implementation is unavailable.
-  // TODO:  If a dynamic input is ignored but the computation had side effects we need to make sure
-  //   those side effects still take place...
-  Value call(Context&& context, vector<Value>&& parameters);
+  const vector<Variable*>& getParameters();
 
   // TODO:  Implicit parameters, environment.
   //   Both may depend on compiling the function body.
 };
 
+class ValueFunction: public Function {
+public:
+  // TODO: Get return descriptor.  This is similar to getting the descriptor for a member variable
+  //   except more complicated because any of the parameters may factor into the output type so we
+  //   may need to bind any of them to local vars if they aren't already, etc.
+
+  // TODO: invoke()
+};
+
+class PointerFunction: public Function {
+public:
+  // TODO: Get return descriptor.  This is similar to getting the descriptor for a member variable
+  //   except more complicated because any of the parameters may factor into the output type so we
+  //   may need to bind any of them to local vars if they aren't already, etc.
+
+  // TODO: invoke()
+};
+
 class Overload: public Entity {
 public:
-  // Choose an overload to use.  The parameter may be a singular value or a tuple.  If it's a
-  // singular value, then it is assumed to be unnamed and have a StyleAllowance of VALUE.  The
-  // reason this is allowed is because constructing a single-element tuple in some cases would
-  // require making an unnecessary copy of the Thing.
+  // Resolves the overload for the given parameters and returns a Thing representing the result.
+  // In the case where the overload is resolved to a function, the returned Thing represents the
+  // result of calling that function.
   //
-  // If there is no exact match, this may return something that is *close* to matching, if the
-  // Overload is confident that it knows which variant the caller intended.  In particular if
-  // there is only one overload then it will just be returned.  If the mismatch was in constant
-  // parameters, the error will be reported by the Overload itself, but if the mismatch was in
-  // dynamic parameters, then the caller is expected to report the problem when it attempts to
-  // place those parameters.
-  //
-  // This may generate meta-functions on-demand.
-  //
-  // TODO:  Return ordering of TupleElements for convenience?  Or is that essentially a constant
-  //   for each Function anyway?  Maybe not for keyword args?
-  Maybe<Entity&> resolve(ThingPort& port, const Thing& parameter);
-
-  // TODO:  Resolve given ThingDescriptors?  Or just built a tuple of UNKNOWNs for that?  Actually
-  //   ThingDescriptors are somewhat more info than we need...  we really just want to know kind
-  //   and type.
+  // resolve() may have the effect of lazily instantiating templates.
+  Thing resolve(Compiler& compiler, Context&& context, const Tuple& parameters,
+                ErrorLocation location);
+  Thing resolve(Compiler& compiler, DescribedPointerOrValue&& object,
+                const Tuple& parameters, ErrorLocation location);
 };
 
 class Type: public Entity {
 public:
-  Maybe<Entity&> lookupMemberOfInstance(const string& name);
+  Thing getMemberOfType(Compiler& compiler, Thing::ConstrainedType&& self,
+                        const string& memberName);
+
+  Thing getMemberOfInstance(Compiler& compiler, DescribedValue&& parent,
+                            const string& memberName, ErrorLocation location);
+  Thing getMemberOfInstance(Compiler& compiler, DescribedPointer&& parent,
+                            const string& memberName, ErrorLocation location);
 
   // Note that constructors, unlike all other members, have context matching the type's context.
   // All other members have a context containing one element:  the instance.
@@ -1133,6 +1133,10 @@ public:
   // Get the local variable's current descriptor including transient constraints.
   ValueDescriptor getVariableDescriptor(ValueVariable* variable);
   PointerDescriptor getVariableDescriptor(PointerVariable* variable);
+
+  void setVariableConstraints(ValueVariable* variable, const ValueConstraints& constraints);
+  void setVariableConstraints(PointerVariable* variable, const PointerConstraints& ptrConstraints,
+                              const ValueConstraints& valConstraints);
 
   // Get a pointer to the variable's value.  May be a partial value.  If the caller is simulating
   // changes to the value, it should modify the value directly.
