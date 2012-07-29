@@ -162,7 +162,6 @@ public:
                                  ErrorLocation location);
   Maybe<DescribedPointer> getMember(DescribedData&& object, PointerVariable* member,
                                     ErrorLocation location);
-
   Thing::Lvalue getMember(DescribedPointer&& object, DataVariable* member,
                           ErrorLocation location);
   Thing::PointerLvalue getMember(DescribedPointer&& object, PointerVariable* member,

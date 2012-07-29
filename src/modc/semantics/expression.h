@@ -282,6 +282,8 @@ public:
 template <typename DataType, typename PointerType>
 class Evaluator {
 public:
+  virtual ~Evaluator() {}
+
   virtual DataType readLocalVariable(DataVariable* variable) = 0;
   virtual PointerType readLocalVariable(PointerVariable* variable) = 0;
   virtual PointerType makePointerToLocalVariable(DataVariable* variable) = 0;

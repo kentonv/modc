@@ -802,6 +802,7 @@ Thing Compiler::getMember(Thing&& object, const string& memberName, ErrorLocatio
 // bindTemporary
 
 LocalVariablePath Compiler::bindTemporary(DescribedData& value) {
+  // TODO:  Implement.
   throw "Unimplemented:  Binding a temporary to a local variable.";
 }
 
