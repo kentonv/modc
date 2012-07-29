@@ -122,8 +122,6 @@ private:
   map<string, OwnedPtrVector<Function> > functions;
 };
 
-vector<CxxStatement> compileImperative(Scope& scope, const vector<ast::Statement>& statements);
-
 }  // namespace compiler
 }  // namespace modc
 

@@ -43,8 +43,6 @@ public:
   void error(errors::Error&& error);
 };
 
-// TODO:  EntityUsageSet?  Could be useful in determining dependencies and forward declarations?
-//   Or is that a fundamentally different thing?
 class VariableUsageSet {
 public:
   enum class Style {
@@ -86,7 +84,98 @@ private:
   map<Variable*, Usage> variablesUsed;
 };
 
-class Compiler;
+class Compiler {
+public:
+  Compiler(Scope& scope,
+           Evaluator<DataValue, Maybe<DataValue&>>& evaluator,
+           Evaluator<DataExpression, PointerExpression>& expressionBuilder)
+      : scope(scope), evaluator(evaluator), expressionBuilder(expressionBuilder) {}
+
+  Scope& scope;
+  Evaluator<DataValue, Maybe<DataValue&>>& evaluator;
+  Evaluator<DataExpression, PointerExpression>& expressionBuilder;
+
+  bool areEqual(const Thing& a, const Thing& b);
+  bool areEqual(const EntityName& a, const EntityName& b);
+  bool areEqual(const Context& a, const Context& b);
+  template <typename T, typename U>
+  bool areEqual(const Bound<T>& a, const Bound<U>& b);
+
+  DataConstraints getDefaultConstraints(Type* type);
+
+  DataConstraints getInheritedConstraints(DataConstraints&& parentConstraints,
+                                          DataVariable* member);
+  PointerConstraints getInheritedConstraints(DataConstraints&& parentConstraints,
+                                             PointerVariable* member);
+
+  // Get the type of a member variable given its parent pointer.
+  //
+  // "parent" may be modified in-place in order to bind it to a local variable -- see
+  // bindTemporary().
+  Maybe<Thing::ConstrainedType> getMemberType(DescribedData& parent, Variable* member,
+                                              ErrorLocation location);
+  Maybe<Thing::ConstrainedType> getMemberType(DescribedPointer& parent,
+                                              Variable* variable, ErrorLocation location);
+
+  // Construct a pointer from an lvalue.  In the case of a pointer lvalue, this actually reads
+  // the lvalue and returns it, since you can't have a pointer to a pointer.
+  //
+  // Returns null on error or incomplete information.
+  Maybe<DescribedPointer> toPointer(Thing::Lvalue&& lvalue, ErrorLocation location);
+  Maybe<DescribedPointer> toPointer(Thing::PointerLvalue&& lvalue, ErrorLocation location);
+
+  bool checkPointerPath(const LocalVariablePath& allowedPath, TargetSpecificity allowedSpecificity,
+                        const LocalVariablePath& actualPath, TargetSpecificity actualSpecificity);
+  void checkConstraints(AdditionalTargets allowed, AdditionalTargets actual,
+                        ErrorLocation location);
+  void checkConstraints(const DataConstraints& allowed, const DataConstraints& actual,
+                        ErrorLocation location);
+  void checkConstraints(const PointerConstraints& allowed, const PointerConstraints& actual,
+                        ErrorLocation location);
+
+  Maybe<DescribedRvalue> castTo(
+      DescribedRvalue&& input, Bound<Type>&& targetType,
+      VariableUsageSet& variablesUsed, ErrorLocation location);
+  Maybe<DescribedRvalue> castTo(
+      Thing&& input, Bound<Type>&& targetType,
+      VariableUsageSet& variablesUsed, ErrorLocation location);
+  Maybe<DescribedRvalue> castTo(
+      Thing&& input, DataDescriptor&& targetDescriptor,
+      VariableUsageSet& variablesUsed, ErrorLocation location);
+
+  Maybe<DescribedPointer> castToPointer(DescribedPointer&& input,
+                                        Bound<Type>&& targetType,
+                                        Exclusivity targetExclusivity,
+                                        VariableUsageSet& variablesUsed,
+                                        ErrorLocation location);
+  Maybe<DescribedPointer> castToPointer(Thing&& input, Bound<Type>&& targetType,
+                                        Exclusivity targetExclusivity,
+                                        VariableUsageSet& variablesUsed,
+                                        ErrorLocation location);
+  Maybe<DescribedPointer> castToPointer(
+      Thing&& input, PointerDescriptor&& targetDescriptor,
+      VariableUsageSet& variablesUsed, ErrorLocation location);
+
+  Thing lookupBinding(string&& name, ErrorLocation location);
+
+  Maybe<DescribedData> getMember(DescribedData&& object, DataVariable* member,
+                                 ErrorLocation location);
+  Maybe<DescribedPointer> getMember(DescribedData&& object, PointerVariable* member,
+                                    ErrorLocation location);
+
+  Thing::Lvalue getMember(DescribedPointer&& object, DataVariable* member,
+                          ErrorLocation location);
+  Thing::PointerLvalue getMember(DescribedPointer&& object, PointerVariable* member,
+                                 ErrorLocation location);
+  Thing getMember(Thing&& object, const string& memberName, ErrorLocation location);
+
+  // Creates a local variable, scoped only to the current statement, and initializes it with the
+  // given value.  The input is modified in-place to become a reference to the local instead of
+  // an expression.  If the input is already a simple reference to a specific variable then its path
+  // is simply returned without creating a new local.
+  LocalVariablePath bindTemporary(DescribedData& value);
+  LocalVariablePath bindTemporary(DescribedPointer& pointer);
+};
 
 }  // namespace compiler
 }  // namespace modc

@@ -279,6 +279,22 @@ public:
   };
 };
 
+template <typename DataType, typename PointerType>
+class Evaluator {
+public:
+  virtual DataType readLocalVariable(DataVariable* variable) = 0;
+  virtual PointerType readLocalVariable(PointerVariable* variable) = 0;
+  virtual PointerType makePointerToLocalVariable(DataVariable* variable) = 0;
+
+  virtual DataType readPointer(PointerType&& pointer) = 0;
+
+  virtual DataType readMember(DataType&& object, DataVariable* member) = 0;
+  virtual PointerType readMember(DataType&& object, PointerVariable* member) = 0;
+  virtual PointerType readMember(PointerType&& object, PointerVariable* member) = 0;
+  virtual PointerType getPointerToMember(PointerType&& object, DataVariable* member) = 0;
+  virtual PointerType upcast(PointerType&& object, ImplementedInterface* interface) = 0;
+};
+
 }  // namespace compiler
 }  // namespace modc
 
