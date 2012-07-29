@@ -108,22 +108,6 @@ public:
   PointerConstraints getInheritedConstraints(DataConstraints&& parentConstraints,
                                              PointerVariable* member);
 
-  // Get the type of a member variable given its parent pointer.
-  //
-  // "parent" may be modified in-place in order to bind it to a local variable -- see
-  // bindTemporary().
-  Maybe<Thing::ConstrainedType> getMemberType(DescribedData& parent, Variable* member,
-                                              ErrorLocation location);
-  Maybe<Thing::ConstrainedType> getMemberType(DescribedPointer& parent,
-                                              Variable* variable, ErrorLocation location);
-
-  // Construct a pointer from an lvalue.  In the case of a pointer lvalue, this actually reads
-  // the lvalue and returns it, since you can't have a pointer to a pointer.
-  //
-  // Returns null on error or incomplete information.
-  Maybe<DescribedPointer> toPointer(Thing::Lvalue&& lvalue, ErrorLocation location);
-  Maybe<DescribedPointer> toPointer(Thing::PointerLvalue&& lvalue, ErrorLocation location);
-
   bool checkPointerPath(const LocalVariablePath& allowedPath, TargetSpecificity allowedSpecificity,
                         const LocalVariablePath& actualPath, TargetSpecificity actualSpecificity);
   void checkConstraints(AdditionalTargets allowed, AdditionalTargets actual,
@@ -156,7 +140,30 @@ public:
       Thing&& input, PointerDescriptor&& targetDescriptor,
       VariableUsageSet& variablesUsed, ErrorLocation location);
 
+  // Construct a pointer from an lvalue.  In the case of a pointer lvalue, this actually reads
+  // the lvalue and returns it, since you can't have a pointer to a pointer.
+  //
+  // Returns null on error or incomplete information.
+  Maybe<DescribedPointer> toPointer(Thing::Lvalue&& lvalue, ErrorLocation location);
+  Maybe<DescribedPointer> toPointer(Thing::PointerLvalue&& lvalue, ErrorLocation location);
+
+  // Creates a local variable, scoped only to the current statement, and initializes it with the
+  // given value.  The input is modified in-place to become a reference to the local instead of
+  // an expression.  If the input is already a simple reference to a specific variable then its path
+  // is simply returned without creating a new local.
+  LocalVariablePath bindTemporary(DescribedData& value);
+  LocalVariablePath bindTemporary(DescribedPointer& pointer);
+
   Thing lookupBinding(string&& name, ErrorLocation location);
+
+  // Get the type of a member variable given its parent pointer.
+  //
+  // "parent" may be modified in-place in order to bind it to a local variable -- see
+  // bindTemporary().
+  Maybe<Thing::ConstrainedType> getMemberType(DescribedData& parent, Variable* member,
+                                              ErrorLocation location);
+  Maybe<Thing::ConstrainedType> getMemberType(DescribedPointer& parent,
+                                              Variable* variable, ErrorLocation location);
 
   Maybe<DescribedData> getMember(DescribedData&& object, DataVariable* member,
                                  ErrorLocation location);
@@ -167,13 +174,6 @@ public:
   Thing::PointerLvalue getMember(DescribedPointer&& object, PointerVariable* member,
                                  ErrorLocation location);
   Thing getMember(Thing&& object, const string& memberName, ErrorLocation location);
-
-  // Creates a local variable, scoped only to the current statement, and initializes it with the
-  // given value.  The input is modified in-place to become a reference to the local instead of
-  // an expression.  If the input is already a simple reference to a specific variable then its path
-  // is simply returned without creating a new local.
-  LocalVariablePath bindTemporary(DescribedData& value);
-  LocalVariablePath bindTemporary(DescribedPointer& pointer);
 };
 
 }  // namespace compiler
