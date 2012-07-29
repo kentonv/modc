@@ -131,8 +131,13 @@ public:
 
   // -------------------------------------------------------------------------------------
   // getMemberType
+  //
+  // Get the type of a member variable given its parent pointer.
+  //
+  // "parent" may be modified in-place in order to bind it to a local variable -- see
+  // bindTemporary().
 
-  Maybe<Thing::ConstrainedType> getMemberType(const DescribedValue& parent, Variable* member,
+  Maybe<Thing::ConstrainedType> getMemberType(DescribedValue& parent, Variable* member,
                                               ErrorLocation location) {
     Maybe<Thing::ConstrainedType> result =
         member->getType(parent.descriptor.type.context, parent.staticValue);
@@ -140,18 +145,15 @@ public:
     if (result == nullptr) {
       // Member type is dependent on dynamic instance details.  We need to bind the value to a
       // temporary local variable.
-
-      // TODO:  Bind the value to a local variable scoped to just this statement, then use that to
-      //   build a context to pass to member->getType(const Context&).
-      location.error("Unimplemented:  Accessing member whose type is dependent on the object "
-                     "instance, where the object is a temporary.");
+      Context subContext(parent.descriptor.type.context,
+                         Context::Binding::fromPointer(bindTemporary(parent)));
+      result = member->getType(subContext);
     }
 
     return result;
   }
 
-  // Get the type of a member variable given its parent pointer.
-  Maybe<Thing::ConstrainedType> getMemberType(const DescribedPointer& parent,
+  Maybe<Thing::ConstrainedType> getMemberType(DescribedPointer& parent,
                                               Variable* variable, ErrorLocation location) {
     Maybe<Thing::ConstrainedType> result;
 
@@ -161,21 +163,11 @@ public:
     }
 
     if (result == nullptr) {
-      // Member type is dependent on dynamic instance details.  We need to find a local path to
-      // the instance.
-      const vector<PointerConstraints::PossibleTarget>& possibleTargets =
-          parent.descriptor.constraints.possibleTargets;
-      if (possibleTargets.size() == 1 &&
-          possibleTargets[0].specificity == TargetSpecificity::EXACT_TARGET) {
-        Context subContext(parent.descriptor.targetDescriptor.type.context,
-            Context::Binding::fromPointer(LocalVariablePath(possibleTargets[0].path)));
-        result = variable->getType(subContext);
-      } else {
-        // TODO:  Bind the pointer to a local variable scoped to just this statement.
-        location.error("Unimplemented:  Accessing member whose type is dependent on the object "
-                       "instance, where the object is a temporary.");
-        result = nullptr;
-      }
+      // Member type is dependent on dynamic instance details.  We need to bind the pointer to a
+      // temporary local variable.
+      Context subContext(parent.descriptor.targetDescriptor.type.context,
+                         Context::Binding::fromPointer(bindTemporary(parent)));
+      result = variable->getType(subContext);
     }
 
     return result;
@@ -374,20 +366,6 @@ public:
   }
 
   // -------------------------------------------------------------------------------------
-  // dereference
-
-  DescribedValue dereference(DescribedPointer&& input,
-                             VariableUsageSet& variablesUsed,
-                             ErrorLocation location) {
-    variablesUsed.addUsage(input.descriptor.constraints, input.descriptor.exclusivity, location);
-
-    return DescribedValue(
-        move(input.descriptor.targetDescriptor),
-        expressionBuilder.readPointer(move(input.pointer)),
-        evaluator.readPointer(move(input.staticPointer)));
-  }
-
-  // -------------------------------------------------------------------------------------
   // checkConstraints
 
   bool checkPointerPath(const LocalVariablePath& allowedPath, TargetSpecificity allowedSpecificity,
@@ -480,48 +458,59 @@ public:
   // -------------------------------------------------------------------------------------
   // convertToValue
 
-  Maybe<DescribedValue> convertToValue(
-      DescribedValue&& input, Bound<Type>&& targetType, ErrorLocation location) {
-    if (areEqual(input.descriptor.type, targetType)) {
+  Maybe<DescribedValueOrPointer> convertToValue(
+      DescribedValueOrPointer&& input, Bound<Type>&& targetType,
+      VariableUsageSet& variablesUsed, ErrorLocation location) {
+    if (areEqual(input.valueDescriptor().type, targetType)) {
       return move(input);
     }
 
     // Look for conversions on the source type.
-    ThingPort inputTypePort = scope.makePortFor(input.descriptor.type.context);
+    ThingPort inputTypePort = scope.makePortFor(input.valueDescriptor().type.context);
     Maybe<Function&> conversion =
-        input.descriptor.type.entity->lookupConversion(inputTypePort, targetType);
+        input.valueDescriptor().type.entity->lookupConversion(inputTypePort, targetType);
     if (conversion != nullptr) {
-      DescribedPointerOrValue result = callMethod(move(input), &*conversion, {}, location);
-      assert(result.getKind() == DescribedPointerOrValue::Kind::VALUE);
-      assert(areEqual(result.value.descriptor.type, targetType));
-      return move(result.value);
+      Maybe<DescribedValueOrPointer> result = conversion->call(*this, move(input), {}, location);
+      if (result == nullptr) {
+        return nullptr;
+      }
+      switch (result->getKind()) {
+        case DescribedValueOrPointer::Kind::VALUE:
+          assert(areEqual(result->value.descriptor.type, targetType));
+          break;
+        case DescribedValueOrPointer::Kind::POINTER:
+          assert(areEqual(result->pointer.descriptor.targetDescriptor.type, targetType));
+          break;
+      }
+      return move(result);
     }
 
     // Look for a constructor on the destination type.
     Overload* constructor = targetType.entity->getImplicitConstructor();
 
     Thing result = constructor->resolve(*this, move(targetType.context),
-                                        Tuple::fromSingleValue(Thing::fromValue(move(input))),
+                                        Tuple::fromSingleValue(Thing::from(move(input))),
                                         location);
 
-    if (result.getKind() == Thing::Kind::UNKNOWN) {
-      return nullptr;
-    } else {
-      assert(result.getKind() == Thing::Kind::VALUE);
-      return move(result.value);
+    switch (result.getKind()) {
+      case Thing::Kind::UNKNOWN:
+        return nullptr;
+
+      case Thing::Kind::VALUE:
+        return DescribedValueOrPointer::from(move(result.value));
+
+      case Thing::Kind::TYPE:
+      case Thing::Kind::FUNCTION:
+      case Thing::Kind::METHOD:
+      case Thing::Kind::POINTER:
+      case Thing::Kind::LVALUE:
+      case Thing::Kind::POINTER_LVALUE:
+      case Thing::Kind::TUPLE:
+        throw "Constructor did not return value.";
     }
   }
 
-  Maybe<DescribedValue> convertToValue(
-      DescribedPointer&& input, Bound<Type>&& targetType,
-      VariableUsageSet& variablesUsed, ErrorLocation location) {
-    // TODO: Do we want to try to find a constructor on the target type that accepts a pointer?
-    //   Probably -- it's useful for pointer wrappers.
-    return convertToValue(dereference(move(input), variablesUsed, location),
-                          move(targetType), location);
-  }
-
-  Maybe<DescribedValue> convertToValue(
+  Maybe<DescribedValueOrPointer> convertToValue(
       Thing&& input, Bound<Type>&& targetType,
       VariableUsageSet& variablesUsed, ErrorLocation location) {
     switch (input.getKind()) {
@@ -535,17 +524,20 @@ public:
         return nullptr;
 
       case Thing::Kind::VALUE:
-        return convertToValue(move(input.value), move(targetType), location);
+        return convertToValue(DescribedValueOrPointer::from(move(input.value)),
+                              move(targetType), variablesUsed, location);
 
       case Thing::Kind::POINTER:
-        return convertToValue(move(input.pointer), move(targetType), variablesUsed, location);
+        return convertToValue(DescribedValueOrPointer::from(move(input.pointer)),
+                              move(targetType), variablesUsed, location);
 
       case Thing::Kind::LVALUE: {
         Maybe<DescribedPointer> ptr = toPointer(move(input.lvalue), location);
         if (ptr == nullptr) {
           return nullptr;
         } else {
-          return convertToValue(move(*ptr), move(targetType), variablesUsed, location);
+          return convertToValue(DescribedValueOrPointer::from(move(*ptr)),
+                                move(targetType), variablesUsed, location);
         }
       }
 
@@ -554,7 +546,8 @@ public:
         if (ptr == nullptr) {
           return nullptr;
         } else {
-          return convertToValue(move(*ptr), move(targetType), variablesUsed, location);
+          return convertToValue(DescribedValueOrPointer::from(move(*ptr)),
+                                move(targetType), variablesUsed, location);
         }
       }
 
@@ -562,25 +555,43 @@ public:
         Overload* constructor = targetType.entity->getImplicitConstructor();
         Thing result = constructor->resolve(*this, move(targetType.context),
                                             move(input.tuple), location);
-        if (result.getKind() == Thing::Kind::UNKNOWN) {
-          return nullptr;
-        } else {
-          assert(result.getKind() == Thing::Kind::VALUE);
-          return move(result.value);
+        switch (result.getKind()) {
+          case Thing::Kind::UNKNOWN:
+            return nullptr;
+
+          case Thing::Kind::VALUE:
+            return DescribedValueOrPointer::from(move(result.value));
+
+          case Thing::Kind::TYPE:
+          case Thing::Kind::FUNCTION:
+          case Thing::Kind::METHOD:
+          case Thing::Kind::POINTER:
+          case Thing::Kind::LVALUE:
+          case Thing::Kind::POINTER_LVALUE:
+          case Thing::Kind::TUPLE:
+            throw "Constructor did not return value.";
         }
       }
     }
   }
 
-  Maybe<DescribedValue> convertToValue(
+  Maybe<DescribedValueOrPointer> convertToValue(
       Thing&& input, ValueDescriptor&& targetDescriptor,
       VariableUsageSet& variablesUsed, ErrorLocation location) {
-    Maybe<DescribedValue> result =
+    Maybe<DescribedValueOrPointer> result =
         convertToValue(move(input), move(targetDescriptor.type), variablesUsed, location);
 
     if (result != nullptr) {
-      checkConstraints(targetDescriptor.constraints, result->descriptor.constraints, location);
-      result->descriptor.constraints = move(targetDescriptor.constraints);
+      switch (result->getKind()) {
+        case DescribedValueOrPointer::Kind::VALUE:
+          checkConstraints(targetDescriptor.constraints,
+                           result->value.descriptor.constraints, location);
+          break;
+        case DescribedValueOrPointer::Kind::POINTER:
+          checkConstraints(targetDescriptor.constraints,
+                           result->pointer.descriptor.targetDescriptor.constraints, location);
+          break;
+      }
     }
 
     return result;
@@ -740,13 +751,23 @@ public:
     if (unboundConstraints == nullptr) {
       // No explicit constraints, so infer them from the parent's possiblePointers.
       constraints = getInheritedConstraints(move(object.descriptor.constraints), member);
-    } else if (unboundConstraints->innerPointers.empty()) {
-      constraints = move(unboundConstraints->parentIndependentConstraints);
     } else {
-      // TODO:  Bind the value to a local variable scoped to just this statement.
-      location.error("Unimplemented:  Trying to access pointer member of temporary where the "
-                     "pointer may point at another member of the same temporary.");
-      return nullptr;
+      constraints = move(unboundConstraints->parentIndependentConstraints);
+
+      if (!unboundConstraints->innerPointers.empty()) {
+        // Must bind "this" to a local variable.
+        LocalVariablePath binding = bindTemporary(object);
+
+        for (auto& innerPointer: unboundConstraints->innerPointers) {
+          LocalVariablePath newPath = binding;  // intentional copy
+          newPath.member.path.pop_back();
+          newPath.member.path.push_back(innerPointer.path.root);
+          newPath.member.path.insert(newPath.member.path.end(),
+              innerPointer.path.member.path.begin(), innerPointer.path.member.path.end());
+          constraints->possibleTargets.push_back(
+              PointerConstraints::PossibleTarget(move(newPath), innerPointer.specificity));
+        }
+      }
     }
 
     assert(constraints != nullptr);
@@ -820,13 +841,31 @@ public:
   }
 
   // -------------------------------------------------------------------------------------
-  // callFunction / callMethod
+  // bindTemporary
+  //
+  // Creates a local variable, scoped only to the current statement, and initializes it with the
+  // given value.  The input is modified in-place to become a reference to the local instead of
+  // an expression.  If the input is already a simple reference to a specific variable then its path
+  // is simply returned without creating a new local.
 
-  Thing callFunction(Bound<Function> function, vector<DescribedPointerOrValue>&& parameters,
-                     ErrorLocation location);
-  DescribedPointerOrValue callMethod(
-      DescribedValue&& object, Function* method,
-      vector<DescribedPointerOrValue>&& parameters, ErrorLocation location);
+  LocalVariablePath bindTemporary(DescribedValue& value) {
+    throw "Unimplemented:  Binding a temporary to a local variable.";
+  }
+
+  LocalVariablePath bindTemporary(DescribedPointer& pointer) {
+    const vector<PointerConstraints::PossibleTarget>& possibleTargets =
+        pointer.descriptor.constraints.possibleTargets;
+    if (pointer.descriptor.constraints.additionalTargets == AdditionalTargets::NONE &&
+        possibleTargets.size() == 1 &&
+        possibleTargets[0].specificity == TargetSpecificity::EXACT_TARGET) {
+      // We can just return this path.
+      return possibleTargets[0].path;   // intentional copy
+    } else {
+      // TODO:  Bind the pointer to a local variable scoped to just this statement.
+      throw "Unimplemented:  Binding a temporary to a local variable.";
+    }
+  }
+
 
 
 

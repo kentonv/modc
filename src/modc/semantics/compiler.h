@@ -277,6 +277,26 @@ private:
   Kind kind;
 };
 
+class ValueOrPointer {
+public:
+  UNION_TYPE_BOILERPLATE(ValueOrPointer);
+
+  enum class Kind {
+    VALUE,
+    POINTER
+  };
+
+  Kind getKind();
+
+  union {
+    Value value;
+    Value* pointer;
+  };
+
+  static ValueOrPointer fromValue(Value&& value);
+  static ValueOrPointer fromPointer(Value* pointer);
+};
+
 class Context::Binding {
 public:
   UNION_TYPE_BOILERPLATE(Binding);
@@ -705,6 +725,7 @@ struct PointerDescriptor {
               Exclusivity, exclusivity, PointerConstraints&&, constraints);
 };
 
+// ALWAYS represents an unnamed temporary!
 struct DescribedValue {
   ValueDescriptor descriptor;
   DynamicValue value;
@@ -723,9 +744,9 @@ struct DescribedPointer {
               Maybe<Value&>, staticPointer);
 };
 
-class DescribedPointerOrValue {
+class DescribedValueOrPointer {
 public:
-  UNION_TYPE_BOILERPLATE(DescribedPointerOrValue);
+  UNION_TYPE_BOILERPLATE(DescribedValueOrPointer);
 
   enum Kind {
     POINTER,
@@ -739,8 +760,10 @@ public:
     DescribedValue value;
   };
 
-  DescribedPointerOrValue from(DescribedPointer&& pointer);
-  DescribedPointerOrValue from(DescribedValue&& pointer);
+  ValueDescriptor& valueDescriptor();
+
+  static DescribedValueOrPointer from(DescribedPointer&& pointer);
+  static DescribedValueOrPointer from(DescribedValue&& pointer);
 
 private:
   Kind kind;
@@ -800,7 +823,7 @@ public:
   };
 
   struct Method {
-    DescribedPointerOrValue object;
+    DescribedValueOrPointer object;
     Overload* method;
   };
 
@@ -842,6 +865,8 @@ public:
 
   static Thing fromType(Bound<Type>&& type);
   static Thing fromType(Bound<Type>&& type, ValueConstraints&& constraints);
+
+  static Thing from(DescribedValueOrPointer&& valueOrPointer);
 
 private:
   Kind kind;
@@ -993,24 +1018,14 @@ public:
 
   // TODO:  Implicit parameters, environment.
   //   Both may depend on compiling the function body.
-};
 
-class ValueFunction: public Function {
-public:
-  // TODO: Get return descriptor.  This is similar to getting the descriptor for a member variable
-  //   except more complicated because any of the parameters may factor into the output type so we
-  //   may need to bind any of them to local vars if they aren't already, etc.
+  Maybe<DescribedValueOrPointer> call(
+      Compiler& compiler, DescribedValueOrPointer&& this_,
+      vector<DescribedValueOrPointer>&& parameters, ErrorLocation location);
 
-  // TODO: invoke()
-};
-
-class PointerFunction: public Function {
-public:
-  // TODO: Get return descriptor.  This is similar to getting the descriptor for a member variable
-  //   except more complicated because any of the parameters may factor into the output type so we
-  //   may need to bind any of them to local vars if they aren't already, etc.
-
-  // TODO: invoke()
+  ValueOrPointer call(vector<ValueOrPointer>&& typeContext,
+                      ValueOrPointer&& this_,
+                      vector<ValueOrPointer>&& parameters);
 };
 
 class Overload: public Entity {
@@ -1022,7 +1037,7 @@ public:
   // resolve() may have the effect of lazily instantiating templates.
   Thing resolve(Compiler& compiler, Context&& context, const Tuple& parameters,
                 ErrorLocation location);
-  Thing resolve(Compiler& compiler, DescribedPointerOrValue&& object,
+  Thing resolve(Compiler& compiler, DescribedValueOrPointer&& object,
                 const Tuple& parameters, ErrorLocation location);
 };
 
