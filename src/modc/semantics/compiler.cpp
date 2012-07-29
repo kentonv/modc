@@ -25,19 +25,19 @@ using std::move;
 using ast::Expression;
 using ast::Statement;
 
-template <typename ValueType, typename PointerType>
+template <typename DataType, typename PointerType>
 class Evaluator {
 public:
-  ValueType readLocalVariable(ValueVariable* variable);
+  DataType readLocalVariable(DataVariable* variable);
   PointerType readLocalVariable(PointerVariable* variable);
-  PointerType makePointerToLocalVariable(ValueVariable* variable);
+  PointerType makePointerToLocalVariable(DataVariable* variable);
 
-  ValueType readPointer(PointerType&& pointer);
+  DataType readPointer(PointerType&& pointer);
 
-  ValueType readMember(ValueType&& object, ValueVariable* member);
-  PointerType readMember(ValueType&& object, PointerVariable* member);
+  DataType readMember(DataType&& object, DataVariable* member);
+  PointerType readMember(DataType&& object, PointerVariable* member);
   PointerType readMember(PointerType&& object, PointerVariable* member);
-  PointerType getPointerToMember(PointerType&& object, ValueVariable* member);
+  PointerType getPointerToMember(PointerType&& object, DataVariable* member);
   PointerType upcast(PointerType&& object, ImplementedInterface* interface);
 };
 
@@ -65,14 +65,14 @@ public:
 
   Thing call(Entity& entity, ThingPort& port, Tuple&& parameters);
 
-  bool isComplete(const Value& value);
+  bool isComplete(const DataValue& value);
 
   // -------------------------------------------------------------------------------------
   // getInheritedConstraints
 
-  ValueConstraints getInheritedConstraints(ValueConstraints&& parentConstraints,
-                                           ValueVariable* member) {
-    vector<ValueConstraints::PossiblePointer> possiblePointers;
+  DataConstraints getInheritedConstraints(DataConstraints&& parentConstraints,
+                                          DataVariable* member) {
+    vector<DataConstraints::PossiblePointer> possiblePointers;
 
     // The member does not declare what pointers it may contain, so inherit from the parent.
     for (auto& possiblePointer: parentConstraints.possiblePointers) {
@@ -90,10 +90,10 @@ public:
       }
     }
 
-    return ValueConstraints(move(possiblePointers), parentConstraints.additionalPointers);
+    return DataConstraints(move(possiblePointers), parentConstraints.additionalPointers);
   }
 
-  PointerConstraints getInheritedConstraints(ValueConstraints&& parentConstraints,
+  PointerConstraints getInheritedConstraints(DataConstraints&& parentConstraints,
                                              PointerVariable* member) {
     vector<PointerConstraints::PossibleTarget> possibleTargets;
     Exclusivity memberExclusivity = member->getExclusivity();
@@ -113,18 +113,18 @@ public:
     return PointerConstraints(move(possibleTargets), parentConstraints.additionalPointers);
   }
 
-  ValueConstraints getDefaultConstraints(Type* type) {
+  DataConstraints getDefaultConstraints(Type* type) {
     if (type->hasUnannotatedAliases()) {
       // The target type has aliases, but it was never declared what they might point at.  This
       // can only be the case for parameters since local variables would have had the
       // constraints inferred.  So, assume the pointers point at stuff in the caller's scope.
-      return ValueConstraints(
-          vector<ValueConstraints::PossiblePointer>(),
+      return DataConstraints(
+          vector<DataConstraints::PossiblePointer>(),
           AdditionalTargets::FROM_CALLER);
     } else {
       // The target contains no unannotated aliases.
-      return ValueConstraints(
-          vector<ValueConstraints::PossiblePointer>(),
+      return DataConstraints(
+          vector<DataConstraints::PossiblePointer>(),
           AdditionalTargets::NONE);
     }
   }
@@ -137,7 +137,7 @@ public:
   // "parent" may be modified in-place in order to bind it to a local variable -- see
   // bindTemporary().
 
-  Maybe<Thing::ConstrainedType> getMemberType(DescribedValue& parent, Variable* member,
+  Maybe<Thing::ConstrainedType> getMemberType(DescribedData& parent, Variable* member,
                                               ErrorLocation location) {
     Maybe<Thing::ConstrainedType> result =
         member->getType(parent.descriptor.type.context, parent.staticValue);
@@ -183,7 +183,7 @@ public:
     if (lvalue.parent == nullptr) {
       // The lvalue names a local variable.
       // Read the variable.
-      ValueDescriptor descriptor = scope.getVariableDescriptor(lvalue.variable);
+      DataDescriptor descriptor = scope.getVariableDescriptor(lvalue.variable);
 
       // Form a pointer to the local variable.
       PointerConstraints constraints(
@@ -235,10 +235,10 @@ public:
 
       return DescribedPointer(
           PointerDescriptor(
-              ValueDescriptor(move(type->type), move(*type->constraints)),
+              DataDescriptor(move(type->type), move(*type->constraints)),
               parentDesc.exclusivity,
               move(parentDesc.constraints)),
-          expressionBuilder.getPointerToMember(move(lvalue.parent->pointer), lvalue.variable),
+          expressionBuilder.getPointerToMember(move(lvalue.parent->expression), lvalue.variable),
           evaluator.getPointerToMember(move(lvalue.parent->staticPointer), lvalue.variable));
     }
   }
@@ -357,10 +357,10 @@ public:
 
       return DescribedPointer(
           PointerDescriptor(
-              ValueDescriptor(move(type->type), move(*type->constraints)),
+              DataDescriptor(move(type->type), move(*type->constraints)),
               std::min(parentDesc.exclusivity, memberExclusivity),
               move(parentDesc.constraints)),
-          expressionBuilder.readMember(move(lvalue.parent->pointer), lvalue.variable),
+          expressionBuilder.readMember(move(lvalue.parent->expression), lvalue.variable),
           evaluator.readMember(move(lvalue.parent->staticPointer), lvalue.variable));
     }
   }
@@ -400,7 +400,7 @@ public:
     }
   }
 
-  void checkConstraints(const ValueConstraints& allowed, const ValueConstraints& actual,
+  void checkConstraints(const DataConstraints& allowed, const DataConstraints& actual,
                         ErrorLocation location) {
     for (auto& actualPp: actual.possiblePointers) {
       bool foundMatch = false;
@@ -456,29 +456,29 @@ public:
   }
 
   // -------------------------------------------------------------------------------------
-  // convertToValue
+  // castTo
 
-  Maybe<DescribedValueOrPointer> convertToValue(
-      DescribedValueOrPointer&& input, Bound<Type>&& targetType,
+  Maybe<DescribedRvalue> castTo(
+      DescribedRvalue&& input, Bound<Type>&& targetType,
       VariableUsageSet& variablesUsed, ErrorLocation location) {
-    if (areEqual(input.valueDescriptor().type, targetType)) {
+    if (areEqual(input.dataDescriptor().type, targetType)) {
       return move(input);
     }
 
     // Look for conversions on the source type.
-    ThingPort inputTypePort = scope.makePortFor(input.valueDescriptor().type.context);
+    ThingPort inputTypePort = scope.makePortFor(input.dataDescriptor().type.context);
     Maybe<Function&> conversion =
-        input.valueDescriptor().type.entity->lookupConversion(inputTypePort, targetType);
+        input.dataDescriptor().type.entity->lookupConversion(inputTypePort, targetType);
     if (conversion != nullptr) {
-      Maybe<DescribedValueOrPointer> result = conversion->call(*this, move(input), {}, location);
+      Maybe<DescribedRvalue> result = conversion->call(*this, move(input), {}, location);
       if (result == nullptr) {
         return nullptr;
       }
       switch (result->getKind()) {
-        case DescribedValueOrPointer::Kind::VALUE:
-          assert(areEqual(result->value.descriptor.type, targetType));
+        case DescribedRvalue::Kind::DATA:
+          assert(areEqual(result->data.descriptor.type, targetType));
           break;
-        case DescribedValueOrPointer::Kind::POINTER:
+        case DescribedRvalue::Kind::POINTER:
           assert(areEqual(result->pointer.descriptor.targetDescriptor.type, targetType));
           break;
       }
@@ -496,8 +496,8 @@ public:
       case Thing::Kind::UNKNOWN:
         return nullptr;
 
-      case Thing::Kind::VALUE:
-        return DescribedValueOrPointer::from(move(result.value));
+      case Thing::Kind::DATA:
+        return DescribedRvalue::from(move(result.data));
 
       case Thing::Kind::TYPE:
       case Thing::Kind::FUNCTION:
@@ -510,7 +510,7 @@ public:
     }
   }
 
-  Maybe<DescribedValueOrPointer> convertToValue(
+  Maybe<DescribedRvalue> castTo(
       Thing&& input, Bound<Type>&& targetType,
       VariableUsageSet& variablesUsed, ErrorLocation location) {
     switch (input.getKind()) {
@@ -523,21 +523,21 @@ public:
         location.error("Not a value.");
         return nullptr;
 
-      case Thing::Kind::VALUE:
-        return convertToValue(DescribedValueOrPointer::from(move(input.value)),
-                              move(targetType), variablesUsed, location);
+      case Thing::Kind::DATA:
+        return castTo(DescribedRvalue::from(move(input.data)),
+                      move(targetType), variablesUsed, location);
 
       case Thing::Kind::POINTER:
-        return convertToValue(DescribedValueOrPointer::from(move(input.pointer)),
-                              move(targetType), variablesUsed, location);
+        return castTo(DescribedRvalue::from(move(input.pointer)),
+                      move(targetType), variablesUsed, location);
 
       case Thing::Kind::LVALUE: {
         Maybe<DescribedPointer> ptr = toPointer(move(input.lvalue), location);
         if (ptr == nullptr) {
           return nullptr;
         } else {
-          return convertToValue(DescribedValueOrPointer::from(move(*ptr)),
-                                move(targetType), variablesUsed, location);
+          return castTo(DescribedRvalue::from(move(*ptr)),
+                        move(targetType), variablesUsed, location);
         }
       }
 
@@ -546,8 +546,8 @@ public:
         if (ptr == nullptr) {
           return nullptr;
         } else {
-          return convertToValue(DescribedValueOrPointer::from(move(*ptr)),
-                                move(targetType), variablesUsed, location);
+          return castTo(DescribedRvalue::from(move(*ptr)),
+                        move(targetType), variablesUsed, location);
         }
       }
 
@@ -559,8 +559,8 @@ public:
           case Thing::Kind::UNKNOWN:
             return nullptr;
 
-          case Thing::Kind::VALUE:
-            return DescribedValueOrPointer::from(move(result.value));
+          case Thing::Kind::DATA:
+            return DescribedRvalue::from(move(result.data));
 
           case Thing::Kind::TYPE:
           case Thing::Kind::FUNCTION:
@@ -575,19 +575,19 @@ public:
     }
   }
 
-  Maybe<DescribedValueOrPointer> convertToValue(
-      Thing&& input, ValueDescriptor&& targetDescriptor,
+  Maybe<DescribedRvalue> castTo(
+      Thing&& input, DataDescriptor&& targetDescriptor,
       VariableUsageSet& variablesUsed, ErrorLocation location) {
-    Maybe<DescribedValueOrPointer> result =
-        convertToValue(move(input), move(targetDescriptor.type), variablesUsed, location);
+    Maybe<DescribedRvalue> result =
+        castTo(move(input), move(targetDescriptor.type), variablesUsed, location);
 
     if (result != nullptr) {
       switch (result->getKind()) {
-        case DescribedValueOrPointer::Kind::VALUE:
+        case DescribedRvalue::Kind::DATA:
           checkConstraints(targetDescriptor.constraints,
-                           result->value.descriptor.constraints, location);
+                           result->data.descriptor.constraints, location);
           break;
-        case DescribedValueOrPointer::Kind::POINTER:
+        case DescribedRvalue::Kind::POINTER:
           checkConstraints(targetDescriptor.constraints,
                            result->pointer.descriptor.targetDescriptor.constraints, location);
           break;
@@ -598,13 +598,13 @@ public:
   }
 
   // -------------------------------------------------------------------------------------
-  // convertToPointer
+  // castToPointer
 
-  Maybe<DescribedPointer> convertToPointer(DescribedPointer&& input,
-                                           Bound<Type>&& targetType,
-                                           Exclusivity targetExclusivity,
-                                           VariableUsageSet& variablesUsed,
-                                           ErrorLocation location) {
+  Maybe<DescribedPointer> castToPointer(DescribedPointer&& input,
+                                        Bound<Type>&& targetType,
+                                        Exclusivity targetExclusivity,
+                                        VariableUsageSet& variablesUsed,
+                                        ErrorLocation location) {
     if (!areEqual(input.descriptor.targetDescriptor.type, targetType)) {
       if (dynamic_cast<Interface*>(targetType.entity) == nullptr) {
         location.error("Type mismatch.");
@@ -617,7 +617,7 @@ public:
           location.error("Object does not implement desired interface.");
         } else {
           input.descriptor.targetDescriptor.type = targetType;
-          input.pointer = expressionBuilder.upcast(move(input.pointer), &*interface);
+          input.expression = expressionBuilder.upcast(move(input.expression), &*interface);
           input.staticPointer = evaluator.upcast(move(input.staticPointer), &*interface);
         }
       }
@@ -633,10 +633,10 @@ public:
     return move(input);
   }
 
-  Maybe<DescribedPointer> convertToPointer(Thing&& input, Bound<Type>&& targetType,
-                                           Exclusivity targetExclusivity,
-                                           VariableUsageSet& variablesUsed,
-                                           ErrorLocation location) {
+  Maybe<DescribedPointer> castToPointer(Thing&& input, Bound<Type>&& targetType,
+                                        Exclusivity targetExclusivity,
+                                        VariableUsageSet& variablesUsed,
+                                        ErrorLocation location) {
     switch (input.getKind()) {
       case Thing::Kind::UNKNOWN:
         return nullptr;
@@ -644,35 +644,35 @@ public:
       case Thing::Kind::TYPE:
       case Thing::Kind::FUNCTION:
       case Thing::Kind::METHOD:
-      case Thing::Kind::VALUE:
+      case Thing::Kind::DATA:
       case Thing::Kind::LVALUE:
       case Thing::Kind::TUPLE:
-        // TODO:  If non-exclusive, try convertToValue() then take pointer-to-temporary?
+        // TODO:  If non-exclusive, try castTo() then take pointer-to-temporary?
         location.error("Not a pointer.");
         return nullptr;
 
       case Thing::Kind::POINTER:
-        return convertToPointer(move(input.pointer), move(targetType), targetExclusivity,
-                                variablesUsed, location);
+        return castToPointer(move(input.pointer), move(targetType), targetExclusivity,
+                             variablesUsed, location);
 
       case Thing::Kind::POINTER_LVALUE: {
         Maybe<DescribedPointer> ptr = toPointer(move(input.pointerLvalue), location);
         if (ptr == nullptr) {
           return nullptr;
         } else {
-          return convertToPointer(move(*ptr), move(targetType), targetExclusivity,
-                                  variablesUsed, location);
+          return castToPointer(move(*ptr), move(targetType), targetExclusivity,
+                               variablesUsed, location);
         }
       }
     }
   }
 
-  Maybe<DescribedPointer> convertToPointer(
+  Maybe<DescribedPointer> castToPointer(
       Thing&& input, PointerDescriptor&& targetDescriptor,
       VariableUsageSet& variablesUsed, ErrorLocation location) {
     Maybe<DescribedPointer> result =
-        convertToPointer(move(input), move(targetDescriptor.targetDescriptor.type),
-                         targetDescriptor.exclusivity, variablesUsed, location);
+        castToPointer(move(input), move(targetDescriptor.targetDescriptor.type),
+                      targetDescriptor.exclusivity, variablesUsed, location);
 
     if (result != nullptr) {
       // Check pointer constraints.
@@ -718,8 +718,8 @@ public:
   // -------------------------------------------------------------------------------------
   // getMember
 
-  Maybe<DescribedValue> getMember(DescribedValue&& object, ValueVariable* member,
-                                  ErrorLocation location) {
+  Maybe<DescribedData> getMember(DescribedData&& object, DataVariable* member,
+                                 ErrorLocation location) {
     Maybe<Thing::ConstrainedType> type = getMemberType(object, member, location);
     if (type == nullptr) {
       return nullptr;
@@ -730,13 +730,13 @@ public:
       type->constraints = getInheritedConstraints(move(object.descriptor.constraints), member);
     }
 
-    return DescribedValue(
-        ValueDescriptor(move(type->type), move(*type->constraints)),
-        expressionBuilder.readMember(move(object.value), member),
+    return DescribedData(
+        DataDescriptor(move(type->type), move(*type->constraints)),
+        expressionBuilder.readMember(move(object.expression), member),
         evaluator.readMember(move(object.staticValue), member));
   }
 
-  Maybe<DescribedPointer> getMember(DescribedValue&& object, PointerVariable* member,
+  Maybe<DescribedPointer> getMember(DescribedData&& object, PointerVariable* member,
                                     ErrorLocation location) {
     Maybe<Thing::ConstrainedType> type = getMemberType(object, member, location);
     if (type == nullptr) {
@@ -779,14 +779,14 @@ public:
 
     return DescribedPointer(
         PointerDescriptor(
-            ValueDescriptor(move(type->type), move(*type->constraints)),
+            DataDescriptor(move(type->type), move(*type->constraints)),
             member->getExclusivity(),
             move(*constraints)),
-        expressionBuilder.readMember(move(object.value), member),
+        expressionBuilder.readMember(move(object.expression), member),
         evaluator.readMember(move(object.staticValue), member));
   }
 
-  Thing::Lvalue getMember(DescribedPointer&& object, ValueVariable* member,
+  Thing::Lvalue getMember(DescribedPointer&& object, DataVariable* member,
                           ErrorLocation location) {
     return Thing::Lvalue(move(object), member);
   }
@@ -810,9 +810,9 @@ public:
       case Thing::Kind::TYPE:
         return object.type.type.entity->getMemberOfType(*this, move(object.type), memberName);
 
-      case Thing::Kind::VALUE:
-        return object.value.descriptor.type.entity->getMemberOfInstance(
-            *this, move(object.value), memberName, location);
+      case Thing::Kind::DATA:
+        return object.data.descriptor.type.entity->getMemberOfInstance(
+            *this, move(object.data), memberName, location);
 
       case Thing::Kind::POINTER:
         return object.pointer.descriptor.targetDescriptor.type.entity->getMemberOfInstance(
@@ -848,7 +848,7 @@ public:
   // an expression.  If the input is already a simple reference to a specific variable then its path
   // is simply returned without creating a new local.
 
-  LocalVariablePath bindTemporary(DescribedValue& value) {
+  LocalVariablePath bindTemporary(DescribedData& value) {
     throw "Unimplemented:  Binding a temporary to a local variable.";
   }
 
@@ -1258,8 +1258,8 @@ public:
 
 private:
   Scope& scope;
-  Evaluator<Value, Maybe<Value&>>& evaluator;
-  Evaluator<DynamicValue, DynamicPointer>& expressionBuilder;
+  Evaluator<DataValue, Maybe<DataValue&>>& evaluator;
+  Evaluator<DataExpression, PointerExpression>& expressionBuilder;
 };
 
 vector<CxxStatement> compileImperative(Scope& scope, const vector<ast::Statement>& statements) {

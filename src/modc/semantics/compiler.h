@@ -43,7 +43,7 @@ class CodePrinter;
 class Scope;
 class Entity;
 class Variable;
-class ValueVariable;
+class DataVariable;
 class PointerVariable;
 class Type;
 class Class;
@@ -224,9 +224,9 @@ struct LocalVariablePath {
 
 class ContextBinding;
 
-class Value {
+class DataValue {
 public:
-  UNION_TYPE_BOILERPLATE(Value);
+  UNION_TYPE_BOILERPLATE(DataValue);
 
   enum class Kind {
     // A placeholder value that is not yet known, e.g. because it is a metaprogramming constant,
@@ -247,15 +247,15 @@ public:
   struct Object {
     Bound<Type> type;
 
-    map<ValueVariable*, Value> fields;
+    map<DataVariable*, DataValue> fields;
 
     // null pointers are unknown.
-    map<PointerVariable*, Value*> pointerFields;
+    map<PointerVariable*, DataValue*> pointerFields;
   };
 
   struct Array {
     Bound<Type> elementType;
-    vector<Value> elements;
+    vector<DataValue> elements;
   };
 
   union {
@@ -267,34 +267,34 @@ public:
     Array array;
   };
 
-  static Value fromUnknown();
+  static DataValue fromUnknown();
 
-  static Value fromBoolean(bool value);
-  static Value fromInteger(int value);
-  static Value fromDouble(double value);
+  static DataValue fromBoolean(bool value);
+  static DataValue fromInteger(int value);
+  static DataValue fromDouble(double value);
 
 private:
   Kind kind;
 };
 
-class ValueOrPointer {
+class Rvalue {
 public:
-  UNION_TYPE_BOILERPLATE(ValueOrPointer);
+  UNION_TYPE_BOILERPLATE(Rvalue);
 
   enum class Kind {
-    VALUE,
+    DATA,
     POINTER
   };
 
   Kind getKind();
 
   union {
-    Value value;
-    Value* pointer;
+    DataValue data;
+    DataValue* pointer;
   };
 
-  static ValueOrPointer fromValue(Value&& value);
-  static ValueOrPointer fromPointer(Value* pointer);
+  static Rvalue fromData(DataValue&& data);
+  static Rvalue fromPointer(DataValue* pointer);
 };
 
 class Context::Binding {
@@ -302,7 +302,7 @@ public:
   UNION_TYPE_BOILERPLATE(Binding);
 
   enum class Kind {
-    CONSTANT,
+    DATA,
     POINTER,
     INTEGER_EXPRESSION
   };
@@ -310,7 +310,7 @@ public:
   Kind getKind();
 
   union {
-    Value constant;
+    DataValue data;
     LocalVariablePath pointer;
     // TODO:  Integer expressions.
   };
@@ -320,12 +320,12 @@ public:
 
 // =======================================================================================
 
-class DynamicPointer;
-class DynamicValueOrPointer;
+class PointerExpression;
+class RvalueExpression;
 
-class DynamicValue {
+class DataExpression {
 public:
-  UNION_TYPE_BOILERPLATE(DynamicValue);
+  UNION_TYPE_BOILERPLATE(DataExpression);
 
   enum class Kind {
     CONSTANT,
@@ -351,59 +351,59 @@ public:
 
   struct BinaryOperator {
     ast::BinaryOperator op;
-    Indirect<DynamicValue> left;
-    Indirect<DynamicValue> right;
+    Indirect<DataExpression> left;
+    Indirect<DataExpression> right;
 
-    VALUE_TYPE3(BinaryOperator, ast::BinaryOperator, op, DynamicValue&&, left,
-                DynamicValue&&, right);
+    VALUE_TYPE3(BinaryOperator, ast::BinaryOperator, op, DataExpression&&, left,
+                DataExpression&&, right);
   };
 
   struct PrefixOperator {
     ast::PrefixOperator op;
-    Indirect<DynamicValue> operand;
+    Indirect<DataExpression> operand;
 
-    VALUE_TYPE2(PrefixOperator, ast::PrefixOperator, op, DynamicValue&&, operand);
+    VALUE_TYPE2(PrefixOperator, ast::PrefixOperator, op, DataExpression&&, operand);
   };
 
   struct PostfixOperator {
-    Indirect<DynamicValue> operand;
+    Indirect<DataExpression> operand;
     ast::PostfixOperator op;
 
-    VALUE_TYPE2(PostfixOperator, DynamicValue&&, operand, ast::PostfixOperator, op);
+    VALUE_TYPE2(PostfixOperator, DataExpression&&, operand, ast::PostfixOperator, op);
   };
 
   struct TernaryOperator {
-    Indirect<DynamicValue> condition;
-    Indirect<DynamicValue> trueClause;
-    Indirect<DynamicValue> falseClause;
+    Indirect<DataExpression> condition;
+    Indirect<DataExpression> trueClause;
+    Indirect<DataExpression> falseClause;
 
-    VALUE_TYPE3(TernaryOperator, DynamicValue&&, condition, DynamicValue&&, trueClause,
-                DynamicValue&&, falseClause);
+    VALUE_TYPE3(TernaryOperator, DataExpression&&, condition, DataExpression&&, trueClause,
+                DataExpression&&, falseClause);
   };
 
   struct MethodCall {
     Function* method;
 
-    Indirect<DynamicPointer> object;
+    Indirect<PointerExpression> object;
 
     // Just the variable parameters, since we've already matched them up against the function
     // signature.
-    vector<DynamicValueOrPointer> parameters;
+    vector<RvalueExpression> parameters;
 
-    VALUE_TYPE3(MethodCall, Function*, method, DynamicPointer&&, object,
-                vector<DynamicValueOrPointer>&&, parameters);
+    VALUE_TYPE3(MethodCall, Function*, method, PointerExpression&&, object,
+                vector<RvalueExpression>&&, parameters);
   };
 
   struct ReadMember {
-    Indirect<DynamicValue> object;
-    ValueVariable* member;
+    Indirect<DataExpression> object;
+    DataVariable* member;
 
-    VALUE_TYPE2(ReadMember, DynamicValue&&, object, ValueVariable*, member);
+    VALUE_TYPE2(ReadMember, DataExpression&&, object, DataVariable*, member);
   };
 
   union {
-    Value constant;
-    ValueVariable* localVariable;
+    DataValue constant;
+    DataVariable* localVariable;
 
     BinaryOperator binaryOperator;
     PrefixOperator prefixOperator;
@@ -413,35 +413,35 @@ public:
     MethodCall methodCall;
     ReadMember readMember;
 
-    Indirect<DynamicValue> readPointer;
+    Indirect<DataExpression> readPointer;
   };
 
-  static DynamicValue fromConstant(Value&& value);
-  static DynamicValue fromLocalVariable(ValueVariable* variable);
+  static DataExpression fromConstant(DataValue&& value);
+  static DataExpression fromLocalVariable(DataVariable* variable);
 
-  static DynamicValue fromBinaryOperator(ast::BinaryOperator op, DynamicValue&& left,
-                                         DynamicValue&& right);
-  static DynamicValue fromPrefixOperator(ast::PrefixOperator op, DynamicValue&& exp);
-  static DynamicValue fromPostfixOperator(DynamicValue&& exp, ast::PostfixOperator op);
-  static DynamicValue fromTernaryOperator(DynamicValue&& condition,
-                                          DynamicValue&& trueClause,
-                                          DynamicValue&& falseClause);
+  static DataExpression fromBinaryOperator(ast::BinaryOperator op, DataExpression&& left,
+                                           DataExpression&& right);
+  static DataExpression fromPrefixOperator(ast::PrefixOperator op, DataExpression&& exp);
+  static DataExpression fromPostfixOperator(DataExpression&& exp, ast::PostfixOperator op);
+  static DataExpression fromTernaryOperator(DataExpression&& condition,
+                                            DataExpression&& trueClause,
+                                            DataExpression&& falseClause);
 
-  static DynamicValue fromMethodCall(Function* method, DynamicPointer&& object,
-                                     vector<DynamicValueOrPointer>&& parameters);
-  static DynamicValue fromReadMember(DynamicValue&& object, ValueVariable* member);
+  static DataExpression fromMethodCall(Function* method, PointerExpression&& object,
+                                       vector<RvalueExpression>&& parameters);
+  static DataExpression fromReadMember(DataExpression&& object, DataVariable* member);
 
-  static DynamicValue fromReadPointer(DynamicPointer&& pointer);
+  static DataExpression fromReadPointer(PointerExpression&& pointer);
 
 private:
   Kind kind;
 
-  DynamicValue(Kind kind): kind(kind) {}
+  DataExpression(Kind kind): kind(kind) {}
 };
 
-class DynamicPointer {
+class PointerExpression {
 public:
-  UNION_TYPE_BOILERPLATE(DynamicPointer);
+  UNION_TYPE_BOILERPLATE(PointerExpression);
 
   enum class Kind {
     LOCAL_VARIABLE,
@@ -467,62 +467,62 @@ public:
   Kind getKind() const { return kind; }
 
   struct TernaryOperator {
-    Indirect<DynamicValue> condition;
-    Indirect<DynamicPointer> trueClause;
-    Indirect<DynamicPointer> falseClause;
+    Indirect<DataExpression> condition;
+    Indirect<PointerExpression> trueClause;
+    Indirect<PointerExpression> falseClause;
 
-    VALUE_TYPE3(TernaryOperator, DynamicValue&&, condition, DynamicPointer&&, trueClause,
-                DynamicPointer&&, falseClause);
+    VALUE_TYPE3(TernaryOperator, DataExpression&&, condition, PointerExpression&&, trueClause,
+                PointerExpression&&, falseClause);
   };
 
   struct MethodCall {
     Function* method;
 
-    Indirect<DynamicPointer> object;
+    Indirect<PointerExpression> object;
 
     // Just the variable parameters, since we've already matched them up against the function
     // signature.
-    vector<DynamicValueOrPointer> parameters;
+    vector<RvalueExpression> parameters;
 
-    VALUE_TYPE3(MethodCall, Function*, method, DynamicPointer&&, object,
-                vector<DynamicValueOrPointer>&&, parameters);
+    VALUE_TYPE3(MethodCall, Function*, method, PointerExpression&&, object,
+                vector<RvalueExpression>&&, parameters);
   };
 
   struct Subscript {
     // Container must strictly be a built-in array.  Calls to an overloaded operator[] on a class
     // would have been converted to MethodCall.
-    Indirect<DynamicPointer> container;
-    Indirect<DynamicValue> subscript;
+    Indirect<PointerExpression> container;
+    Indirect<DataExpression> subscript;
 
-    VALUE_TYPE2(Subscript, DynamicPointer&&, container, DynamicValue&&, subscript);
+    VALUE_TYPE2(Subscript, PointerExpression&&, container, DataExpression&&, subscript);
   };
 
   struct ReadMember {
-    Indirect<DynamicValue> object;
+    Indirect<DataExpression> object;
     PointerVariable* member;
 
-    VALUE_TYPE2(ReadMember, DynamicValue&&, object, PointerVariable*, member);
+    VALUE_TYPE2(ReadMember, DataExpression&&, object, PointerVariable*, member);
   };
 
   struct ReadPointerMember {
-    Indirect<DynamicPointer> object;
+    Indirect<PointerExpression> object;
     PointerVariable* member;
 
-    VALUE_TYPE2(ReadPointerMember, DynamicPointer&&, object, PointerVariable*, member);
+    VALUE_TYPE2(ReadPointerMember, PointerExpression&&, object, PointerVariable*, member);
   };
 
   struct PointerToMember {
-    Indirect<DynamicPointer> object;
+    Indirect<PointerExpression> object;
     Variable* member;
 
-    VALUE_TYPE2(PointerToMember, DynamicPointer&&, object, Variable*, member);
+    VALUE_TYPE2(PointerToMember, PointerExpression&&, object, Variable*, member);
   };
 
   struct Upcast {
-    Indirect<DynamicPointer> object;
+    Indirect<PointerExpression> object;
     ImplementedInterface* interface;
 
-    VALUE_TYPE2(Upcast, DynamicPointer&&, object, ImplementedInterface*, interface);
+    VALUE_TYPE2(Upcast, PointerExpression&&, object, ImplementedInterface*, interface);
   };
 
   union {
@@ -538,38 +538,38 @@ public:
     Upcast upcast;
   };
 
-  static DynamicPointer fromLocalVariable(PointerVariable* variable);
+  static PointerExpression fromLocalVariable(PointerVariable* variable);
 
-  static DynamicPointer fromTernaryOperator(DynamicValue&& condition,
-                                            DynamicPointer&& trueClause,
-                                            DynamicPointer&& falseClause);
+  static PointerExpression fromTernaryOperator(DataExpression&& condition,
+                                               PointerExpression&& trueClause,
+                                               PointerExpression&& falseClause);
 
-  static DynamicPointer fromMethodCall(Function* method, DynamicPointer&& object,
-                                        vector<DynamicValueOrPointer>&& parameters);
-  static DynamicPointer fromSubscript(DynamicPointer&& container, DynamicValue&& key);
-  static DynamicPointer fromPointerToMember(DynamicPointer&& object, Variable* member);
-  static DynamicPointer fromUpcast(DynamicPointer&& object, ImplementedInterface* interface);
+  static PointerExpression fromMethodCall(Function* method, PointerExpression&& object,
+                                          vector<RvalueExpression>&& parameters);
+  static PointerExpression fromSubscript(PointerExpression&& container, DataExpression&& key);
+  static PointerExpression fromPointerToMember(PointerExpression&& object, Variable* member);
+  static PointerExpression fromUpcast(PointerExpression&& object, ImplementedInterface* interface);
 
 private:
   Kind kind;
 
-  DynamicPointer(Kind kind): kind(kind) {}
+  PointerExpression(Kind kind): kind(kind) {}
 };
 
-class DynamicValueOrPointer {
+class RvalueExpression {
 public:
-  UNION_TYPE_BOILERPLATE(DynamicValueOrPointer);
+  UNION_TYPE_BOILERPLATE(RvalueExpression);
 
   enum Kind {
-    VALUE,
+    DATA,
     POINTER,
   };
 
   Kind getKind();
 
   union {
-    DynamicValue value;
-    DynamicPointer pointer;
+    DataExpression data;
+    PointerExpression pointer;
   };
 };
 
@@ -598,7 +598,7 @@ enum AdditionalTargets: char {
   FROM_CALLER
 };
 
-struct ValueConstraints {
+struct DataConstraints {
   struct PossiblePointer {
     // The member which may contain the pointer.  The identified member itself may be the pointer,
     // or it may contain it somewhere within an aggregate structure.  The MemberPath can be empty,
@@ -653,13 +653,13 @@ struct ValueConstraints {
   };
   vector<Range> intRanges;
 
-  VALUE_TYPE3(ValueConstraints, vector<PossiblePointer>&&, possiblePointers,
+  VALUE_TYPE3(DataConstraints, vector<PossiblePointer>&&, possiblePointers,
               AdditionalTargets, additionalPointers, vector<Range>&&, intRanges);
 
-  ValueConstraints(vector<PossiblePointer>&& possiblePointers,
+  DataConstraints(vector<PossiblePointer>&& possiblePointers,
                    AdditionalTargets additionalPointers)
       : possiblePointers(move(possiblePointers)), additionalPointers(additionalPointers) {}
-  ValueConstraints(vector<Range>&& intRanges)
+  DataConstraints(vector<Range>&& intRanges)
       : additionalPointers(AdditionalTargets::NONE), intRanges(move(intRanges)) {}
 };
 
@@ -708,62 +708,62 @@ struct UnboundPointerConstraints {
   vector<PointerConstraints::PossibleTarget> innerPointers;
 };
 
-struct ValueDescriptor {
+struct DataDescriptor {
   Bound<Type> type;
-  ValueConstraints constraints;
+  DataConstraints constraints;
 
-  VALUE_TYPE2(ValueDescriptor, Bound<Type>&&, type, ValueConstraints&&, constraints);
+  VALUE_TYPE2(DataDescriptor, Bound<Type>&&, type, DataConstraints&&, constraints);
 };
 
 struct PointerDescriptor {
-  ValueDescriptor targetDescriptor;
+  DataDescriptor targetDescriptor;
   Exclusivity exclusivity;
   PointerConstraints constraints;
   bool canAddConstraints;
 
-  VALUE_TYPE3(PointerDescriptor, ValueDescriptor&&, targetDescriptor,
+  VALUE_TYPE3(PointerDescriptor, DataDescriptor&&, targetDescriptor,
               Exclusivity, exclusivity, PointerConstraints&&, constraints);
 };
 
 // ALWAYS represents an unnamed temporary!
-struct DescribedValue {
-  ValueDescriptor descriptor;
-  DynamicValue value;
-  Value staticValue;
+struct DescribedData {
+  DataDescriptor descriptor;
+  DataExpression expression;
+  DataValue staticValue;
 
-  VALUE_TYPE3(DescribedValue, ValueDescriptor&&, descriptor, DynamicValue&&, value,
-              Value&&, staticValue);
+  VALUE_TYPE3(DescribedData, DataDescriptor&&, descriptor, DataExpression&&, expression,
+              DataValue&&, staticValue);
 };
 
 struct DescribedPointer {
   PointerDescriptor descriptor;
-  DynamicPointer pointer;
-  Maybe<Value&> staticPointer;
+  PointerExpression expression;
+  Maybe<DataValue&> staticPointer;
 
-  VALUE_TYPE3(DescribedPointer, PointerDescriptor&&, descriptor, DynamicPointer&&, pointer,
-              Maybe<Value&>, staticPointer);
+  VALUE_TYPE3(DescribedPointer, PointerDescriptor&&, descriptor, PointerExpression&&, expression,
+              Maybe<DataValue&>, staticPointer);
 };
 
-class DescribedValueOrPointer {
+class DescribedRvalue {
 public:
-  UNION_TYPE_BOILERPLATE(DescribedValueOrPointer);
+  UNION_TYPE_BOILERPLATE(DescribedRvalue);
 
   enum Kind {
-    POINTER,
-    VALUE
+    DATA,
+    POINTER
   };
 
   Kind getKind() { return kind; }
 
   union {
+    DescribedData data;
     DescribedPointer pointer;
-    DescribedValue value;
   };
 
-  ValueDescriptor& valueDescriptor();
+  DataDescriptor& dataDescriptor();
 
-  static DescribedValueOrPointer from(DescribedPointer&& pointer);
-  static DescribedValueOrPointer from(DescribedValue&& pointer);
+  static DescribedRvalue from(DescribedData&& pointer);
+  static DescribedRvalue from(DescribedPointer&& pointer);
 
 private:
   Kind kind;
@@ -785,7 +785,7 @@ public:
   enum class Kind {
     UNKNOWN,
 
-    VALUE,
+    DATA,
     POINTER,
     LVALUE,
     POINTER_LVALUE,
@@ -806,10 +806,10 @@ public:
     // If present, the variable is a member of the given pointer.  Otherwise, the variable is a
     // local variable.
     Maybe<DescribedPointer> parent;
-    ValueVariable* variable;
+    DataVariable* variable;
 
-    VALUE_TYPE2(Lvalue, DescribedPointer&&, parent, ValueVariable*, variable);
-    Lvalue(ValueVariable* variable): parent(nullptr), variable(variable) {}
+    VALUE_TYPE2(Lvalue, DescribedPointer&&, parent, DataVariable*, variable);
+    Lvalue(DataVariable* variable): parent(nullptr), variable(variable) {}
   };
 
   struct PointerLvalue {
@@ -823,19 +823,19 @@ public:
   };
 
   struct Method {
-    DescribedValueOrPointer object;
+    DescribedRvalue object;
     Overload* method;
   };
 
   struct ConstrainedType {
     Bound<Type> type;
-    Maybe<ValueConstraints> constraints;
+    Maybe<DataConstraints> constraints;
   };
 
   union {
     Unknown unknown;
 
-    DescribedValue value;
+    DescribedData data;
     DescribedPointer pointer;
     Lvalue lvalue;
     PointerLvalue pointerLvalue;
@@ -850,23 +850,24 @@ public:
 
   static Thing fromEntity(Bound<Entity>&& entity);
 
-  static Thing fromValue(ValueDescriptor&& descriptor, DynamicValue&& value, Value staticValue);
-  static Thing fromValue(DescribedValue&& value);
-  static Thing fromPointer(PointerDescriptor&& descriptor, DynamicPointer&& pointer,
-                           Maybe<Value&> staticPointer);
+  static Thing fromData(DataDescriptor&& descriptor, DataExpression&& expression,
+                        DataValue staticValue);
+  static Thing fromData(DescribedData&& data);
+  static Thing fromPointer(PointerDescriptor&& descriptor, PointerExpression&& expression,
+                           Maybe<DataValue&> staticPointer);
   static Thing fromPointer(DescribedPointer&& pointer);
-  static Thing fromLvalue(DescribedPointer&& parent, ValueVariable* variable);
+  static Thing fromLvalue(DescribedPointer&& parent, DataVariable* variable);
   static Thing fromLvalue(DescribedPointer&& parent, PointerVariable* variable);
-  static Thing fromLvalue(ValueVariable* variable);
+  static Thing fromLvalue(DataVariable* variable);
   static Thing fromLvalue(PointerVariable* variable);
 
   static Thing fromFunction(Bound<Overload>&& overload);
-  static Thing fromMethod(DescribedValue&& object, Overload* method);
+  static Thing fromMethod(DescribedData&& object, Overload* method);
 
   static Thing fromType(Bound<Type>&& type);
-  static Thing fromType(Bound<Type>&& type, ValueConstraints&& constraints);
+  static Thing fromType(Bound<Type>&& type, DataConstraints&& constraints);
 
-  static Thing from(DescribedValueOrPointer&& valueOrPointer);
+  static Thing from(DescribedRvalue&& rvalue);
 
 private:
   Kind kind;
@@ -976,12 +977,12 @@ public:
   // When this returns null, the caller will need to bind the parent object to a local variable
   // so that it can construct a Context that contains it.
   Maybe<Thing::ConstrainedType> getType(const Context& containingTypeContext,
-                                        const Value& containingObject);
+                                        const DataValue& containingObject);
 };
 
-class ValueVariable: public Variable {
+class DataVariable: public Variable {
 public:
-  virtual ~ValueVariable();
+  virtual ~DataVariable();
 };
 
 class PointerVariable: public Variable {
@@ -1019,13 +1020,11 @@ public:
   // TODO:  Implicit parameters, environment.
   //   Both may depend on compiling the function body.
 
-  Maybe<DescribedValueOrPointer> call(
-      Compiler& compiler, DescribedValueOrPointer&& this_,
-      vector<DescribedValueOrPointer>&& parameters, ErrorLocation location);
+  Maybe<DescribedRvalue> call(
+      Compiler& compiler, DescribedRvalue&& this_,
+      vector<DescribedRvalue>&& parameters, ErrorLocation location);
 
-  ValueOrPointer call(vector<ValueOrPointer>&& typeContext,
-                      ValueOrPointer&& this_,
-                      vector<ValueOrPointer>&& parameters);
+  Rvalue call(vector<Rvalue>&& typeContext, Rvalue&& this_, vector<Rvalue>&& parameters);
 };
 
 class Overload: public Entity {
@@ -1037,7 +1036,7 @@ public:
   // resolve() may have the effect of lazily instantiating templates.
   Thing resolve(Compiler& compiler, Context&& context, const Tuple& parameters,
                 ErrorLocation location);
-  Thing resolve(Compiler& compiler, DescribedValueOrPointer&& object,
+  Thing resolve(Compiler& compiler, DescribedRvalue&& object,
                 const Tuple& parameters, ErrorLocation location);
 };
 
@@ -1046,7 +1045,7 @@ public:
   Thing getMemberOfType(Compiler& compiler, Thing::ConstrainedType&& self,
                         const string& memberName);
 
-  Thing getMemberOfInstance(Compiler& compiler, DescribedValue&& parent,
+  Thing getMemberOfInstance(Compiler& compiler, DescribedData&& parent,
                             const string& memberName, ErrorLocation location);
   Thing getMemberOfInstance(Compiler& compiler, DescribedPointer&& parent,
                             const string& memberName, ErrorLocation location);
@@ -1146,16 +1145,16 @@ public:
   ThingPort makePortFor(const Context& targetContext);
 
   // Get the local variable's current descriptor including transient constraints.
-  ValueDescriptor getVariableDescriptor(ValueVariable* variable);
+  DataDescriptor getVariableDescriptor(DataVariable* variable);
   PointerDescriptor getVariableDescriptor(PointerVariable* variable);
 
-  void setVariableConstraints(ValueVariable* variable, const ValueConstraints& constraints);
+  void setVariableConstraints(DataVariable* variable, const DataConstraints& constraints);
   void setVariableConstraints(PointerVariable* variable, const PointerConstraints& ptrConstraints,
-                              const ValueConstraints& valConstraints);
+                              const DataConstraints& dataConstraints);
 
   // Get a pointer to the variable's value.  May be a partial value.  If the caller is simulating
   // changes to the value, it should modify the value directly.
-  Value* getVariable(Variable* variable);
+  DataValue* getVariable(Variable* variable);
 
 
 
