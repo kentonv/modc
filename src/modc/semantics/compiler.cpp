@@ -17,6 +17,7 @@
 #include <stdexcept>
 
 #include "compiler.h"
+#include "entity.h"
 
 namespace modc {
 namespace compiler {
@@ -54,8 +55,6 @@ public:
   Thing error(const ast::Statement& location, Parts&&... parts);
 
   ErrorLocation errorLocation(const Expression& expression);
-
-  CxxExpression asCxx(Thing&& value);
 
   bool areEqual(const Thing& a, const Thing& b);
   bool areEqual(const EntityName& a, const EntityName& b);
