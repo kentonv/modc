@@ -32,8 +32,11 @@ class Overload;
 class Thing;
 
 struct EntityName {
-  const string& name;
+  string name;
   Maybe<vector<Thing>> parameters;
+
+  VALUE_TYPE2(EntityName, string&&, name, vector<Thing>&&, parameters);
+  explicit EntityName(string&& name): name(move(name)), parameters(nullptr) {}
 };
 
 enum Exclusivity: char {
@@ -112,11 +115,14 @@ struct DataConstraints {
   VALUE_TYPE3(DataConstraints, vector<PossiblePointer>&&, possiblePointers,
               AdditionalTargets, additionalPointers, vector<Range>&&, intRanges);
 
-  DataConstraints(vector<PossiblePointer>&& possiblePointers,
-                   AdditionalTargets additionalPointers)
+  DataConstraints(vector<PossiblePointer>&& possiblePointers, AdditionalTargets additionalPointers)
       : possiblePointers(move(possiblePointers)), additionalPointers(additionalPointers) {}
   DataConstraints(vector<Range>&& intRanges)
       : additionalPointers(AdditionalTargets::NONE), intRanges(move(intRanges)) {}
+
+  static DataConstraints fromEmpty() {
+    return DataConstraints({}, AdditionalTargets::NONE);
+  }
 };
 
 struct PointerConstraints {
@@ -227,11 +233,15 @@ private:
 
 struct Tuple {
   struct Element;
+  struct NamedElement;
 
   vector<Element> positionalElements;
-  vector<std::pair<EntityName, Element>> namedElements;
+  vector<NamedElement> namedElements;
 
   static Tuple fromSingleValue(Thing&& value);
+
+  VALUE_TYPE2(Tuple, vector<Element>&&, positionalElements,
+              vector<NamedElement>&&, namedElements);
 };
 
 class Thing {
@@ -324,6 +334,7 @@ public:
   static Thing fromType(Bound<Type>&& type, DataConstraints&& constraints);
 
   static Thing from(DescribedRvalue&& rvalue);
+  static Thing from(Maybe<DescribedRvalue>&& rvalue);
 
 private:
   Kind kind;
@@ -334,6 +345,13 @@ struct Tuple::Element {
   Indirect<Thing> value;
 
   VALUE_TYPE2(Element, ast::StyleAllowance, styleAllowance, Thing&&, value);
+};
+
+struct Tuple::NamedElement {
+  EntityName name;
+  Element element;
+
+  VALUE_TYPE2(NamedElement, EntityName&&, name, Element&&, element);
 };
 
 }  // namespace compiler

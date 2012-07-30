@@ -182,6 +182,61 @@ void Compiler::checkConstraints(const PointerConstraints& allowed, const Pointer
 }
 
 // ---------------------------------------------------------------------------------------
+// applyDefaultConvertion
+
+Maybe<DescribedRvalue> Compiler::applyDefaultConversion(
+    DescribedRvalue&& input, VariableUsageSet& variablesUsed, ErrorLocation location) {
+  ThingPort inputTypePort = scope.makePortFor(input.dataDescriptor().type.context);
+  Maybe<UnaryOperator&> conversion =
+      input.dataDescriptor().type.entity->getDefaultConversion(inputTypePort);
+  if (conversion == nullptr) {
+    return move(input);
+  }
+
+  return conversion->call(*this, move(input), variablesUsed, location);
+}
+
+Thing Compiler::applyDefaultConversion(
+    Thing&& input, VariableUsageSet& variablesUsed, ErrorLocation location) {
+  switch (input.getKind()) {
+    case Thing::Kind::UNKNOWN:
+    case Thing::Kind::TYPE:
+    case Thing::Kind::FUNCTION:
+    case Thing::Kind::METHOD:
+    case Thing::Kind::TUPLE:
+      return move(input);
+
+    case Thing::Kind::DATA:
+      return Thing::from(applyDefaultConversion(DescribedRvalue::from(move(input.data)),
+                                                variablesUsed, location));
+
+    case Thing::Kind::POINTER:
+      return Thing::from(applyDefaultConversion(
+          DescribedRvalue::from(move(input.pointer)), variablesUsed, location));
+
+    case Thing::Kind::LVALUE: {
+      Maybe<DescribedPointer> ptr = toPointer(move(input.lvalue), location);
+      if (ptr == nullptr) {
+        return Thing::fromUnknown();
+      }
+      return Thing::from(applyDefaultConversion(DescribedRvalue::from(move(*ptr)),
+                                                variablesUsed, location));
+    }
+
+    case Thing::Kind::POINTER_LVALUE: {
+      Maybe<DescribedPointer> ptr = toPointer(move(input.pointerLvalue), location);
+      if (ptr == nullptr) {
+        return Thing::fromUnknown();
+      }
+      return Thing::from(applyDefaultConversion(DescribedRvalue::from(move(*ptr)),
+                                                variablesUsed, location));
+    }
+  }
+
+  throw "can't get here";
+}
+
+// ---------------------------------------------------------------------------------------
 // castTo
 
 Maybe<DescribedRvalue> Compiler::castTo(
@@ -193,10 +248,10 @@ Maybe<DescribedRvalue> Compiler::castTo(
 
   // Look for conversions on the source type.
   ThingPort inputTypePort = scope.makePortFor(input.dataDescriptor().type.context);
-  Maybe<Function&> conversion =
+  Maybe<UnaryOperator&> conversion =
       input.dataDescriptor().type.entity->lookupConversion(inputTypePort, targetType);
   if (conversion != nullptr) {
-    Maybe<DescribedRvalue> result = conversion->call(*this, move(input), {}, location);
+    Maybe<DescribedRvalue> result = conversion->call(*this, move(input), variablesUsed, location);
     if (result == nullptr) {
       return nullptr;
     }
@@ -641,20 +696,6 @@ LocalVariablePath Compiler::bindTemporary(DescribedPointer& pointer) {
 }
 
 // ---------------------------------------------------------------------------------------
-// lookupBinding
-
-Thing Compiler::lookupBinding(string&& name, ErrorLocation location) {
-  Maybe<Thing> thing = scope.lookupBinding(name);
-  if (thing == nullptr) {
-    location.error("\"", name, "\" is not declared.");
-    return Thing::fromUnknown();
-  } else {
-    // TODO:  Apply default conversion.
-    return move(*thing);
-  }
-}
-
-// ---------------------------------------------------------------------------------------
 // getMemberType
 
 Maybe<Thing::ConstrainedType> Compiler::getMemberType(DescribedData& parent, Variable* member,
@@ -818,6 +859,174 @@ Thing Compiler::getMember(Thing&& object, const string& memberName, ErrorLocatio
   }
 
   throw "can't get here";
+}
+
+// ---------------------------------------------------------------------------------------
+// evaluate
+
+Thing Compiler::evaluate(ast::Expression& expression, VariableUsageSet& variablesUsed) {
+  switch (expression.getType()) {
+    case Expression::Type::ERROR: {
+      for (auto& error: expression.error) {
+        ErrorLocation(expression).error(error);
+      }
+      return Thing::fromUnknown();
+    }
+
+    case Expression::Type::VARIABLE: {
+      Maybe<Thing> thing = scope.lookupBinding(expression.variable);
+      if (thing == nullptr) {
+        ErrorLocation(expression).error("\"", expression.variable, "\" is not declared.");
+        return Thing::fromUnknown();
+      } else {
+        return move(*thing);
+      }
+    }
+
+    case Expression::Type::TUPLE: {
+      // TODO
+      throw "unimplemented";
+    }
+
+    case Expression::Type::LITERAL_INT:
+      return Thing::fromData(
+          DataDescriptor(
+              Bound<Type>(BuiltinType::get(BuiltinType::Builtin::INTEGER), Context({})),
+              DataConstraints::fromEmpty()),
+          DataExpression::fromConstant(DataValue::fromInteger(expression.literalInt)),
+          DataValue::fromInteger(expression.literalInt));
+
+    case Expression::Type::LITERAL_DOUBLE:
+      return Thing::fromData(
+          DataDescriptor(
+              Bound<Type>(BuiltinType::get(BuiltinType::Builtin::DOUBLE), Context({})),
+              DataConstraints::fromEmpty()),
+          DataExpression::fromConstant(DataValue::fromDouble(expression.literalDouble)),
+          DataValue::fromDouble(expression.literalDouble));
+
+    case Expression::Type::LITERAL_STRING:
+      // TODO:  Generate code to construct the string class.
+      throw "unimplemented";
+
+    case Expression::Type::LITERAL_ARRAY:
+      // TODO:  Generate code to construct the FixedArray class.
+      throw "unimplemented";
+
+    case Expression::Type::BINARY_OPERATOR: {
+      vector<VariableUsageSet> subVariablesUsed(2);
+      Thing left = evaluate(*expression.binaryOperator.left, subVariablesUsed[0]);
+      Thing right = evaluate(*expression.binaryOperator.right, subVariablesUsed[1]);
+      variablesUsed.merge(move(subVariablesUsed));
+
+      Maybe<DescribedRvalue> leftRvalue;
+      switch (left.getKind()) {
+        case Thing::Kind::UNKNOWN:
+          return Thing::fromUnknown();
+
+        case Thing::Kind::TYPE:
+        case Thing::Kind::TUPLE:
+        case Thing::Kind::FUNCTION:
+        case Thing::Kind::METHOD:
+          break;
+
+        case Thing::Kind::DATA:
+          leftRvalue = DescribedRvalue::from(move(left.data));
+          break;
+        case Thing::Kind::POINTER:
+          leftRvalue = DescribedRvalue::from(move(left.pointer));
+          break;
+
+        case Thing::Kind::LVALUE:
+          leftRvalue = toPointer(move(left.lvalue), ErrorLocation(*expression.binaryOperator.left));
+          break;
+        case Thing::Kind::POINTER_LVALUE:
+          leftRvalue = toPointer(move(left.pointerLvalue), ErrorLocation(*expression.binaryOperator.left));
+          break;
+      }
+
+      return applyBinaryOperator(move(left), expression.binaryOperator.op, move(right));
+    }
+
+    case Expression::Type::PREFIX_OPERATOR:
+      return applyPrefixOperator(
+          expression.prefixOperator.op,
+          evaluate(*expression.prefixOperator.operand, variablesUsed),
+          variablesUsed, expression.location);
+
+    case Expression::Type::POSTFIX_OPERATOR:
+      return applyPostfixOperator(
+          evaluate(*expression.postfixOperator.operand, variablesUsed),
+          expression.postfixOperator.op);
+
+    case Expression::Type::TERNARY_OPERATOR: {
+      return applyTernaryOperator(
+          evaluate(*expression.ternaryOperator.condition, variablesUsed),
+          *expression.ternaryOperator.trueClause,
+          *expression.ternaryOperator.falseClause,
+          variablesUsed, expression.location);
+    }
+
+    case Expression::Type::FUNCTION_CALL: {
+      vector<VariableUsageSet> subVariablesUsed(1);
+      subVariablesUsed.reserve(expression.functionCall.parameters.size() + 1);
+
+      Thing function = evaluate(*expression.functionCall.function, subVariablesUsed[0]);
+
+      vector<Tuple::Element> positionalElements;
+      vector<Tuple::NamedElement> namedElements;
+
+      for (auto& param: expression.functionCall.parameters) {
+        // TODO:  Support named parameters once they are supported in the AST.
+        subVariablesUsed.emplace_back();
+        positionalElements.emplace_back(
+            param.styleAllowance,
+            evaluate(*param.expression, subVariablesUsed.back()));
+      }
+
+      variablesUsed.merge(move(subVariablesUsed));
+
+      Tuple parameters(move(positionalElements), move(namedElements));
+
+      switch (function.getKind()) {
+        case Thing::Kind::UNKNOWN:
+          return Thing::fromUnknown();
+
+        case Thing::Kind::TYPE:
+        case Thing::Kind::DATA:
+        case Thing::Kind::POINTER:
+        case Thing::Kind::LVALUE:
+        case Thing::Kind::POINTER_LVALUE:
+        case Thing::Kind::TUPLE:
+          ErrorLocation(*expression.functionCall.function).error("Not a function");
+          return Thing::fromUnknown();
+
+        case Thing::Kind::FUNCTION:
+          return function.function.entity->resolve(
+              *this, move(function.function.context), move(parameters), ErrorLocation(expression));
+
+        case Thing::Kind::METHOD:
+          return function.method.method->resolve(
+              *this, move(function.method.object), move(parameters), ErrorLocation(expression));
+      }
+    }
+
+    case Expression::Type::SUBSCRIPT:
+      // TODO
+      throw "unimplemented";
+
+    case Expression::Type::MEMBER_ACCESS: {
+      // TODO:  Handle style allowance.
+      Thing object = evaluate(*expression.memberAccess.object, variablesUsed);
+      return getMember(move(object), expression.memberAccess.member, ErrorLocation(expression));
+    }
+
+    case Expression::Type::IMPORT:
+    case Expression::Type::LAMBDA:
+      // TODO
+      throw "unimplemented";
+  }
+
+  throw "Can't get here.";
 }
 
 }  // namespace compiler

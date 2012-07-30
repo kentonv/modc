@@ -45,10 +45,7 @@ public:
                             Location location, VariableUsageSet::Style style) = 0;
 };
 
-class Constant: public Entity {
-public:
-  const Thing& getValue();
-};
+// =======================================================================================
 
 class Variable: public Entity {
 public:
@@ -92,27 +89,12 @@ public:
 
   Exclusivity getExclusivity();
 
-  bool hasConstraints();
-
-  // Get declared constraints for this pointer.
-  Maybe<PointerConstraints> getConstraints(const Context& context);
-
   // Get constraints independently of any binding for the object of which this variable is a member.
   // Instead, the object's type's context is provided.
   Maybe<UnboundPointerConstraints> getUnboundConstraints(const Context& containingTypeContext);
 };
 
-class Alias: public Entity {
-public:
-  virtual ~Alias();
-
-  // Dereferencing returns one of:
-  // - ERROR if the alias is identity-only.
-  // - A constant if the exact target value is known at compile time and the alias is immutable.
-  // - REFERENCE if the target entity is known at compile time.  Note that the target entity is
-  //   never itself an alias!
-  // - DYNAMIC_REFERENCE of DEREFERENCE of REFERENCE of this, entangled with this.
-};
+// =======================================================================================
 
 class Function: public Entity {
 public:
@@ -122,8 +104,8 @@ public:
   //   Both may depend on compiling the function body.
 
   Maybe<DescribedRvalue> call(
-      Compiler& compiler, DescribedRvalue&& this_,
-      vector<DescribedRvalue>&& parameters, ErrorLocation location);
+      Compiler& compiler, DescribedRvalue&& this_, vector<DescribedRvalue>&& parameters,
+      VariableUsageSet& variablesUsed, ErrorLocation location);
 
   Rvalue call(vector<Rvalue>&& typeContext, Rvalue&& this_, vector<Rvalue>&& parameters);
 };
@@ -135,11 +117,37 @@ public:
   // result of calling that function.
   //
   // resolve() may have the effect of lazily instantiating templates.
-  Thing resolve(Compiler& compiler, Context&& context, const Tuple& parameters,
+  Thing resolve(Compiler& compiler, Context&& context, Tuple&& parameters,
                 ErrorLocation location);
   Thing resolve(Compiler& compiler, DescribedRvalue&& object,
-                const Tuple& parameters, ErrorLocation location);
+                Tuple&& parameters, ErrorLocation location);
 };
+
+class BinaryOperator: public Entity {
+public:
+  enum MatchType {
+    EXACT,
+    GENERALIZED,
+    NONE
+  };
+
+  MatchType match(Compiler& compiler, const DescribedRvalue& this_, const Thing& other);
+
+  DescribedRvalue call(Compiler& compiler, DescribedRvalue&& this_, Thing&& other,
+                       VariableUsageSet& variablesUsed, ErrorLocation location);
+
+  Rvalue call(vector<Rvalue>&& typeContext, Rvalue&& this_, Rvalue&& other);
+};
+
+class UnaryOperator: public Entity {
+public:
+  DescribedRvalue call(Compiler& compiler, DescribedRvalue&& this_,
+                       VariableUsageSet& variablesUsed, ErrorLocation location);
+
+  Rvalue call(vector<Rvalue>&& typeContext, Rvalue&& this_);
+};
+
+// =======================================================================================
 
 class Type: public Entity {
 public:
@@ -156,12 +164,15 @@ public:
   Overload* getImplicitConstructor();
   Maybe<Overload&> lookupConstructor(const string& name);
 
-  Maybe<Function&> lookupConversion(ThingPort& port, const Bound<Type>& to);
+  // The port is for the type.
+  // TODO: This is wrong.  The port should include the instance.
+  Maybe<UnaryOperator&> lookupConversion(ThingPort& port, const Bound<Type>& to);
+  Maybe<UnaryOperator&> getDefaultConversion(ThingPort& port);
 
-  Maybe<Function&> lookupPrefixOperator(ast::PrefixOperator op);
-  Maybe<Function&> lookupPostfixOperator(ast::PostfixOperator op);
-  Maybe<Overload&> lookupLeftBinaryOperator(ast::BinaryOperator op);
-  Maybe<Overload&> lookupRightBinaryOperator(ast::BinaryOperator op);
+  Maybe<UnaryOperator&> lookupPrefixOperator(ast::PrefixOperator op);
+  Maybe<UnaryOperator&> lookupPostfixOperator(ast::PostfixOperator op);
+  Maybe<BinaryOperator&> lookupLeftBinaryOperator(ast::BinaryOperator op);
+  Maybe<BinaryOperator&> lookupRightBinaryOperator(ast::BinaryOperator op);
 
   // NOTE:  interfaceType could be Bound<Interface>...  but this probably forces a copy that
   //    wouldn't otherwise be needed.
@@ -194,6 +205,8 @@ public:
   };
 
   Builtin getType();
+
+  static BuiltinType* get(Builtin builtin);
 };
 
 class Class: public Type {

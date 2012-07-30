@@ -38,6 +38,8 @@ namespace compiler {
 
 class ErrorLocation {
 public:
+  explicit ErrorLocation(ast::Expression& expression);
+
   template <typename... Parts>
   void error(Parts&&... parts);
   void error(errors::Error&& error);
@@ -117,6 +119,11 @@ public:
   void checkConstraints(const PointerConstraints& allowed, const PointerConstraints& actual,
                         ErrorLocation location);
 
+  Maybe<DescribedRvalue> applyDefaultConversion(
+      DescribedRvalue&& input, VariableUsageSet& variablesUsed, ErrorLocation location);
+  Thing applyDefaultConversion(
+      Thing&& input, VariableUsageSet& variablesUsed, ErrorLocation location);
+
   Maybe<DescribedRvalue> castTo(
       DescribedRvalue&& input, Bound<Type>&& targetType,
       VariableUsageSet& variablesUsed, ErrorLocation location);
@@ -154,8 +161,6 @@ public:
   LocalVariablePath bindTemporary(DescribedData& value);
   LocalVariablePath bindTemporary(DescribedPointer& pointer);
 
-  Thing lookupBinding(string&& name, ErrorLocation location);
-
   // Get the type of a member variable given its parent pointer.
   //
   // "parent" may be modified in-place in order to bind it to a local variable -- see
@@ -174,6 +179,9 @@ public:
   Thing::PointerLvalue getMember(DescribedPointer&& object, PointerVariable* member,
                                  ErrorLocation location);
   Thing getMember(Thing&& object, const string& memberName, ErrorLocation location);
+
+  // Input is non-const because it will be annotated.
+  Thing evaluate(ast::Expression& expression, VariableUsageSet& variablesUsed);
 };
 
 }  // namespace compiler
