@@ -25,18 +25,6 @@ namespace compiler {
 
 class Entity;
 
-class ThingPort {
-public:
-  ThingPort(const Context& localContext, const Context& foreignContext);
-
-  const Context& getContext();
-
-  Thing exportThing(Thing&& thing);
-  Thing importThing(Thing&& thing);
-
-  Context exportContext(const Context& input);
-};
-
 class Scope {
   // Scope keeps track of knowledge about the current scope, e.g. what variables are defined, what
   // their properties are, etc.  Scope does NOT keep track of code, only auxiliary knowledge.
@@ -51,15 +39,6 @@ public:
   // input.scope and returns that.  In other words, this effectively fills in input.params if it
   // isn't filled in already.
   const Context& fillContext(const Context& input);
-
-  // Creates a ThingPort that can be used to port Things between this Scope's context and the
-  // target context.  Note that the port is typically passed in whole into an Entity which
-  // itself represents the target context.  Therefore, the port's "import" methods port *to*
-  // targetContext and "export" ports *from* targetContext.  (This is why it is "makePortFor"
-  // instead of just "makePort".)
-  //
-  // The returned port references targetContext.
-  ThingPort makePortFor(const Context& targetContext);
 
   // Get the local variable's current descriptor including transient constraints.
   DataDescriptor getVariableDescriptor(DataVariable* variable);

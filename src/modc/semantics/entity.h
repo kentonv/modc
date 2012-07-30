@@ -157,10 +157,10 @@ public:
   Overload* getImplicitConstructor();
   Maybe<Overload&> lookupConstructor(const string& name);
 
-  // The port is for the type.
-  // TODO: This is wrong.  The port should include the instance.
-  Maybe<UnaryOperator&> lookupConversion(ThingPort& port, const Bound<Type>& to);
-  Maybe<UnaryOperator&> getDefaultConversion(ThingPort& port);
+  // Find a conversion to the given type.
+  Maybe<UnaryOperator&> lookupConversion(Compiler& compiler, const DescribedRvalue& object,
+                                         const Bound<Type>& to);
+  Maybe<UnaryOperator&> getDefaultConversion();
 
   Maybe<UnaryOperator&> lookupPrefixOperator(ast::PrefixOperator op);
   Maybe<UnaryOperator&> lookupPostfixOperator(ast::PostfixOperator op);
@@ -170,7 +170,7 @@ public:
   // NOTE:  interfaceType could be Bound<Interface>...  but this probably forces a copy that
   //    wouldn't otherwise be needed.
   Maybe<ImplementedInterface&> findImplementedInterface(
-      ThingPort& port, const Bound<Type>& interfaceType);
+      Compiler& compiler, const DescribedPointer& object, const Bound<Type>& interfaceType);
 
   // Returns whether this type is a subclass of the given type.  This is to be used for the purpose
   // of choosing an overload.  I.e. say for a one-argument function call there are two matching
@@ -178,7 +178,8 @@ public:
   // the overload taking Foo should be chosen.  If Bar is more specific than Foo, that overload
   // should be chosen.  If neither type is more specific than the other then the situation is
   // ambiguous and therefore an error.
-  bool isMoreSpecificThan(ThingPort& port, const Bound<Type>& otherType);
+  bool isMoreSpecificThan(Compiler& compiler, const DescribedRvalue& object,
+                          const Bound<Type>& otherType);
 
   // Does this type contain any aliases which are not annotated with their potential targets?  This
   // transitively includes members of by-value and heap members, but NOT members of alias members.

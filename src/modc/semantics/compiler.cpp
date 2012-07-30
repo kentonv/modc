@@ -186,9 +186,7 @@ void Compiler::checkConstraints(const PointerConstraints& allowed, const Pointer
 
 Maybe<DescribedRvalue> Compiler::applyDefaultConversion(
     DescribedRvalue&& input, VariableUsageSet& variablesUsed, ErrorLocation location) {
-  ThingPort inputTypePort = scope.makePortFor(input.dataDescriptor().type.context);
-  Maybe<UnaryOperator&> conversion =
-      input.dataDescriptor().type.entity->getDefaultConversion(inputTypePort);
+  Maybe<UnaryOperator&> conversion = input.dataDescriptor().type.entity->getDefaultConversion();
   if (conversion == nullptr) {
     return move(input);
   }
@@ -232,9 +230,8 @@ Maybe<DescribedRvalue> Compiler::castTo(
   }
 
   // Look for conversions on the source type.
-  ThingPort inputTypePort = scope.makePortFor(input.dataDescriptor().type.context);
   Maybe<UnaryOperator&> conversion =
-      input.dataDescriptor().type.entity->lookupConversion(inputTypePort, targetType);
+      input.dataDescriptor().type.entity->lookupConversion(*this, input, targetType);
   if (conversion != nullptr) {
     Maybe<DescribedRvalue> result = conversion->call(*this, move(input), variablesUsed, location);
     if (result == nullptr) {
@@ -359,10 +356,9 @@ Maybe<DescribedPointer> Compiler::castToPointer(DescribedPointer&& input,
     if (dynamic_cast<Interface*>(targetType.entity) == nullptr) {
       location.error("Type mismatch.");
     } else {
-      ThingPort inputPort = scope.makePortFor(input.descriptor.targetDescriptor.type.context);
       Maybe<ImplementedInterface&> interface =
           input.descriptor.targetDescriptor.type.entity->findImplementedInterface(
-              inputPort, targetType);
+              *this, input, targetType);
       if (interface == nullptr) {
         location.error("Object does not implement desired interface.");
       } else {
