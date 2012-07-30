@@ -154,9 +154,7 @@ public:
   Thing getMemberOfType(Compiler& compiler, Thing::ConstrainedType&& self,
                         const string& memberName);
 
-  Thing getMemberOfInstance(Compiler& compiler, DescribedData&& parent,
-                            const string& memberName, ErrorLocation location);
-  Thing getMemberOfInstance(Compiler& compiler, DescribedPointer&& parent,
+  Thing getMemberOfInstance(Compiler& compiler, DescribedRvalue&& parent,
                             const string& memberName, ErrorLocation location);
 
   // Note that constructors, unlike all other members, have context matching the type's context.

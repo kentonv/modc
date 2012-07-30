@@ -151,8 +151,13 @@ public:
   // the lvalue and returns it, since you can't have a pointer to a pointer.
   //
   // Returns null on error or incomplete information.
-  Maybe<DescribedPointer> toPointer(Thing::Lvalue&& lvalue, ErrorLocation location);
-  Maybe<DescribedPointer> toPointer(Thing::PointerLvalue&& lvalue, ErrorLocation location);
+  Maybe<DescribedPointer> toPointer(DataVariable* localVariable, ErrorLocation location);
+  Maybe<DescribedPointer> toPointer(PointerVariable* localVariable, ErrorLocation location);
+  Maybe<DescribedPointer> toPointer(DescribedPointer&& parent, DataVariable* member,
+                                    ErrorLocation location);
+  Maybe<DescribedPointer> toPointer(DescribedPointer&& parent, PointerVariable* member,
+                                    ErrorLocation location);
+  Maybe<DescribedPointer> toPointer(Lvalue&& lvalue, ErrorLocation location);
 
   // Creates a local variable, scoped only to the current statement, and initializes it with the
   // given value.  The input is modified in-place to become a reference to the local instead of
@@ -174,10 +179,6 @@ public:
                                  ErrorLocation location);
   Maybe<DescribedPointer> getMember(DescribedData&& object, PointerVariable* member,
                                     ErrorLocation location);
-  Thing::Lvalue getMember(DescribedPointer&& object, DataVariable* member,
-                          ErrorLocation location);
-  Thing::PointerLvalue getMember(DescribedPointer&& object, PointerVariable* member,
-                                 ErrorLocation location);
   Thing getMember(Thing&& object, const string& memberName, ErrorLocation location);
 
   // Input is non-const because it will be annotated.

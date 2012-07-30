@@ -206,25 +206,11 @@ Thing Compiler::applyDefaultConversion(
     case Thing::Kind::TUPLE:
       return move(input);
 
-    case Thing::Kind::DATA:
-      return Thing::from(applyDefaultConversion(DescribedRvalue::from(move(input.data)),
-                                                variablesUsed, location));
-
-    case Thing::Kind::POINTER:
-      return Thing::from(applyDefaultConversion(
-          DescribedRvalue::from(move(input.pointer)), variablesUsed, location));
+    case Thing::Kind::RVALUE:
+      return Thing::from(applyDefaultConversion(move(input.rvalue), variablesUsed, location));
 
     case Thing::Kind::LVALUE: {
       Maybe<DescribedPointer> ptr = toPointer(move(input.lvalue), location);
-      if (ptr == nullptr) {
-        return Thing::fromUnknown();
-      }
-      return Thing::from(applyDefaultConversion(DescribedRvalue::from(move(*ptr)),
-                                                variablesUsed, location));
-    }
-
-    case Thing::Kind::POINTER_LVALUE: {
-      Maybe<DescribedPointer> ptr = toPointer(move(input.pointerLvalue), location);
       if (ptr == nullptr) {
         return Thing::fromUnknown();
       }
@@ -277,15 +263,13 @@ Maybe<DescribedRvalue> Compiler::castTo(
     case Thing::Kind::UNKNOWN:
       return nullptr;
 
-    case Thing::Kind::DATA:
-      return DescribedRvalue::from(move(result.data));
+    case Thing::Kind::RVALUE:
+      return move(result.rvalue);
 
     case Thing::Kind::TYPE:
     case Thing::Kind::FUNCTION:
     case Thing::Kind::METHOD:
-    case Thing::Kind::POINTER:
     case Thing::Kind::LVALUE:
-    case Thing::Kind::POINTER_LVALUE:
     case Thing::Kind::TUPLE:
       throw "Constructor did not return value.";
   }
@@ -306,26 +290,11 @@ Maybe<DescribedRvalue> Compiler::castTo(
       location.error("Not a value.");
       return nullptr;
 
-    case Thing::Kind::DATA:
-      return castTo(DescribedRvalue::from(move(input.data)),
-                    move(targetType), variablesUsed, location);
-
-    case Thing::Kind::POINTER:
-      return castTo(DescribedRvalue::from(move(input.pointer)),
-                    move(targetType), variablesUsed, location);
+    case Thing::Kind::RVALUE:
+      return castTo(move(input.rvalue), move(targetType), variablesUsed, location);
 
     case Thing::Kind::LVALUE: {
       Maybe<DescribedPointer> ptr = toPointer(move(input.lvalue), location);
-      if (ptr == nullptr) {
-        return nullptr;
-      } else {
-        return castTo(DescribedRvalue::from(move(*ptr)),
-                      move(targetType), variablesUsed, location);
-      }
-    }
-
-    case Thing::Kind::POINTER_LVALUE: {
-      Maybe<DescribedPointer> ptr = toPointer(move(input.pointerLvalue), location);
       if (ptr == nullptr) {
         return nullptr;
       } else {
@@ -342,15 +311,13 @@ Maybe<DescribedRvalue> Compiler::castTo(
         case Thing::Kind::UNKNOWN:
           return nullptr;
 
-        case Thing::Kind::DATA:
-          return DescribedRvalue::from(move(result.data));
+        case Thing::Kind::RVALUE:
+          return move(result.rvalue);
 
         case Thing::Kind::TYPE:
         case Thing::Kind::FUNCTION:
         case Thing::Kind::METHOD:
-        case Thing::Kind::POINTER:
         case Thing::Kind::LVALUE:
-        case Thing::Kind::POINTER_LVALUE:
         case Thing::Kind::TUPLE:
           throw "Constructor did not return value.";
       }
@@ -429,19 +396,30 @@ Maybe<DescribedPointer> Compiler::castToPointer(Thing&& input, Bound<Type>&& tar
     case Thing::Kind::TYPE:
     case Thing::Kind::FUNCTION:
     case Thing::Kind::METHOD:
-    case Thing::Kind::DATA:
-    case Thing::Kind::LVALUE:
     case Thing::Kind::TUPLE:
       // TODO:  If non-exclusive, try castTo() then take pointer-to-temporary?
       location.error("Not a pointer.");
       return nullptr;
 
-    case Thing::Kind::POINTER:
-      return castToPointer(move(input.pointer), move(targetType), targetExclusivity,
-                           variablesUsed, location);
+    case Thing::Kind::RVALUE:
+      switch (input.rvalue.getKind()) {
+        case DescribedRvalue::Kind::DATA:
+          // TODO:  If non-exclusive, try castTo() then take pointer-to-temporary?
+          location.error("Not a pointer.");
+          return nullptr;
+        case DescribedRvalue::Kind::POINTER:
+          return castToPointer(move(input.rvalue.pointer), move(targetType), targetExclusivity,
+                               variablesUsed, location);
+      }
 
-    case Thing::Kind::POINTER_LVALUE: {
-      Maybe<DescribedPointer> ptr = toPointer(move(input.pointerLvalue), location);
+    case Thing::Kind::LVALUE: {
+      if (!input.lvalue.isPointer) {
+        // TODO:  If non-exclusive, try castTo() then take pointer-to-temporary?
+        location.error("Not a pointer.");
+        return nullptr;
+      }
+
+      Maybe<DescribedPointer> ptr = toPointer(move(input.lvalue), location);
       if (ptr == nullptr) {
         return nullptr;
       } else {
@@ -491,185 +469,201 @@ Maybe<DescribedPointer> Compiler::castToPointer(
 // ---------------------------------------------------------------------------------------
 // toPointer
 
-Maybe<DescribedPointer> Compiler::toPointer(Thing::Lvalue&& lvalue, ErrorLocation location) {
-  if (lvalue.parent == nullptr) {
-    // The lvalue names a local variable.
-    // Read the variable.
-    DataDescriptor descriptor = scope.getVariableDescriptor(lvalue.variable);
+Maybe<DescribedPointer> Compiler::toPointer(
+    DataVariable* localVariable, ErrorLocation location) {
+  // Read the variable.
+  DataDescriptor descriptor = scope.getVariableDescriptor(localVariable);
 
-    // Form a pointer to the local variable.
-    PointerConstraints constraints(
-        PointerConstraints::PossibleTarget(
-            LocalVariablePath(lvalue.variable),
-            TargetSpecificity::EXACT_TARGET));
-    return DescribedPointer(
-        PointerDescriptor(move(descriptor), Exclusivity::OWNED, move(constraints)),
-        expressionBuilder.makePointerToLocalVariable(lvalue.variable),
-        evaluator.makePointerToLocalVariable(lvalue.variable));
+  // Form a pointer to the local variable.
+  PointerConstraints constraints(
+      PointerConstraints::PossibleTarget(
+          LocalVariablePath(localVariable),
+          TargetSpecificity::EXACT_TARGET));
+  return DescribedPointer(
+      PointerDescriptor(move(descriptor), Exclusivity::OWNED, move(constraints)),
+      expressionBuilder.makePointerToLocalVariable(localVariable),
+      evaluator.makePointerToLocalVariable(localVariable));
+}
 
-  } else {
-    Maybe<Thing::ConstrainedType> type = getMemberType(*lvalue.parent, lvalue.variable, location);
-    if (type == nullptr) {
-      return nullptr;
+Maybe<DescribedPointer> Compiler::toPointer(
+    PointerVariable* localVariable, ErrorLocation location) {
+  PointerDescriptor descriptor = scope.getVariableDescriptor(localVariable);
+
+  return DescribedPointer(move(descriptor),
+      expressionBuilder.readLocalVariable(localVariable),
+      evaluator.readLocalVariable(localVariable));
+}
+
+Maybe<DescribedPointer> Compiler::toPointer(
+    DescribedPointer&& parent, DataVariable* member, ErrorLocation location) {
+  Maybe<Thing::ConstrainedType> type = getMemberType(parent, member, location);
+  if (type == nullptr) {
+    return nullptr;
+  }
+
+  PointerDescriptor& parentDesc = parent.descriptor;
+
+  if (parentDesc.exclusivity <= Exclusivity::IDENTITY) {
+    // TODO:  Allow reading of constant members of identity pointers.
+    location.error("Cannot access member of identity alias.");
+    // We can keep going here rather than return null, since we know what the code meant.
+  }
+
+  if (type->constraints == nullptr) {
+    // The member does not declare what pointers it may contain, so inherit from the parent.
+    type->constraints = getInheritedConstraints(
+        move(parentDesc.targetDescriptor.constraints), member);
+  }
+
+  assert(type->constraints != nullptr);
+
+  // Inherit pointer constraints.
+  for (auto& possibleTarget: parentDesc.constraints.possibleTargets) {
+    switch (possibleTarget.specificity) {
+      case TargetSpecificity::EXACT_TARGET:
+        // Parent possibly pointed at this exact path, so child points at this exact path plus
+        // the variable added to the end.
+        possibleTarget.path.member.path.push_back(member);
+        break;
+
+      case TargetSpecificity::TARGET_OR_MEMBER:
+        // Parent possibly pointed at this path or some member thereof.  The child also points
+        // to some member thereof, but we can't add any new useful info.
+        break;
     }
+  }
 
-    PointerDescriptor& parentDesc = lvalue.parent->descriptor;
+  return DescribedPointer(
+      PointerDescriptor(
+          DataDescriptor(move(type->type), move(*type->constraints)),
+          parentDesc.exclusivity,
+          move(parentDesc.constraints)),
+      expressionBuilder.getPointerToMember(move(parent.expression), member),
+      evaluator.getPointerToMember(move(parent.staticPointer), member));
+}
 
-    if (parentDesc.exclusivity <= Exclusivity::IDENTITY) {
-      // TODO:  Allow reading of constant members of identity pointers.
-      location.error("Cannot access member of identity alias.");
-      // We can keep going here rather than return null, since we know what the code meant.
-    }
+Maybe<DescribedPointer> Compiler::toPointer(
+    DescribedPointer&& parent, PointerVariable* member, ErrorLocation location) {
+  Maybe<Thing::ConstrainedType> type = getMemberType(parent, member, location);
+  if (type == nullptr) {
+    return nullptr;
+  }
 
-    if (type->constraints == nullptr) {
-      // The member does not declare what pointers it may contain, so inherit from the parent.
-      type->constraints = getInheritedConstraints(
-          move(parentDesc.targetDescriptor.constraints), lvalue.variable);
-    }
+  PointerDescriptor& parentDesc = parent.descriptor;
 
-    assert(type->constraints != nullptr);
+  if (parentDesc.exclusivity <= Exclusivity::IDENTITY) {
+    // TODO:  Allow reading of constant members of identity pointers.
+    location.error("Cannot access member of identity alias.");
+    // We can keep going here rather than return null, since we know what the code meant.
+  }
 
-    // Inherit pointer constraints.
-    for (auto& possibleTarget: parentDesc.constraints.possibleTargets) {
-      switch (possibleTarget.specificity) {
+  Exclusivity memberExclusivity = member->getExclusivity();
+
+  if (memberExclusivity >= Exclusivity::EXCLUSIVE) {
+    // This is an exclusive pointer.  While the copy that we're making exists, the original
+    // pointer can no longer be treated as exclusive.  Therefore, copy's constraints must
+    // explicitly list the source pointer in its possibleTargets, so that we can keep track of
+    // the fact that the source is no longer exclusive.  If the source pointer is destroyed
+    // before the copy, then the copy's possibleTargets will need to be replaced at that time
+    // by substituting in the source's possibleTargets.
+    //
+    // TODO:  Do we want to compute the eventual replacement targets now?  Unclear if
+    //   it will be hard to do later, when the substitution actually happens.
+
+    for (auto& target: parentDesc.constraints.possibleTargets) {
+      switch (target.specificity) {
         case TargetSpecificity::EXACT_TARGET:
-          // Parent possibly pointed at this exact path, so child points at this exact path plus
-          // the variable added to the end.
-          possibleTarget.path.member.path.push_back(lvalue.variable);
+          // Since this is an exact path, we can append the new variable to the path.
+          target.path.member.path.push_back(member);
           break;
 
         case TargetSpecificity::TARGET_OR_MEMBER:
-          // Parent possibly pointed at this path or some member thereof.  The child also points
-          // to some member thereof, but we can't add any new useful info.
+          // We only know that the member being read is nested somewhere inside a larger
+          // object.  Since we don't know exactly which member, this pointer will have to be
+          // invalidated when the outer object goes out-of-scope, even though the pointer itself
+          // may point to a longer-lived object.
           break;
       }
     }
-
-    return DescribedPointer(
-        PointerDescriptor(
-            DataDescriptor(move(type->type), move(*type->constraints)),
-            parentDesc.exclusivity,
-            move(parentDesc.constraints)),
-        expressionBuilder.getPointerToMember(move(lvalue.parent->expression), lvalue.variable),
-        evaluator.getPointerToMember(move(lvalue.parent->staticPointer), lvalue.variable));
-  }
-}
-
-Maybe<DescribedPointer> Compiler::toPointer(Thing::PointerLvalue&& lvalue, ErrorLocation location) {
-  if (lvalue.parent == nullptr) {
-    // The lvalue names a local variable.
-    PointerDescriptor descriptor = scope.getVariableDescriptor(lvalue.variable);
-
-    return DescribedPointer(move(descriptor),
-        expressionBuilder.readLocalVariable(lvalue.variable),
-        evaluator.readLocalVariable(lvalue.variable));
-
   } else {
-    Maybe<Thing::ConstrainedType> type = getMemberType(*lvalue.parent, lvalue.variable, location);
-    if (type == nullptr) {
-      return nullptr;
-    }
+    // Since this is a shared or identity pointer, making a copy of it does not affect its
+    // exclusivity level.  Therefore, we can derive the copied pointer's possible targets
+    // directly from the pointer member's possible targets, with no later substitution.
 
-    PointerDescriptor& parentDesc = lvalue.parent->descriptor;
+    Maybe<UnboundPointerConstraints> unboundConstraints =
+        member->getUnboundConstraints(parentDesc.targetDescriptor.type.context);
 
-    if (parentDesc.exclusivity <= Exclusivity::IDENTITY) {
-      // TODO:  Allow reading of constant members of identity pointers.
-      location.error("Cannot access member of identity alias.");
-      // We can keep going here rather than return null, since we know what the code meant.
-    }
-
-    Exclusivity memberExclusivity = lvalue.variable->getExclusivity();
-
-    if (memberExclusivity >= Exclusivity::EXCLUSIVE) {
-      // This is an exclusive pointer.  While the copy that we're making exists, the original
-      // pointer can no longer be treated as exclusive.  Therefore, copy's constraints must
-      // explicitly list the source pointer in its possibleTargets, so that we can keep track of
-      // the fact that the source is no longer exclusive.  If the source pointer is destroyed
-      // before the copy, then the copy's possibleTargets will need to be replaced at that time
-      // by substituting in the source's possibleTargets.
-      //
-      // TODO:  Do we want to compute the eventual replacement targets now?  Unclear if
-      //   it will be hard to do later, when the substitution actually happens.
-
-      for (auto& target: parentDesc.constraints.possibleTargets) {
-        switch (target.specificity) {
+    if (unboundConstraints == nullptr) {
+      // No explicit constraints, so infer them from the parent's possiblePointers.
+      parentDesc.constraints = getInheritedConstraints(
+          move(parentDesc.targetDescriptor.constraints), member);
+    } else {
+      // We need to fill out the possibleTargets missing from
+      // unboundConstraints->parentIndependentConstraints using
+      // unboundConstraints->innerPointers.
+      for (auto& parent: parentDesc.constraints.possibleTargets) {
+        switch (parent.specificity) {
           case TargetSpecificity::EXACT_TARGET:
-            // Since this is an exact path, we can append the new variable to the path.
-            target.path.member.path.push_back(lvalue.variable);
+            // Append each inner pointer to this exact target to form a new exact target.
+            for (const auto& target: unboundConstraints->innerPointers) {
+              LocalVariablePath newPath = parent.path;  // intentional copy
+              newPath.member.path.push_back(target.path.root);
+              newPath.member.path.insert(newPath.member.path.end(),
+                  target.path.member.path.begin(), target.path.member.path.end());
+
+              unboundConstraints->parentIndependentConstraints.possibleTargets.push_back(
+                  PointerConstraints::PossibleTarget(move(newPath), target.specificity));
+            }
             break;
 
           case TargetSpecificity::TARGET_OR_MEMBER:
-            // We only know that the member being read is nested somewhere inside a larger
-            // object.  Since we don't know exactly which member, this pointer will have to be
-            // invalidated when the outer object goes out-of-scope, even though the pointer itself
-            // may point to a longer-lived object.
+            // All we know is that if there are any inner pointers, they also point somewhere
+            // inside this target.
+            if (!unboundConstraints->innerPointers.empty()) {
+              unboundConstraints->parentIndependentConstraints.possibleTargets.push_back(
+                  move(parent));
+            }
             break;
         }
       }
+
+      // Now that it's filled in, just use it.
+      parentDesc.constraints = move(unboundConstraints->parentIndependentConstraints);
+    }
+  }
+
+  // OK, parentDesc.constraints now actually describe the member's constraints, not the
+  // parent's.  God, in-place modification creates so much confusion.
+
+  if (type->constraints == nullptr) {
+    // No constraints were declared on the pointer's target, so we must invent some.
+    type->constraints = getDefaultConstraints(type->type.entity);
+  }
+
+  assert(type->constraints != nullptr);
+
+  return DescribedPointer(
+      PointerDescriptor(
+          DataDescriptor(move(type->type), move(*type->constraints)),
+          std::min(parentDesc.exclusivity, memberExclusivity),
+          move(parentDesc.constraints)),
+      expressionBuilder.readMember(move(parent.expression), member),
+      evaluator.readMember(move(parent.staticPointer), member));
+}
+
+Maybe<DescribedPointer> Compiler::toPointer(Lvalue&& lvalue, ErrorLocation location) {
+  if (lvalue.isPointer) {
+    if (lvalue.parent == nullptr) {
+      return toPointer(lvalue.pointerVariable(), location);
     } else {
-      // Since this is a shared or identity pointer, making a copy of it does not affect its
-      // exclusivity level.  Therefore, we can derive the copied pointer's possible targets
-      // directly from the pointer member's possible targets, with no later substitution.
-
-      Maybe<UnboundPointerConstraints> unboundConstraints =
-          lvalue.variable->getUnboundConstraints(parentDesc.targetDescriptor.type.context);
-
-      if (unboundConstraints == nullptr) {
-        // No explicit constraints, so infer them from the parent's possiblePointers.
-        parentDesc.constraints = getInheritedConstraints(
-            move(parentDesc.targetDescriptor.constraints), lvalue.variable);
-      } else {
-        // We need to fill out the possibleTargets missing from
-        // unboundConstraints->parentIndependentConstraints using
-        // unboundConstraints->innerPointers.
-        for (auto& parent: parentDesc.constraints.possibleTargets) {
-          switch (parent.specificity) {
-            case TargetSpecificity::EXACT_TARGET:
-              // Append each inner pointer to this exact target to form a new exact target.
-              for (const auto& target: unboundConstraints->innerPointers) {
-                LocalVariablePath newPath = parent.path;  // intentional copy
-                newPath.member.path.push_back(target.path.root);
-                newPath.member.path.insert(newPath.member.path.end(),
-                    target.path.member.path.begin(), target.path.member.path.end());
-
-                unboundConstraints->parentIndependentConstraints.possibleTargets.push_back(
-                    PointerConstraints::PossibleTarget(move(newPath), target.specificity));
-              }
-              break;
-
-            case TargetSpecificity::TARGET_OR_MEMBER:
-              // All we know is that if there are any inner pointers, they also point somewhere
-              // inside this target.
-              if (!unboundConstraints->innerPointers.empty()) {
-                unboundConstraints->parentIndependentConstraints.possibleTargets.push_back(
-                    move(parent));
-              }
-              break;
-          }
-        }
-
-        // Now that it's filled in, just use it.
-        parentDesc.constraints = move(unboundConstraints->parentIndependentConstraints);
-      }
+      return toPointer(move(*lvalue.parent), lvalue.pointerVariable(), location);
     }
-
-    // OK, parentDesc.constraints now actually describe the member's constraints, not the
-    // parent's.  God, in-place modification creates so much confusion.
-
-    if (type->constraints == nullptr) {
-      // No constraints were declared on the pointer's target, so we must invent some.
-      type->constraints = getDefaultConstraints(type->type.entity);
+  } else {
+    if (lvalue.parent == nullptr) {
+      return toPointer(lvalue.dataVariable(), location);
+    } else {
+      return toPointer(move(*lvalue.parent), lvalue.dataVariable(), location);
     }
-
-    assert(type->constraints != nullptr);
-
-    return DescribedPointer(
-        PointerDescriptor(
-            DataDescriptor(move(type->type), move(*type->constraints)),
-            std::min(parentDesc.exclusivity, memberExclusivity),
-            move(parentDesc.constraints)),
-        expressionBuilder.readMember(move(lvalue.parent->expression), lvalue.variable),
-        evaluator.readMember(move(lvalue.parent->staticPointer), lvalue.variable));
   }
 }
 
@@ -805,16 +799,6 @@ Maybe<DescribedPointer> Compiler::getMember(DescribedData&& object, PointerVaria
       evaluator.readMember(move(object.staticValue), member));
 }
 
-Thing::Lvalue Compiler::getMember(DescribedPointer&& object, DataVariable* member,
-                                  ErrorLocation location) {
-  return Thing::Lvalue(move(object), member);
-}
-
-Thing::PointerLvalue Compiler::getMember(DescribedPointer&& object, PointerVariable* member,
-                                         ErrorLocation location) {
-  return Thing::PointerLvalue(move(object), member);
-}
-
 Thing Compiler::getMember(Thing&& object, const string& memberName, ErrorLocation location) {
   switch (object.getKind()) {
     case Thing::Kind::UNKNOWN:
@@ -829,13 +813,9 @@ Thing Compiler::getMember(Thing&& object, const string& memberName, ErrorLocatio
     case Thing::Kind::TYPE:
       return object.type.type.entity->getMemberOfType(*this, move(object.type), memberName);
 
-    case Thing::Kind::DATA:
-      return object.data.descriptor.type.entity->getMemberOfInstance(
-          *this, move(object.data), memberName, location);
-
-    case Thing::Kind::POINTER:
-      return object.pointer.descriptor.targetDescriptor.type.entity->getMemberOfInstance(
-          *this, move(object.pointer), memberName, location);
+    case Thing::Kind::RVALUE:
+      return object.rvalue.dataDescriptor().type.entity->getMemberOfInstance(
+          *this, move(object.rvalue), memberName, location);
 
     case Thing::Kind::LVALUE: {
       Maybe<DescribedPointer> ptr = toPointer(move(object.lvalue), location);
@@ -844,17 +824,7 @@ Thing Compiler::getMember(Thing&& object, const string& memberName, ErrorLocatio
       }
 
       return ptr->descriptor.targetDescriptor.type.entity->getMemberOfInstance(
-          *this, move(*ptr), memberName, location);
-    }
-
-    case Thing::Kind::POINTER_LVALUE: {
-      Maybe<DescribedPointer> ptr = toPointer(move(object.pointerLvalue), location);
-      if (ptr == nullptr) {
-        return Thing::fromUnknown();
-      }
-
-      return ptr->descriptor.targetDescriptor.type.entity->getMemberOfInstance(
-          *this, move(*ptr), memberName, location);
+          *this, DescribedRvalue::from(move(*ptr)), memberName, location);
     }
   }
 
@@ -889,20 +859,24 @@ Thing Compiler::evaluate(ast::Expression& expression, VariableUsageSet& variable
     }
 
     case Expression::Type::LITERAL_INT:
-      return Thing::fromData(
-          DataDescriptor(
-              Bound<Type>(BuiltinType::get(BuiltinType::Builtin::INTEGER), Context({})),
-              DataConstraints::fromEmpty()),
-          DataExpression::fromConstant(DataValue::fromInteger(expression.literalInt)),
-          DataValue::fromInteger(expression.literalInt));
+      return Thing::from(
+          DescribedRvalue::from(
+              DescribedData(
+                  DataDescriptor(
+                      Bound<Type>(BuiltinType::get(BuiltinType::Builtin::INTEGER), Context({})),
+                      DataConstraints::fromEmpty()),
+                  DataExpression::fromConstant(DataValue::fromInteger(expression.literalInt)),
+                  DataValue::fromInteger(expression.literalInt))));
 
     case Expression::Type::LITERAL_DOUBLE:
-      return Thing::fromData(
-          DataDescriptor(
-              Bound<Type>(BuiltinType::get(BuiltinType::Builtin::DOUBLE), Context({})),
-              DataConstraints::fromEmpty()),
-          DataExpression::fromConstant(DataValue::fromDouble(expression.literalDouble)),
-          DataValue::fromDouble(expression.literalDouble));
+      return Thing::from(
+          DescribedRvalue::from(
+              DescribedData(
+                  DataDescriptor(
+                      Bound<Type>(BuiltinType::get(BuiltinType::Builtin::DOUBLE), Context({})),
+                      DataConstraints::fromEmpty()),
+                  DataExpression::fromConstant(DataValue::fromDouble(expression.literalDouble)),
+                  DataValue::fromDouble(expression.literalDouble))));
 
     case Expression::Type::LITERAL_STRING:
       // TODO:  Generate code to construct the string class.
@@ -929,18 +903,12 @@ Thing Compiler::evaluate(ast::Expression& expression, VariableUsageSet& variable
         case Thing::Kind::METHOD:
           break;
 
-        case Thing::Kind::DATA:
-          leftRvalue = DescribedRvalue::from(move(left.data));
-          break;
-        case Thing::Kind::POINTER:
-          leftRvalue = DescribedRvalue::from(move(left.pointer));
+        case Thing::Kind::RVALUE:
+          leftRvalue = move(left.rvalue);
           break;
 
         case Thing::Kind::LVALUE:
           leftRvalue = toPointer(move(left.lvalue), ErrorLocation(*expression.binaryOperator.left));
-          break;
-        case Thing::Kind::POINTER_LVALUE:
-          leftRvalue = toPointer(move(left.pointerLvalue), ErrorLocation(*expression.binaryOperator.left));
           break;
       }
 
@@ -992,10 +960,8 @@ Thing Compiler::evaluate(ast::Expression& expression, VariableUsageSet& variable
           return Thing::fromUnknown();
 
         case Thing::Kind::TYPE:
-        case Thing::Kind::DATA:
-        case Thing::Kind::POINTER:
+        case Thing::Kind::RVALUE:
         case Thing::Kind::LVALUE:
-        case Thing::Kind::POINTER_LVALUE:
         case Thing::Kind::TUPLE:
           ErrorLocation(*expression.functionCall.function).error("Not a function");
           return Thing::fromUnknown();

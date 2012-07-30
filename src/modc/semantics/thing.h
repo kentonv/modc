@@ -244,6 +244,41 @@ struct Tuple {
               vector<NamedElement>&&, namedElements);
 };
 
+struct Lvalue {
+  // If present, the variable is a member of the given pointer.  Otherwise, the variable is a
+  // local variable.
+  Maybe<DescribedPointer> parent;
+
+  bool isPointer;
+  Variable* variable;
+
+  // Lots of reinterpret_cast here because these types are incomplete and we can't #include them
+  // without an include cycle.  Pretty lame, I know.  Things will be better when this code is
+  // rewritten in %C.
+  DataVariable* dataVariable() {
+    return reinterpret_cast<DataVariable*>(variable);
+  }
+  PointerVariable* pointerVariable() {
+    return reinterpret_cast<PointerVariable*>(variable);
+  }
+
+  Lvalue(DescribedPointer&& parent, DataVariable* member)
+      : parent(move(parent)), isPointer(false), variable(reinterpret_cast<Variable*>(member)) {}
+  Lvalue(DescribedPointer&& parent, PointerVariable* member)
+      : parent(move(parent)), isPointer(true), variable(reinterpret_cast<Variable*>(member)) {}
+  explicit Lvalue(DataVariable* localVariable)
+      : parent(nullptr), isPointer(false), variable(reinterpret_cast<Variable*>(localVariable)) {}
+  explicit Lvalue(PointerVariable* localVariable)
+      : parent(nullptr), isPointer(true), variable(reinterpret_cast<Variable*>(localVariable)) {}
+
+  bool operator==(const Lvalue& other) const {
+    return parent == other.parent && variable == other.variable;
+  }
+  bool operator!=(const Lvalue& other) const {
+    return !(*this == other);
+  }
+};
+
 class Thing {
 public:
   UNION_TYPE_BOILERPLATE(Thing);
@@ -251,10 +286,8 @@ public:
   enum class Kind {
     UNKNOWN,
 
-    DATA,
-    POINTER,
+    RVALUE,
     LVALUE,
-    POINTER_LVALUE,
 
     FUNCTION,
     METHOD,
@@ -266,26 +299,6 @@ public:
 
   struct Unknown {
     VALUE_TYPE0(Unknown);
-  };
-
-  struct Lvalue {
-    // If present, the variable is a member of the given pointer.  Otherwise, the variable is a
-    // local variable.
-    Maybe<DescribedPointer> parent;
-    DataVariable* variable;
-
-    VALUE_TYPE2(Lvalue, DescribedPointer&&, parent, DataVariable*, variable);
-    Lvalue(DataVariable* variable): parent(nullptr), variable(variable) {}
-  };
-
-  struct PointerLvalue {
-    // If present, the variable is a member of the given pointer.  Otherwise, the variable is a
-    // local variable.
-    Maybe<DescribedPointer> parent;
-    PointerVariable* variable;
-
-    VALUE_TYPE2(PointerLvalue, DescribedPointer&&, parent, PointerVariable*, variable);
-    PointerLvalue(PointerVariable* variable): parent(nullptr), variable(variable) {}
   };
 
   struct Method {
@@ -301,10 +314,8 @@ public:
   union {
     Unknown unknown;
 
-    DescribedData data;
-    DescribedPointer pointer;
+    DescribedRvalue rvalue;
     Lvalue lvalue;
-    PointerLvalue pointerLvalue;
 
     Bound<Overload> function;
     Method method;
@@ -316,23 +327,13 @@ public:
 
   static Thing fromEntity(Bound<Entity>&& entity);
 
-  static Thing fromData(DataDescriptor&& descriptor, DataExpression&& expression,
-                        DataValue staticValue);
-  static Thing fromData(DescribedData&& data);
-  static Thing fromPointer(PointerDescriptor&& descriptor, PointerExpression&& expression,
-                           Maybe<DataValue&> staticPointer);
-  static Thing fromPointer(DescribedPointer&& pointer);
-  static Thing fromLvalue(DescribedPointer&& parent, DataVariable* variable);
-  static Thing fromLvalue(DescribedPointer&& parent, PointerVariable* variable);
-  static Thing fromLvalue(DataVariable* variable);
-  static Thing fromLvalue(PointerVariable* variable);
-
   static Thing fromFunction(Bound<Overload>&& overload);
   static Thing fromMethod(DescribedData&& object, Overload* method);
 
   static Thing fromType(Bound<Type>&& type);
   static Thing fromType(Bound<Type>&& type, DataConstraints&& constraints);
 
+  static Thing from(Lvalue&& lvalue);
   static Thing from(DescribedRvalue&& rvalue);
   static Thing from(Maybe<DescribedRvalue>&& rvalue);
 
