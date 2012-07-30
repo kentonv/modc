@@ -37,12 +37,6 @@ public:
 
   // TODO:  style + style constraints
   // TODO:  visibility
-
-  // Read the entity.  If not known at compile time, returns a Thing of kind
-  // DYNAMIC_{REFERENCE,VALUE} with code that simply reads the variable.
-  // Recursively dereferences outer objects in the context.
-  virtual Thing dereference(Context&& context, VariableUsageSet& variablesUsed,
-                            Location location, VariableUsageSet::Style style) = 0;
 };
 
 // =======================================================================================
