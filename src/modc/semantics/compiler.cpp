@@ -196,10 +196,9 @@ Maybe<DescribedRvalue> Compiler::applyDefaultConversion(
   return conversion->call(*this, move(input), variablesUsed, location);
 }
 
-Thing Compiler::applyDefaultConversion(
+Maybe<Thing> Compiler::applyDefaultConversion(
     Thing&& input, VariableUsageSet& variablesUsed, ErrorLocation location) {
   switch (input.getKind()) {
-    case Thing::Kind::UNKNOWN:
     case Thing::Kind::TYPE:
     case Thing::Kind::FUNCTION:
     case Thing::Kind::METHOD:
@@ -212,7 +211,7 @@ Thing Compiler::applyDefaultConversion(
     case Thing::Kind::LVALUE: {
       Maybe<DescribedPointer> ptr = toPointer(move(input.lvalue), location);
       if (ptr == nullptr) {
-        return Thing::fromUnknown();
+        return nullptr;
       }
       return Thing::from(applyDefaultConversion(DescribedRvalue::from(move(*ptr)),
                                                 variablesUsed, location));
@@ -255,35 +254,33 @@ Maybe<DescribedRvalue> Compiler::castTo(
   // Look for a constructor on the destination type.
   Overload* constructor = targetType.entity->getImplicitConstructor();
 
-  Thing result = constructor->resolve(*this, move(targetType.context),
-                                      Tuple::fromSingleValue(Thing::from(move(input))),
-                                      location);
+  Maybe<Thing> result = constructor->resolve(*this, move(targetType.context),
+                                             Tuple::fromSingleValue(Thing::from(move(input))),
+                                             location);
 
-  switch (result.getKind()) {
-    case Thing::Kind::UNKNOWN:
-      return nullptr;
+  if (result == nullptr) {
+    return nullptr;
+  } else {
+    switch (result->getKind()) {
+      case Thing::Kind::RVALUE:
+        return move(result->rvalue);
 
-    case Thing::Kind::RVALUE:
-      return move(result.rvalue);
+      case Thing::Kind::TYPE:
+      case Thing::Kind::FUNCTION:
+      case Thing::Kind::METHOD:
+      case Thing::Kind::LVALUE:
+      case Thing::Kind::TUPLE:
+        throw "Constructor did not return value.";
+    }
 
-    case Thing::Kind::TYPE:
-    case Thing::Kind::FUNCTION:
-    case Thing::Kind::METHOD:
-    case Thing::Kind::LVALUE:
-    case Thing::Kind::TUPLE:
-      throw "Constructor did not return value.";
+    throw "can't get here";
   }
-
-  throw "can't get here";
 }
 
 Maybe<DescribedRvalue> Compiler::castTo(
     Thing&& input, Bound<Type>&& targetType,
     VariableUsageSet& variablesUsed, ErrorLocation location) {
   switch (input.getKind()) {
-    case Thing::Kind::UNKNOWN:
-      return nullptr;
-
     case Thing::Kind::TYPE:
     case Thing::Kind::FUNCTION:
     case Thing::Kind::METHOD:
@@ -305,21 +302,22 @@ Maybe<DescribedRvalue> Compiler::castTo(
 
     case Thing::Kind::TUPLE: {
       Overload* constructor = targetType.entity->getImplicitConstructor();
-      Thing result = constructor->resolve(*this, move(targetType.context),
-                                          move(input.tuple), location);
-      switch (result.getKind()) {
-        case Thing::Kind::UNKNOWN:
-          return nullptr;
+      Maybe<Thing> result = constructor->resolve(*this, move(targetType.context),
+                                                 move(input.tuple), location);
+      if (result == nullptr) {
+        return nullptr;
+      } else {
+        switch (result->getKind()) {
+          case Thing::Kind::RVALUE:
+            return move(result->rvalue);
 
-        case Thing::Kind::RVALUE:
-          return move(result.rvalue);
-
-        case Thing::Kind::TYPE:
-        case Thing::Kind::FUNCTION:
-        case Thing::Kind::METHOD:
-        case Thing::Kind::LVALUE:
-        case Thing::Kind::TUPLE:
-          throw "Constructor did not return value.";
+          case Thing::Kind::TYPE:
+          case Thing::Kind::FUNCTION:
+          case Thing::Kind::METHOD:
+          case Thing::Kind::LVALUE:
+          case Thing::Kind::TUPLE:
+            throw "Constructor did not return value.";
+        }
       }
     }
   }
@@ -390,9 +388,6 @@ Maybe<DescribedPointer> Compiler::castToPointer(Thing&& input, Bound<Type>&& tar
                                                 VariableUsageSet& variablesUsed,
                                                 ErrorLocation location) {
   switch (input.getKind()) {
-    case Thing::Kind::UNKNOWN:
-      return nullptr;
-
     case Thing::Kind::TYPE:
     case Thing::Kind::FUNCTION:
     case Thing::Kind::METHOD:
@@ -799,16 +794,13 @@ Maybe<DescribedPointer> Compiler::getMember(DescribedData&& object, PointerVaria
       evaluator.readMember(move(object.staticValue), member));
 }
 
-Thing Compiler::getMember(Thing&& object, const string& memberName, ErrorLocation location) {
+Maybe<Thing> Compiler::getMember(Thing&& object, const string& memberName, ErrorLocation location) {
   switch (object.getKind()) {
-    case Thing::Kind::UNKNOWN:
-      return Thing::fromUnknown();
-
     case Thing::Kind::FUNCTION:
     case Thing::Kind::METHOD:
     case Thing::Kind::TUPLE:
       location.error("This thing doesn't have members.");
-      return Thing::fromUnknown();
+      return nullptr;
 
     case Thing::Kind::TYPE:
       return object.type.type.entity->getMemberOfType(*this, move(object.type), memberName);
@@ -820,7 +812,7 @@ Thing Compiler::getMember(Thing&& object, const string& memberName, ErrorLocatio
     case Thing::Kind::LVALUE: {
       Maybe<DescribedPointer> ptr = toPointer(move(object.lvalue), location);
       if (ptr == nullptr) {
-        return Thing::fromUnknown();
+        return nullptr;
       }
 
       return ptr->descriptor.targetDescriptor.type.entity->getMemberOfInstance(
@@ -834,20 +826,20 @@ Thing Compiler::getMember(Thing&& object, const string& memberName, ErrorLocatio
 // ---------------------------------------------------------------------------------------
 // evaluate
 
-Thing Compiler::evaluate(ast::Expression& expression, VariableUsageSet& variablesUsed) {
+Maybe<Thing> Compiler::evaluate(ast::Expression& expression, VariableUsageSet& variablesUsed) {
   switch (expression.getType()) {
     case Expression::Type::ERROR: {
       for (auto& error: expression.error) {
         ErrorLocation(expression).error(error);
       }
-      return Thing::fromUnknown();
+      return nullptr;
     }
 
     case Expression::Type::VARIABLE: {
       Maybe<Thing> thing = scope.lookupBinding(expression.variable);
       if (thing == nullptr) {
         ErrorLocation(expression).error("\"", expression.variable, "\" is not declared.");
-        return Thing::fromUnknown();
+        return nullptr;
       } else {
         return move(*thing);
       }
@@ -888,91 +880,153 @@ Thing Compiler::evaluate(ast::Expression& expression, VariableUsageSet& variable
 
     case Expression::Type::BINARY_OPERATOR: {
       vector<VariableUsageSet> subVariablesUsed(2);
-      Thing left = evaluate(*expression.binaryOperator.left, subVariablesUsed[0]);
-      Thing right = evaluate(*expression.binaryOperator.right, subVariablesUsed[1]);
+      Maybe<Thing> left = evaluate(*expression.binaryOperator.left, subVariablesUsed[0]);
+      Maybe<Thing> right = evaluate(*expression.binaryOperator.right, subVariablesUsed[1]);
       variablesUsed.merge(move(subVariablesUsed));
 
-      Maybe<DescribedRvalue> leftRvalue;
-      switch (left.getKind()) {
-        case Thing::Kind::UNKNOWN:
-          return Thing::fromUnknown();
-
-        case Thing::Kind::TYPE:
-        case Thing::Kind::TUPLE:
-        case Thing::Kind::FUNCTION:
-        case Thing::Kind::METHOD:
-          break;
-
-        case Thing::Kind::RVALUE:
-          leftRvalue = move(left.rvalue);
-          break;
-
-        case Thing::Kind::LVALUE:
-          leftRvalue = toPointer(move(left.lvalue), ErrorLocation(*expression.binaryOperator.left));
-          break;
+      if (left == nullptr || right == nullptr) {
+        return nullptr;
       }
 
-      return applyBinaryOperator(move(left), expression.binaryOperator.op, move(right));
+      Maybe<DescribedRvalue&> leftRvalue =
+          asRvalue(*left, ErrorLocation(*expression.binaryOperator.left));
+      Maybe<DescribedRvalue&> rightRvalue =
+          asRvalue(*right, ErrorLocation(*expression.binaryOperator.right));
+
+      Maybe<BinaryOperator&> leftOp = nullptr;
+      if (leftRvalue != nullptr) {
+        leftOp = leftRvalue->dataDescriptor().type.entity->lookupLeftBinaryOperator(
+            expression.binaryOperator.op);
+      }
+
+      Maybe<BinaryOperator&> rightOp = nullptr;
+      if (rightRvalue != nullptr) {
+        rightOp = rightRvalue->dataDescriptor().type.entity->lookupRightBinaryOperator(
+            expression.binaryOperator.op);
+      }
+
+      BinaryOperator::MatchSpecificity leftMatch =
+          leftOp == nullptr ? BinaryOperator::MatchSpecificity::NONE
+                            : leftOp->match(*this, *leftRvalue, *right);
+      BinaryOperator::MatchSpecificity rightMatch =
+          rightOp == nullptr ? BinaryOperator::MatchSpecificity::NONE
+                             : rightOp->match(*this, *rightRvalue, *left);
+
+      if (leftMatch > rightMatch) {
+        return Thing::from(
+            leftOp->call(*this, move(*leftRvalue), move(*right), variablesUsed,
+                         ErrorLocation(expression)));
+      } else if (rightMatch > leftMatch) {
+        return Thing::from(
+            rightOp->call(*this, move(*rightRvalue), move(*left), variablesUsed,
+                          ErrorLocation(expression)));
+      } else {
+        if (leftMatch == BinaryOperator::MatchSpecificity::NONE) {
+          ErrorLocation(expression).error("No such operator.");
+        } else {
+          ErrorLocation(expression).error(
+              "Ambiguous operator:  Each operand's type defines an operator that matches a "
+              "superclass of the other's type.");
+        }
+        return nullptr;
+      }
     }
 
-    case Expression::Type::PREFIX_OPERATOR:
-      return applyPrefixOperator(
-          expression.prefixOperator.op,
-          evaluate(*expression.prefixOperator.operand, variablesUsed),
-          variablesUsed, expression.location);
+    case Expression::Type::PREFIX_OPERATOR: {
+      Maybe<Thing> operand = evaluate(*expression.prefixOperator.operand, variablesUsed);
+      if (operand == nullptr) {
+        return nullptr;
+      }
+      Maybe<DescribedRvalue&> rvalue =
+          asRvalue(*operand, ErrorLocation(*expression.binaryOperator.left));
+      if (rvalue == nullptr) {
+        ErrorLocation(expression).error("Can't apply unary operator to non-value.");
+        return nullptr;
+      }
 
-    case Expression::Type::POSTFIX_OPERATOR:
-      return applyPostfixOperator(
-          evaluate(*expression.postfixOperator.operand, variablesUsed),
-          expression.postfixOperator.op);
+      Maybe<UnaryOperator&> op =
+          rvalue->dataDescriptor().type.entity->lookupPrefixOperator(expression.prefixOperator.op);
+      if (op == nullptr) {
+        ErrorLocation(expression).error("No such operator.");
+        return nullptr;
+      }
 
-    case Expression::Type::TERNARY_OPERATOR: {
-      return applyTernaryOperator(
-          evaluate(*expression.ternaryOperator.condition, variablesUsed),
-          *expression.ternaryOperator.trueClause,
-          *expression.ternaryOperator.falseClause,
-          variablesUsed, expression.location);
+      return Thing::from(op->call(*this, move(*rvalue), variablesUsed, ErrorLocation(expression)));
     }
+
+    case Expression::Type::POSTFIX_OPERATOR: {
+      Maybe<Thing> operand = evaluate(*expression.postfixOperator.operand, variablesUsed);
+      if (operand == nullptr) {
+        return nullptr;
+      }
+      Maybe<DescribedRvalue&> rvalue =
+          asRvalue(*operand, ErrorLocation(*expression.binaryOperator.left));
+      if (rvalue == nullptr) {
+        ErrorLocation(expression).error("Can't apply unary operator to non-value.");
+        return nullptr;
+      }
+
+      Maybe<UnaryOperator&> op =
+          rvalue->dataDescriptor().type.entity->lookupPostfixOperator(
+              expression.postfixOperator.op);
+      if (op == nullptr) {
+        ErrorLocation(expression).error("No such operator.");
+        return nullptr;
+      }
+
+      return Thing::from(op->call(*this, move(*rvalue), variablesUsed, ErrorLocation(expression)));
+    }
+
+    case Expression::Type::TERNARY_OPERATOR:
+      // TODO:  Ternary operator is kind of painful, actually.
+      throw "unimplemented";
 
     case Expression::Type::FUNCTION_CALL: {
       vector<VariableUsageSet> subVariablesUsed(1);
       subVariablesUsed.reserve(expression.functionCall.parameters.size() + 1);
 
-      Thing function = evaluate(*expression.functionCall.function, subVariablesUsed[0]);
+      Maybe<Thing> function = evaluate(*expression.functionCall.function, subVariablesUsed[0]);
 
       vector<Tuple::Element> positionalElements;
       vector<Tuple::NamedElement> namedElements;
 
+      bool hadError = function == nullptr;
       for (auto& param: expression.functionCall.parameters) {
         // TODO:  Support named parameters once they are supported in the AST.
         subVariablesUsed.emplace_back();
-        positionalElements.emplace_back(
-            param.styleAllowance,
-            evaluate(*param.expression, subVariablesUsed.back()));
+        Maybe<Thing> parameter = evaluate(*param.expression, subVariablesUsed.back());
+        if (parameter == nullptr) {
+          hadError = true;
+        } else {
+          positionalElements.emplace_back(
+              param.styleAllowance,
+              evaluate(*param.expression, subVariablesUsed.back()));
+        }
       }
 
       variablesUsed.merge(move(subVariablesUsed));
 
       Tuple parameters(move(positionalElements), move(namedElements));
 
-      switch (function.getKind()) {
-        case Thing::Kind::UNKNOWN:
-          return Thing::fromUnknown();
+      if (hadError) {
+        return nullptr;
+      }
 
+      switch (function->getKind()) {
         case Thing::Kind::TYPE:
         case Thing::Kind::RVALUE:
         case Thing::Kind::LVALUE:
         case Thing::Kind::TUPLE:
           ErrorLocation(*expression.functionCall.function).error("Not a function");
-          return Thing::fromUnknown();
+          return nullptr;
 
         case Thing::Kind::FUNCTION:
-          return function.function.entity->resolve(
-              *this, move(function.function.context), move(parameters), ErrorLocation(expression));
+          return function->function.entity->resolve(
+              *this, move(function->function.context), move(parameters), ErrorLocation(expression));
 
         case Thing::Kind::METHOD:
-          return function.method.method->resolve(
-              *this, move(function.method.object), move(parameters), ErrorLocation(expression));
+          return function->method.method->resolve(
+              *this, move(function->method.object), move(parameters), ErrorLocation(expression));
       }
     }
 
@@ -982,8 +1036,11 @@ Thing Compiler::evaluate(ast::Expression& expression, VariableUsageSet& variable
 
     case Expression::Type::MEMBER_ACCESS: {
       // TODO:  Handle style allowance.
-      Thing object = evaluate(*expression.memberAccess.object, variablesUsed);
-      return getMember(move(object), expression.memberAccess.member, ErrorLocation(expression));
+      Maybe<Thing> object = evaluate(*expression.memberAccess.object, variablesUsed);
+      if (object == nullptr) {
+        return nullptr;
+      }
+      return getMember(move(*object), expression.memberAccess.member, ErrorLocation(expression));
     }
 
     case Expression::Type::IMPORT:
@@ -993,6 +1050,30 @@ Thing Compiler::evaluate(ast::Expression& expression, VariableUsageSet& variable
   }
 
   throw "Can't get here.";
+}
+
+Maybe<DescribedRvalue&> Compiler::asRvalue(Thing& thing, ErrorLocation location) {
+  switch (thing.getKind()) {
+    case Thing::Kind::TYPE:
+    case Thing::Kind::TUPLE:
+    case Thing::Kind::FUNCTION:
+    case Thing::Kind::METHOD:
+      return nullptr;
+
+    case Thing::Kind::RVALUE:
+      return thing.rvalue;
+
+    case Thing::Kind::LVALUE:
+      Maybe<DescribedPointer> pointer = toPointer(move(thing.lvalue), location);
+      if (pointer == nullptr) {
+        return nullptr;
+      } else {
+        thing = Thing::from(move(*pointer));
+        return thing.rvalue;
+      }
+  }
+
+  throw "can't get here";
 }
 
 }  // namespace compiler

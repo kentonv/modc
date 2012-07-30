@@ -284,8 +284,6 @@ public:
   UNION_TYPE_BOILERPLATE(Thing);
 
   enum class Kind {
-    UNKNOWN,
-
     RVALUE,
     LVALUE,
 
@@ -296,10 +294,6 @@ public:
   };
 
   Kind getKind() const { return kind; }
-
-  struct Unknown {
-    VALUE_TYPE0(Unknown);
-  };
 
   struct Method {
     DescribedRvalue object;
@@ -312,8 +306,6 @@ public:
   };
 
   union {
-    Unknown unknown;
-
     DescribedRvalue rvalue;
     Lvalue lvalue;
 
@@ -323,8 +315,6 @@ public:
     Tuple tuple;
   };
 
-  static Thing fromUnknown();
-
   static Thing fromEntity(Bound<Entity>&& entity);
 
   static Thing fromFunction(Bound<Overload>&& overload);
@@ -333,9 +323,15 @@ public:
   static Thing fromType(Bound<Type>&& type);
   static Thing fromType(Bound<Type>&& type, DataConstraints&& constraints);
 
-  static Thing from(Lvalue&& lvalue);
+  static Thing from(DescribedData&& data);
+  static Thing from(DescribedPointer&& pointer);
   static Thing from(DescribedRvalue&& rvalue);
-  static Thing from(Maybe<DescribedRvalue>&& rvalue);
+  static Thing from(Lvalue&& lvalue);
+
+  // Convenient.
+  static Maybe<Thing> from(Maybe<DescribedData>&& data);
+  static Maybe<Thing> from(Maybe<DescribedPointer>&& pointer);
+  static Maybe<Thing> from(Maybe<DescribedRvalue>&& rvalue);
 
 private:
   Kind kind;

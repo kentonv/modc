@@ -121,7 +121,7 @@ public:
 
   Maybe<DescribedRvalue> applyDefaultConversion(
       DescribedRvalue&& input, VariableUsageSet& variablesUsed, ErrorLocation location);
-  Thing applyDefaultConversion(
+  Maybe<Thing> applyDefaultConversion(
       Thing&& input, VariableUsageSet& variablesUsed, ErrorLocation location);
 
   Maybe<DescribedRvalue> castTo(
@@ -179,10 +179,15 @@ public:
                                  ErrorLocation location);
   Maybe<DescribedPointer> getMember(DescribedData&& object, PointerVariable* member,
                                     ErrorLocation location);
-  Thing getMember(Thing&& object, const string& memberName, ErrorLocation location);
+  Maybe<Thing> getMember(Thing&& object, const string& memberName, ErrorLocation location);
 
   // Input is non-const because it will be annotated.
-  Thing evaluate(ast::Expression& expression, VariableUsageSet& variablesUsed);
+  Maybe<Thing> evaluate(ast::Expression& expression, VariableUsageSet& variablesUsed);
+
+private:
+  // If the thing is an rvalue, return a reference to it.  If the thing is an lvalue, convert it
+  // to an rvalue and return a reference to it.  Otherwise, return null.
+  Maybe<DescribedRvalue&> asRvalue(Thing& thing, ErrorLocation location);
 };
 
 }  // namespace compiler

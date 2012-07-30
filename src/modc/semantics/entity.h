@@ -117,32 +117,33 @@ public:
   // result of calling that function.
   //
   // resolve() may have the effect of lazily instantiating templates.
-  Thing resolve(Compiler& compiler, Context&& context, Tuple&& parameters,
-                ErrorLocation location);
-  Thing resolve(Compiler& compiler, DescribedRvalue&& object,
-                Tuple&& parameters, ErrorLocation location);
+  Maybe<Thing> resolve(Compiler& compiler, Context&& context, Tuple&& parameters,
+                       ErrorLocation location);
+  Maybe<Thing> resolve(Compiler& compiler, DescribedRvalue&& object,
+                       Tuple&& parameters, ErrorLocation location);
 };
 
 class BinaryOperator: public Entity {
 public:
-  enum MatchType {
-    EXACT,
+  enum MatchSpecificity {
+    // Order matters.
+    NONE,
     GENERALIZED,
-    NONE
+    EXACT
   };
 
-  MatchType match(Compiler& compiler, const DescribedRvalue& this_, const Thing& other);
+  MatchSpecificity match(Compiler& compiler, const DescribedRvalue& this_, const Thing& other);
 
-  DescribedRvalue call(Compiler& compiler, DescribedRvalue&& this_, Thing&& other,
-                       VariableUsageSet& variablesUsed, ErrorLocation location);
+  Maybe<DescribedRvalue> call(Compiler& compiler, DescribedRvalue&& this_, Thing&& other,
+                              VariableUsageSet& variablesUsed, ErrorLocation location);
 
   Rvalue call(vector<Rvalue>&& typeContext, Rvalue&& this_, Rvalue&& other);
 };
 
 class UnaryOperator: public Entity {
 public:
-  DescribedRvalue call(Compiler& compiler, DescribedRvalue&& this_,
-                       VariableUsageSet& variablesUsed, ErrorLocation location);
+  Maybe<DescribedRvalue> call(Compiler& compiler, DescribedRvalue&& this_,
+                              VariableUsageSet& variablesUsed, ErrorLocation location);
 
   Rvalue call(vector<Rvalue>&& typeContext, Rvalue&& this_);
 };
