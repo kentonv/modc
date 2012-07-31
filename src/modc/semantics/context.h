@@ -24,6 +24,7 @@
 
 #include "../Maybe.h"
 #include "../macros.h"
+#include "value.h"
 
 namespace modc {
 namespace compiler {
@@ -33,6 +34,10 @@ using std::string;
 using std::vector;
 using std::map;
 
+class ConstrainedType;
+class Context;
+class Variable;
+
 struct MemberPath {
   // TODO:  What about array subscripts?
   vector<Variable*> path;
@@ -41,6 +46,14 @@ struct MemberPath {
   MemberPath() {}
 
   bool isPrefix(const MemberPath& other) const;
+
+  // These return nullptr if the path contained an UNKNOWN before the last component.  They
+  // assert-fail if the path contained an unset optional member, since you were supposed to verify
+  // that that wasn't the case separately.
+  Maybe<const DataValue&> readFrom(const DataValue& value) const;
+  Maybe<DataValue&> readFrom(DataValue& value) const;
+
+  void append(const MemberPath& other);
 };
 
 struct LocalVariablePath {
@@ -54,18 +67,18 @@ struct LocalVariablePath {
   bool isPrefix(const LocalVariablePath& other) const;
 };
 
-struct Context {
+class Context {
+public:
   class Binding {
   public:
     UNION_TYPE_BOILERPLATE(Binding);
 
     enum class Kind {
       DATA,
-      POINTER,
-      INTEGER_EXPRESSION
+      POINTER
     };
 
-    Kind getKind();
+    Kind getKind() const;
 
     union {
       DataValue data;
@@ -73,27 +86,16 @@ struct Context {
       // TODO:  Integer expressions.
     };
 
+    static Binding fromData(DataValue&& value);
     static Binding fromPointer(LocalVariablePath&& pointer);
   };
 
-  // How many Bindings are visible in this Context?
-  vector<Binding>::size_type depth;
-
-  // The set of bindings which are not shared with the underlay.  These are the last bindings in
-  // the context.
-  vector<Binding> suffix;
-
-  // Bindings not covered by the suffix can be found in the underlay.  If suffix.size() == depth,
-  // then the underlay may be null.
-  const Context* underlay;
-
   const Binding& operator[](vector<Binding>::size_type index) const {
     assert(index < depth);
-    vector<Binding>::size_type overlayStart = depth - suffix.size();
-    if (index < overlayStart) {
+    if (index < overlayStart()) {
       return (*underlay)[index];
     } else {
-      return suffix[index - overlayStart];
+      return suffix[index - overlayStart()];
     }
   }
 
@@ -109,6 +111,28 @@ struct Context {
   }
 
   bool operator==(const Context& other) const;
+
+  Context port(const Context& base) const;
+  Maybe<Context> port(const Context& base, const DataValue& additionalValue) const;
+
+private:
+  // How many Bindings are visible in this Context?
+  vector<Binding>::size_type depth;
+
+  // The set of bindings which are not shared with the underlay.  These are the last bindings in
+  // the context.
+  vector<Binding> suffix;
+
+  // Bindings not covered by the suffix can be found in the underlay.  If suffix.size() == depth,
+  // then the underlay may be null.
+  const Context* underlay;
+
+  Context port(const Context& base, vector<Binding>::size_type upToDepth) const;
+  Context port2(const Context& base, vector<Binding>::size_type upToSuffixIndex) const;
+
+  inline vector<Binding>::size_type overlayStart() const {
+    return depth - suffix.size();
+  }
 };
 
 template <typename EntityType>
@@ -121,6 +145,9 @@ struct Bound {
   template <typename OtherEntity>
   Bound(Bound<OtherEntity>&& other)
       : entity(other.entity), context(move(other.context)) {}
+
+  Bound<EntityType> port(const Context& base) const;
+  Maybe<Bound<EntityType>> port(const Context& base, const DataValue& additionalValue) const;
 };
 
 }  // namespace compiler

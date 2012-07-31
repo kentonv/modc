@@ -487,7 +487,7 @@ Maybe<DescribedPointer> Compiler::toPointer(
 
 Maybe<DescribedPointer> Compiler::toPointer(
     DescribedPointer&& parent, DataVariable* member, ErrorLocation location) {
-  Maybe<Thing::ConstrainedType> type = getMemberType(parent, member, location);
+  Maybe<ConstrainedType> type = getMemberType(parent, member, location);
   if (type == nullptr) {
     return nullptr;
   }
@@ -535,7 +535,7 @@ Maybe<DescribedPointer> Compiler::toPointer(
 
 Maybe<DescribedPointer> Compiler::toPointer(
     DescribedPointer&& parent, PointerVariable* member, ErrorLocation location) {
-  Maybe<Thing::ConstrainedType> type = getMemberType(parent, member, location);
+  Maybe<ConstrainedType> type = getMemberType(parent, member, location);
   if (type == nullptr) {
     return nullptr;
   }
@@ -683,9 +683,9 @@ LocalVariablePath Compiler::bindTemporary(DescribedPointer& pointer) {
 // ---------------------------------------------------------------------------------------
 // getMemberType
 
-Maybe<Thing::ConstrainedType> Compiler::getMemberType(DescribedData& parent, Variable* member,
-                                                      ErrorLocation location) {
-  Maybe<Thing::ConstrainedType> result =
+Maybe<ConstrainedType> Compiler::getMemberType(DescribedData& parent, Variable* member,
+                                               ErrorLocation location) {
+  Maybe<ConstrainedType> result =
       member->getType(parent.descriptor.type.context, parent.staticValue);
 
   if (result == nullptr) {
@@ -699,9 +699,9 @@ Maybe<Thing::ConstrainedType> Compiler::getMemberType(DescribedData& parent, Var
   return result;
 }
 
-Maybe<Thing::ConstrainedType> Compiler::getMemberType(DescribedPointer& parent,
-                                                      Variable* variable, ErrorLocation location) {
-  Maybe<Thing::ConstrainedType> result;
+Maybe<ConstrainedType> Compiler::getMemberType(DescribedPointer& parent,
+                                               Variable* variable, ErrorLocation location) {
+  Maybe<ConstrainedType> result;
 
   if (parent.staticPointer) {
     result = variable->getType(
@@ -724,7 +724,7 @@ Maybe<Thing::ConstrainedType> Compiler::getMemberType(DescribedPointer& parent,
 
 Maybe<DescribedData> Compiler::getMember(DescribedData&& object, DataVariable* member,
                                          ErrorLocation location) {
-  Maybe<Thing::ConstrainedType> type = getMemberType(object, member, location);
+  Maybe<ConstrainedType> type = getMemberType(object, member, location);
   if (type == nullptr) {
     return nullptr;
   }
@@ -742,7 +742,7 @@ Maybe<DescribedData> Compiler::getMember(DescribedData&& object, DataVariable* m
 
 Maybe<DescribedPointer> Compiler::getMember(DescribedData&& object, PointerVariable* member,
                                             ErrorLocation location) {
-  Maybe<Thing::ConstrainedType> type = getMemberType(object, member, location);
+  Maybe<ConstrainedType> type = getMemberType(object, member, location);
   if (type == nullptr) {
     return nullptr;
   }

@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "base/OwnedPtr.h"
 #include "../Maybe.h"
 #include "../macros.h"
 

@@ -170,10 +170,10 @@ public:
   //
   // "parent" may be modified in-place in order to bind it to a local variable -- see
   // bindTemporary().
-  Maybe<Thing::ConstrainedType> getMemberType(DescribedData& parent, Variable* member,
-                                              ErrorLocation location);
-  Maybe<Thing::ConstrainedType> getMemberType(DescribedPointer& parent,
-                                              Variable* variable, ErrorLocation location);
+  Maybe<ConstrainedType> getMemberType(DescribedData& parent, Variable* member,
+                                       ErrorLocation location);
+  Maybe<ConstrainedType> getMemberType(DescribedPointer& parent,
+                                       Variable* variable, ErrorLocation location);
 
   Maybe<DescribedData> getMember(DescribedData&& object, DataVariable* member,
                                  ErrorLocation location);

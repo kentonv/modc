@@ -123,6 +123,9 @@ struct DataConstraints {
   static DataConstraints fromEmpty() {
     return DataConstraints({}, AdditionalTargets::NONE);
   }
+
+  DataConstraints port(const Context& from) const;
+  Maybe<DataConstraints> port(const Context& from, const DataValue& additionalValue) const;
 };
 
 struct PointerConstraints {
@@ -279,6 +282,15 @@ struct Lvalue {
   }
 };
 
+struct ConstrainedType {
+  Bound<Type> type;
+  Maybe<DataConstraints> constraints;
+
+  VALUE_TYPE2(ConstrainedType, Bound<Type>&&, type, DataConstraints&&, constraints);
+  explicit ConstrainedType(Bound<Type>&& type)
+      : type(move(type)), constraints(nullptr) {}
+};
+
 class Thing {
 public:
   UNION_TYPE_BOILERPLATE(Thing);
@@ -298,11 +310,6 @@ public:
   struct Method {
     DescribedRvalue object;
     Overload* method;
-  };
-
-  struct ConstrainedType {
-    Bound<Type> type;
-    Maybe<DataConstraints> constraints;
   };
 
   union {
