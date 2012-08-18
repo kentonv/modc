@@ -16,6 +16,7 @@
 
 #include "entity.h"
 #include "compiler.h"
+#include "port.h"
 
 namespace modc {
 namespace compiler {
@@ -31,13 +32,8 @@ public:
   // -------------------------------------------------------------------------------------
   // implements Variable
 
-  ConstrainedType getType(const Context& context) {
-    return type.port(context);
-  }
-
-  Maybe<ConstrainedType> getType(const Context& containingTypeContext,
-                                 const DataValue& containingObject) {
-    return type.port(containingTypeContext, containingObject);
+  ConstrainedType getType(Port& port) {
+    return port.import(type);
   }
 
 private:

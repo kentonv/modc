@@ -25,6 +25,7 @@ namespace modc {
 namespace compiler {
 
 using errors::Location;
+class Port;
 
 class Entity {
 public:
@@ -44,7 +45,7 @@ public:
   virtual ~Variable();
 
   // If this is a context variable, get its index in the context.  Otherwise, return null.
-  virtual Maybe<Context::Size> getContextPosition() const = 0;
+  virtual Maybe<size_t> getContextPosition() const = 0;
 
   // Get the declared type for the variable.  Note that this only contains constraints that
   // were explicitly declared in the code along with the variable's declaration.  Additional
@@ -53,24 +54,7 @@ public:
   // these constraints can be derived.
   //
   // For pointer variables, getType() returns the type of the pointed-to value.
-  virtual ConstrainedType getType(const Context& context) = 0;
-
-  // Like getType(Context), but accepts a Context which is lacking the object instance of which
-  // this variable is a member.  So, the context is for the variable's containing type, not the
-  // variable itself.  Also provided is a Value which represents what is known about the containing
-  // object.  This may be a partial Value, i.e. it can contain UNKNOWNs.  If the Value is sufficient
-  // to construct the fully-described type of the variable, then it is returned.  Otherwise, null
-  // is returned.
-  //
-  // In most cases, the descriptor for a member does not depend on the instance, so this will
-  // succeed even if thisValue is entirely UNKNOWN.  The instance only matters if the member's
-  // type is dependent on the instance or other members, e.g. because it is a parameterized type
-  // or an inner type.
-  //
-  // When this returns null, the caller will need to bind the parent object to a local variable
-  // so that it can construct a Context that contains it.
-  virtual Maybe<ConstrainedType> getType(const Context& containingTypeContext,
-                                         const DataValue& containingObject) = 0;
+  virtual ConstrainedType getType(Port& port) = 0;
 };
 
 class DataVariable: public Variable {

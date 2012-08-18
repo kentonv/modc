@@ -1,8 +1,9 @@
 next:
 - Create a Port class and move all the port() methods to it.
-  - This can keep track of any type parameters that need to become implicit parameters.
-  - Need to think more about exporting vs. importing.  I guess exporting is unnecessary because
-    we always import the constraints and then check them locally?
-  - DataConstraints::port() use of FROM_CALLER doesn't make sense since that would only apply
-    to exporting.
+  - This can keep track of any type parameters that need to become implicit parameters.  (well,
+    if we add export methods...)
 - start implementing Entity classes.
+
+
+also:
+- Fix Maybe<T&> operator bool!

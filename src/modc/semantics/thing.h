@@ -123,9 +123,6 @@ struct DataConstraints {
   static DataConstraints fromEmpty() {
     return DataConstraints({}, AdditionalTargets::NONE);
   }
-
-  DataConstraints port(const Context& from) const;
-  Maybe<DataConstraints> port(const Context& from, const DataValue& additionalValue) const;
 };
 
 struct PointerConstraints {
@@ -291,9 +288,6 @@ struct ConstrainedType {
       : type(move(type)), constraints(nullptr) {}
   explicit ConstrainedType(Bound<Type>&& type, Maybe<DataConstraints>&& constraints)
       : type(move(type)), constraints(move(constraints)) {}
-
-  ConstrainedType port(const Context& from) const;
-  Maybe<ConstrainedType> port(const Context& from, const DataValue& additionalValue) const;
 };
 
 class Thing {

@@ -37,6 +37,7 @@ using std::map;
 class ConstrainedType;
 class Context;
 class Variable;
+class Port;
 
 struct MemberPath {
   // TODO:  What about array subscripts?
@@ -67,6 +68,16 @@ struct LocalVariablePath {
   bool isPrefix(const LocalVariablePath& other) const;
 };
 
+// A list of bindings for context variables, e.g. "this" and type parameters.  A particular Context
+// object is specific to some scope, as it defines all of the context variables visible in that
+// scope.  Context bindings are ordered from outermost to innermost -- e.g. for an inner class, the
+// outer class's "this" binding comes before the inner class's "this" binding.
+//
+// A Context may be only partially filled in -- in particular, some prefix of the context may be
+// omitted.  This means that the compiler doesn't have bindings for that prefix at the moment.  E.g.
+// if the compiler is compiling a particular method of a class, "this" is not bound because it is
+// only known at runtime.  In fact, a Context object typically represents a delta from the scope
+// currently being compiled to some other scope.
 class Context {
 public:
   class Binding {
@@ -90,53 +101,15 @@ public:
     static Binding fromPointer(LocalVariablePath&& pointer);
   };
 
-  typedef vector<Binding>::size_type Size;
+  // Number of bindings at the beginning of the context which are not bound.
+  size_t unboundCount;
 
-  const Binding& operator[](Size index) const {
-    assert(index < depth);
-    if (index < overlayStart()) {
-      return (*underlay)[index];
-    } else {
-      return suffix[index - overlayStart()];
-    }
-  }
+  // Bindings following the unbound.
+  vector<Binding> bindings;
 
-  Context(Size depth, vector<Binding>&& suffix, const Context& underlay)
-      : depth(depth), suffix(move(suffix)), underlay(&underlay) {
-    assert(suffix.size() <= depth);
-  }
-  Context(vector<Binding>&& suffix)
-      : depth(suffix.size()), suffix(move(suffix)), underlay(nullptr) {}
-  Context(const Context& underlay, Binding&& suffix)
-      : depth(underlay.depth + 1), underlay(&underlay) {
-    this->suffix.push_back(move(suffix));
-  }
+  VALUE_TYPE2(Context, size_t, unboundCount, vector<Binding>&&, bindings);
 
-  bool operator==(const Context& other) const;
-
-  Context port(const Context& base) const;
-  Maybe<Context> port(const Context& base, const DataValue& additionalValue) const;
-
-private:
-  // How many Bindings are visible in this Context?
-  Size depth;
-
-  // The set of bindings which are not shared with the underlay.  These are the last bindings in
-  // the context.
-  vector<Binding> suffix;
-
-  // Bindings not covered by the suffix can be found in the underlay.  If suffix.size() == depth,
-  // then the underlay may be null.
-  const Context* underlay;
-
-  Maybe<Context> port(const Context& base, Maybe<const DataValue&> additionalValue,
-                      Size upToDepth) const;
-  Maybe<Context> port2(const Context& base, Maybe<const DataValue&> additionalValue,
-                       Size upToSuffixIndex) const;
-
-  inline Size overlayStart() const {
-    return depth - suffix.size();
-  }
+  static Context fromEmpty() { return Context(0, vector<Binding>()); }
 };
 
 template <typename EntityType>
@@ -149,14 +122,6 @@ struct Bound {
   template <typename OtherEntity>
   Bound(Bound<OtherEntity>&& other)
       : entity(other.entity), context(move(other.context)) {}
-
-  Bound<EntityType> port(const Context& base) const {
-    return Bound<EntityType>(entity, context.port(base));
-  }
-  Maybe<Bound<EntityType>> port(const Context& base, const DataValue& additionalValue) const {
-    return context.port(base, additionalValue).morph(
-        [this](Context&& newContext) { return Bound<EntityType>(entity, move(newContext)); });
-  }
 };
 
 }  // namespace compiler

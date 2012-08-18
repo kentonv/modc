@@ -163,6 +163,7 @@ public:
   // given value.  The input is modified in-place to become a reference to the local instead of
   // an expression.  If the input is already a simple reference to a specific variable then its path
   // is simply returned without creating a new local.
+  LocalVariablePath bindTemporary(DescribedRvalue& rvalue);
   LocalVariablePath bindTemporary(DescribedData& value);
   LocalVariablePath bindTemporary(DescribedPointer& pointer);
 

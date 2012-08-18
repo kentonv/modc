@@ -18,6 +18,7 @@
 
 #include "compiler.h"
 #include "entity.h"
+#include "port.h"
 
 namespace modc {
 namespace compiler {
@@ -661,6 +662,16 @@ Maybe<DescribedPointer> Compiler::toPointer(Lvalue&& lvalue, ErrorLocation locat
 // ---------------------------------------------------------------------------------------
 // bindTemporary
 
+LocalVariablePath Compiler::bindTemporary(DescribedRvalue& rvalue) {
+  switch (rvalue.getKind()) {
+    case DescribedRvalue::Kind::DATA:
+      return bindTemporary(rvalue.data);
+    case DescribedRvalue::Kind::POINTER:
+      return bindTemporary(rvalue.pointer);
+  }
+  throw "can't get here";
+}
+
 LocalVariablePath Compiler::bindTemporary(DescribedData& value) {
   // TODO:  Implement.
   throw "Unimplemented:  Binding a temporary to a local variable.";
@@ -685,38 +696,14 @@ LocalVariablePath Compiler::bindTemporary(DescribedPointer& pointer) {
 
 Maybe<ConstrainedType> Compiler::getMemberType(DescribedData& parent, Variable* member,
                                                ErrorLocation location) {
-  Maybe<ConstrainedType> result =
-      member->getType(parent.descriptor.type.context, parent.staticValue);
-
-  if (result == nullptr) {
-    // Member type is dependent on dynamic instance details.  We need to bind the value to a
-    // temporary local variable.
-    Context subContext(parent.descriptor.type.context,
-                       Context::Binding::fromPointer(bindTemporary(parent)));
-    result = member->getType(subContext);
-  }
-
-  return result;
+  Port port(*this, parent.descriptor.type.context, parent);
+  return member->getType(port);
 }
 
 Maybe<ConstrainedType> Compiler::getMemberType(DescribedPointer& parent,
-                                               Variable* variable, ErrorLocation location) {
-  Maybe<ConstrainedType> result;
-
-  if (parent.staticPointer) {
-    result = variable->getType(
-        parent.descriptor.targetDescriptor.type.context, *parent.staticPointer);
-  }
-
-  if (result == nullptr) {
-    // Member type is dependent on dynamic instance details.  We need to bind the pointer to a
-    // temporary local variable.
-    Context subContext(parent.descriptor.targetDescriptor.type.context,
-                       Context::Binding::fromPointer(bindTemporary(parent)));
-    result = variable->getType(subContext);
-  }
-
-  return result;
+                                               Variable* member, ErrorLocation location) {
+  Port port(*this, parent.descriptor.targetDescriptor.type.context, parent);
+  return member->getType(port);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -851,7 +838,8 @@ Maybe<Thing> Compiler::evaluate(ast::Expression& expression, VariableUsageSet& v
           DescribedRvalue::from(
               DescribedData(
                   DataDescriptor(
-                      Bound<Type>(BuiltinType::get(BuiltinType::Builtin::INTEGER), Context({})),
+                      Bound<Type>(BuiltinType::get(BuiltinType::Builtin::INTEGER),
+                                  Context::fromEmpty()),
                       DataConstraints::fromEmpty()),
                   DataExpression::fromConstant(DataValue::fromInteger(expression.literalInt)),
                   DataValue::fromInteger(expression.literalInt))));
@@ -861,7 +849,8 @@ Maybe<Thing> Compiler::evaluate(ast::Expression& expression, VariableUsageSet& v
           DescribedRvalue::from(
               DescribedData(
                   DataDescriptor(
-                      Bound<Type>(BuiltinType::get(BuiltinType::Builtin::DOUBLE), Context({})),
+                      Bound<Type>(BuiltinType::get(BuiltinType::Builtin::DOUBLE),
+                                  Context::fromEmpty()),
                       DataConstraints::fromEmpty()),
                   DataExpression::fromConstant(DataValue::fromDouble(expression.literalDouble)),
                   DataValue::fromDouble(expression.literalDouble))));
