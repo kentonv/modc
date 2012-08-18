@@ -44,7 +44,7 @@ public:
   virtual ~Variable();
 
   // If this is a context variable, get its index in the context.  Otherwise, return null.
-  virtual Maybe<int> getContextPosition() const = 0;
+  virtual Maybe<Context::Size> getContextPosition() const = 0;
 
   // Get the declared type for the variable.  Note that this only contains constraints that
   // were explicitly declared in the code along with the variable's declaration.  Additional

@@ -14,8 +14,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "compiler.h"
 #include "entity.h"
+#include "compiler.h"
 
 namespace modc {
 namespace compiler {
@@ -32,12 +32,12 @@ public:
   // implements Variable
 
   ConstrainedType getType(const Context& context) {
-    return context.port(type);
+    return type.port(context);
   }
 
   Maybe<ConstrainedType> getType(const Context& containingTypeContext,
                                  const DataValue& containingObject) {
-    return containingTypeContext.port(containingObject, type);
+    return type.port(containingTypeContext, containingObject);
   }
 
 private:

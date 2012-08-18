@@ -81,7 +81,7 @@ public:
     Kind getKind() const;
 
     union {
-      DataValue data;
+      DataValue data;  // Must be complete!  No UNKNOWNs allowed.
       LocalVariablePath pointer;
       // TODO:  Integer expressions.
     };
@@ -90,7 +90,9 @@ public:
     static Binding fromPointer(LocalVariablePath&& pointer);
   };
 
-  const Binding& operator[](vector<Binding>::size_type index) const {
+  typedef vector<Binding>::size_type Size;
+
+  const Binding& operator[](Size index) const {
     assert(index < depth);
     if (index < overlayStart()) {
       return (*underlay)[index];
@@ -99,7 +101,7 @@ public:
     }
   }
 
-  Context(vector<Binding>::size_type depth, vector<Binding>&& suffix, const Context& underlay)
+  Context(Size depth, vector<Binding>&& suffix, const Context& underlay)
       : depth(depth), suffix(move(suffix)), underlay(&underlay) {
     assert(suffix.size() <= depth);
   }
@@ -117,7 +119,7 @@ public:
 
 private:
   // How many Bindings are visible in this Context?
-  vector<Binding>::size_type depth;
+  Size depth;
 
   // The set of bindings which are not shared with the underlay.  These are the last bindings in
   // the context.
@@ -127,10 +129,12 @@ private:
   // then the underlay may be null.
   const Context* underlay;
 
-  Context port(const Context& base, vector<Binding>::size_type upToDepth) const;
-  Context port2(const Context& base, vector<Binding>::size_type upToSuffixIndex) const;
+  Maybe<Context> port(const Context& base, Maybe<const DataValue&> additionalValue,
+                      Size upToDepth) const;
+  Maybe<Context> port2(const Context& base, Maybe<const DataValue&> additionalValue,
+                       Size upToSuffixIndex) const;
 
-  inline vector<Binding>::size_type overlayStart() const {
+  inline Size overlayStart() const {
     return depth - suffix.size();
   }
 };
@@ -146,8 +150,13 @@ struct Bound {
   Bound(Bound<OtherEntity>&& other)
       : entity(other.entity), context(move(other.context)) {}
 
-  Bound<EntityType> port(const Context& base) const;
-  Maybe<Bound<EntityType>> port(const Context& base, const DataValue& additionalValue) const;
+  Bound<EntityType> port(const Context& base) const {
+    return Bound<EntityType>(entity, context.port(base));
+  }
+  Maybe<Bound<EntityType>> port(const Context& base, const DataValue& additionalValue) const {
+    return context.port(base, additionalValue).morph(
+        [this](Context&& newContext) { return Bound<EntityType>(entity, move(newContext)); });
+  }
 };
 
 }  // namespace compiler

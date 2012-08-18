@@ -39,7 +39,7 @@ struct EntityName {
   explicit EntityName(string&& name): name(move(name)), parameters(nullptr) {}
 };
 
-enum Exclusivity: char {
+enum class Exclusivity: char {
   // Order is important:  Latter pointers can be coerced to former pointers.
   IDENTITY,
   SHARED,
@@ -47,12 +47,12 @@ enum Exclusivity: char {
   OWNED,
 };
 
-enum TargetSpecificity: char {
+enum class TargetSpecificity: char {
   EXACT_TARGET,
   TARGET_OR_MEMBER
 };
 
-enum AdditionalTargets: char {
+enum class AdditionalTargets: char {
   NONE,
   FROM_CALLER
 };
@@ -289,6 +289,11 @@ struct ConstrainedType {
   VALUE_TYPE2(ConstrainedType, Bound<Type>&&, type, DataConstraints&&, constraints);
   explicit ConstrainedType(Bound<Type>&& type)
       : type(move(type)), constraints(nullptr) {}
+  explicit ConstrainedType(Bound<Type>&& type, Maybe<DataConstraints>&& constraints)
+      : type(move(type)), constraints(move(constraints)) {}
+
+  ConstrainedType port(const Context& from) const;
+  Maybe<ConstrainedType> port(const Context& from, const DataValue& additionalValue) const;
 };
 
 class Thing {

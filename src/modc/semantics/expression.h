@@ -18,6 +18,7 @@
 #define KENTONSCODE_MODC_SEMANTICS_EXPRESSION_H_
 
 #include "value.h"
+#include "../syntax/ast.h"
 
 namespace modc {
 namespace compiler {
@@ -108,7 +109,7 @@ public:
   };
 
   union {
-    DataValue constant;
+    DataValue constant;  // Cannot contain any RUNTIME_VALUE, transitively.
     DataVariable* localVariable;
 
     BinaryOperator binaryOperator;

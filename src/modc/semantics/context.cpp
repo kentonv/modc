@@ -21,24 +21,24 @@ namespace modc {
 namespace compiler {
 
 Context Context::port(const Context& base) const {
-  return port(base, depth);
+  Maybe<Context> result = port(base, nullptr, depth);
+  assert(result != nullptr);
+  return move(*result);
 }
 
 Maybe<Context> Context::port(const Context& base, const DataValue& additionalValue) const {
-  // TODO:  I think we need to separate unknown-due-to-error and unknown-because-its-dynamic.
-  //   The former can appear anywhere whereas the latter can only appear in the "partial" values
-  //   in Described{Data,Pointer}.
-#error "TODO"
+  return port(base, additionalValue, depth);
 }
 
-Context Context::port(const Context& base, vector<Binding>::size_type upToDepth) const {
+Maybe<Context> Context::port(const Context& base, Maybe<const DataValue&> additionalValue,
+                             Size upToDepth) const {
   if (upToDepth == 0) {
     return Context(vector<Binding>());
   }
 
   if (overlayStart() >= upToDepth) {
     // Requested content is entirely in underlay.
-    return underlay->port(base, upToDepth);
+    return underlay->port(base, additionalValue, upToDepth);
   }
 
   for (const Context* baseUnderlay = &base; ; baseUnderlay = baseUnderlay->underlay) {
@@ -50,45 +50,58 @@ Context Context::port(const Context& base, vector<Binding>::size_type upToDepth)
     }
   }
 
-  return port2(base, upToDepth - overlayStart());
+  return port2(base, additionalValue, upToDepth - overlayStart());
 }
 
-Context Context::port2(const Context& base, vector<Binding>::size_type upToSuffixIndex) const {
-  Context result = underlay->port(base, overlayStart());
+Maybe<Context> Context::port2(const Context& base, Maybe<const DataValue&> additionalValue,
+                              Size upToSuffixIndex) const {
+  Maybe<Context> result = underlay->port(base, additionalValue, overlayStart());
 
-  for (vector<Binding>::size_type i = 0; i < upToSuffixIndex; i++) {
-    const Binding& binding = suffix[i];
-    switch (binding.getKind()) {
-      case Binding::Kind::DATA:
-        // Nothing to port.
-        result.suffix.push_back(binding);
-        break;
-      case Binding::Kind::POINTER: {
-        Maybe<int> pos = binding.pointer.root->getContextPosition();
-        if (pos == nullptr) {
-          // Must be a local variable.
-          throw "Can't port local variable.";
-        }
+  if (result != nullptr) {
+    for (Size i = 0; i < upToSuffixIndex; i++) {
+      const Binding& binding = suffix[i];
+      switch (binding.getKind()) {
+        case Binding::Kind::DATA:
+          // Nothing to port.
+          result->suffix.push_back(binding);
+          break;
+        case Binding::Kind::POINTER: {
+          Maybe<Size> pos = binding.pointer.root->getContextPosition();
+          if (pos == nullptr) {
+            // Must be a local variable.
+            throw "Can't port local variable.";
+          }
 
-        const Binding& substitution = base[*pos];
-        switch (substitution.getKind()) {
-          case Binding::Kind::DATA: {
-            Maybe<const DataValue&> newValue = binding.pointer.member.readFrom(substitution.data);
+          if (*pos == base.depth) {
+            assert(additionalValue != nullptr);
+            Maybe<const DataValue&> newValue = binding.pointer.member.readFrom(*additionalValue);
             if (newValue == nullptr) {
-              result.suffix.push_back(Binding::fromData(DataValue::fromUnknown()));
-            } else {
-              result.suffix.push_back(Binding::fromData(DataValue(*newValue)));
+              result = nullptr;
+              return result;
             }
-            break;
+            result->suffix.push_back(Binding::fromData(DataValue(*newValue)));
+          } else {
+            const Binding& substitution = base[*pos];
+            switch (substitution.getKind()) {
+              case Binding::Kind::DATA: {
+                Maybe<const DataValue&> newValue =
+                    binding.pointer.member.readFrom(substitution.data);
+                if (newValue == nullptr) {
+                  throw "Encountered incomplete value in context binding.";
+                }
+                result->suffix.push_back(Binding::fromData(DataValue(*newValue)));
+                break;
+              }
+              case Binding::Kind::POINTER: {
+                LocalVariablePath newPath = substitution.pointer;
+                newPath.member.append(binding.pointer.member);
+                result->suffix.push_back(Binding::fromPointer(move(newPath)));
+                break;
+              }
+            }
           }
-          case Binding::Kind::POINTER: {
-            LocalVariablePath newPath = substitution.pointer;
-            newPath.member.append(binding.pointer.member);
-            result.suffix.push_back(Binding::fromPointer(move(newPath)));
-            break;
-          }
+          break;
         }
-        break;
       }
     }
   }

@@ -41,15 +41,18 @@ public:
   UNION_TYPE_BOILERPLATE(DataValue);
 
   enum class Kind {
-    // A placeholder value that is not yet known, e.g. because it is a metaprogramming constant,
-    // or because there was an error when trying to evaluate the value.
+    // A placeholder value that is not yet known, because it is computed at runtime.
+    // Note that this should NOT be used in any other situation -- e.g. do NOT use this for values
+    // that aren't known due to already-reported compile errors, or for meta parameters that are
+    // not yet known when sanity-checking an uninstantiated meta function.
     UNKNOWN,
 
-    // Pure data.
+    // Literals.
     BOOLEAN,
     INTEGER,
     DOUBLE,
 
+    // Aggregates.
     OBJECT,
     ARRAY,
   };

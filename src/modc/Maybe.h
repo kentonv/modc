@@ -24,6 +24,9 @@ namespace modc {
 using std::move;
 
 template <typename T>
+T any();
+
+template <typename T>
 class Maybe {
 public:
   Maybe(): isSet(false) {}
@@ -110,6 +113,24 @@ public:
 
   inline bool operator==(std::nullptr_t) const { return !isSet; }
   inline bool operator!=(std::nullptr_t) const { return isSet; }
+
+  template <typename Func>
+  auto morph(const Func& func) -> Maybe<decltype(func(any<T&&>()))> {
+    if (isSet) {
+      return func(move(value));
+    } else {
+      return nullptr;
+    }
+  }
+
+  template <typename Func>
+  auto transform(const Func& func) const -> Maybe<decltype(func(any<const T&>()))> {
+    if (isSet) {
+      return func(value);
+    } else {
+      return nullptr;
+    }
+  }
 
 private:
   bool isSet;
