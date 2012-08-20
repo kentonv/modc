@@ -43,6 +43,7 @@ public:
   template <typename T>
   Bound<T> import(const Bound<T>& input);
   DataConstraints import(const DataConstraints& input);
+  PointerConstraints import(const PointerConstraints& input);
   ConstrainedType import(const ConstrainedType& input);
 
 private:
@@ -66,6 +67,7 @@ private:
   };
 
   Maybe<const Context::Binding&> getBinding(size_t index);
+  LocalVariablePath importPointerTarget(const LocalVariablePath& input);
 };
 
 template <typename T>

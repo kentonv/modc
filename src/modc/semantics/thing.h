@@ -156,20 +156,6 @@ struct PointerConstraints {
   }
 };
 
-// Description of pointer constraints that doesn't require a specific binding for the object
-// of which this variable is a member.
-struct UnboundPointerConstraints {
-  // Constraints that don't reference the object at all, but rather something in the pointer's
-  // context, or the calling scope.
-  PointerConstraints parentIndependentConstraints;
-
-  // Additional possible targets of this pointer which point at sibling variables -- i.e. other
-  // members of the same object.  Each path is rooted at such a sibling variable, which means
-  // they must be grafted to some path rooted in a local variable before they can be used in
-  // any other context.
-  vector<PointerConstraints::PossibleTarget> innerPointers;
-};
-
 struct DataDescriptor {
   Bound<Type> type;
   DataConstraints constraints;

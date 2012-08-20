@@ -183,6 +183,60 @@ void Compiler::checkConstraints(const PointerConstraints& allowed, const Pointer
 }
 
 // ---------------------------------------------------------------------------------------
+// substitutePointer
+
+void Compiler::substitutePointer(PointerConstraints& constraintsToUpdate,
+                                 const LocalVariablePath& oldPointer,
+                                 const PointerConstraints& oldPointerConstraints) {
+  vector<PointerConstraints::PossibleTarget> newPossibleTargets;
+  newPossibleTargets.reserve(constraintsToUpdate.possibleTargets.size());
+
+  bool foundSubstitution = false;
+
+  for (auto& target: constraintsToUpdate.possibleTargets) {
+    if (oldPointer.isPrefix(target.path)) {
+      // Separate the suffix that is not part of oldPointer.
+      MemberPath suffix = move(target.path.member);
+      suffix.path.erase(suffix.path.begin(), suffix.path.begin() + oldPointer.member.path.size());
+
+      // For each possible target of oldPointer, add a new possible target.
+      for (auto& oldTarget: oldPointerConstraints.possibleTargets) {
+        switch (oldTarget.specificity) {
+          case TargetSpecificity::EXACT_TARGET:
+            newPossibleTargets.push_back(oldTarget);  // intentional copy
+            newPossibleTargets.back().path.member.append(suffix);
+            newPossibleTargets.back().specificity = target.specificity;
+            break;
+
+          case TargetSpecificity::TARGET_OR_MEMBER:
+            // Since the old pointer is non-specific about what it points at, we have to throw away
+            // the member path.
+            if (!foundSubstitution) {  // avoid dupes
+              newPossibleTargets.push_back(oldTarget);  // intentional copy
+            }
+            break;
+        }
+      }
+
+      // Ensure that additionalTargets reflects FROM_CALLER if needed.
+      switch (oldPointerConstraints.additionalTargets) {
+        case AdditionalTargets::NONE:
+          break;
+        case AdditionalTargets::FROM_CALLER:
+          constraintsToUpdate.additionalTargets = AdditionalTargets::FROM_CALLER;
+          break;
+      }
+
+      foundSubstitution = true;
+    } else {
+      newPossibleTargets.push_back(move(target));
+    }
+  }
+
+  constraintsToUpdate.possibleTargets = move(newPossibleTargets);
+}
+
+// ---------------------------------------------------------------------------------------
 // applyDefaultConvertion
 
 Maybe<DescribedRvalue> Compiler::applyDefaultConversion(
@@ -582,45 +636,15 @@ Maybe<DescribedPointer> Compiler::toPointer(
     // exclusivity level.  Therefore, we can derive the copied pointer's possible targets
     // directly from the pointer member's possible targets, with no later substitution.
 
-    Maybe<UnboundPointerConstraints> unboundConstraints =
-        member->getUnboundConstraints(parentDesc.targetDescriptor.type.context);
+    Port port(*this, parent.descriptor.targetDescriptor.type.context, parent);
+    Maybe<PointerConstraints> constraints = member->getPointerConstraints(port);
 
-    if (unboundConstraints == nullptr) {
+    if (constraints == nullptr) {
       // No explicit constraints, so infer them from the parent's possiblePointers.
       parentDesc.constraints = getInheritedConstraints(
           move(parentDesc.targetDescriptor.constraints), member);
     } else {
-      // We need to fill out the possibleTargets missing from
-      // unboundConstraints->parentIndependentConstraints using
-      // unboundConstraints->innerPointers.
-      for (auto& parent: parentDesc.constraints.possibleTargets) {
-        switch (parent.specificity) {
-          case TargetSpecificity::EXACT_TARGET:
-            // Append each inner pointer to this exact target to form a new exact target.
-            for (const auto& target: unboundConstraints->innerPointers) {
-              LocalVariablePath newPath = parent.path;  // intentional copy
-              newPath.member.path.push_back(target.path.root);
-              newPath.member.path.insert(newPath.member.path.end(),
-                  target.path.member.path.begin(), target.path.member.path.end());
-
-              unboundConstraints->parentIndependentConstraints.possibleTargets.push_back(
-                  PointerConstraints::PossibleTarget(move(newPath), target.specificity));
-            }
-            break;
-
-          case TargetSpecificity::TARGET_OR_MEMBER:
-            // All we know is that if there are any inner pointers, they also point somewhere
-            // inside this target.
-            if (!unboundConstraints->innerPointers.empty()) {
-              unboundConstraints->parentIndependentConstraints.possibleTargets.push_back(
-                  move(parent));
-            }
-            break;
-        }
-      }
-
-      // Now that it's filled in, just use it.
-      parentDesc.constraints = move(unboundConstraints->parentIndependentConstraints);
+      parentDesc.constraints = move(*constraints);
     }
   }
 
@@ -734,31 +758,12 @@ Maybe<DescribedPointer> Compiler::getMember(DescribedData&& object, PointerVaria
     return nullptr;
   }
 
-  Maybe<UnboundPointerConstraints> unboundConstraints =
-      member->getUnboundConstraints(object.descriptor.type.context);
+  Port port(*this, object.descriptor.type.context, object);
+  Maybe<PointerConstraints> constraints = member->getPointerConstraints(port);
 
-  Maybe<PointerConstraints> constraints;
-
-  if (unboundConstraints == nullptr) {
+  if (constraints == nullptr) {
     // No explicit constraints, so infer them from the parent's possiblePointers.
     constraints = getInheritedConstraints(move(object.descriptor.constraints), member);
-  } else {
-    constraints = move(unboundConstraints->parentIndependentConstraints);
-
-    if (!unboundConstraints->innerPointers.empty()) {
-      // Must bind "this" to a local variable.
-      LocalVariablePath binding = bindTemporary(object);
-
-      for (auto& innerPointer: unboundConstraints->innerPointers) {
-        LocalVariablePath newPath = binding;  // intentional copy
-        newPath.member.path.pop_back();
-        newPath.member.path.push_back(innerPointer.path.root);
-        newPath.member.path.insert(newPath.member.path.end(),
-            innerPointer.path.member.path.begin(), innerPointer.path.member.path.end());
-        constraints->possibleTargets.push_back(
-            PointerConstraints::PossibleTarget(move(newPath), innerPointer.specificity));
-      }
-    }
   }
 
   assert(constraints != nullptr);

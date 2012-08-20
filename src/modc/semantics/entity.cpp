@@ -21,27 +21,87 @@
 namespace modc {
 namespace compiler {
 
-class DataFieldImpl: public DataVariable {
+// =======================================================================================
+
+class DataVariableImpl: public DataVariable {
 public:
+  DataVariableImpl(EntityName&& name, Entity* parent, Maybe<size_t> contextPosition,
+                   ConstrainedType&& type)
+      : name(move(name)), parent(parent), contextPosition(contextPosition), type(move(type)) {}
+
   // -------------------------------------------------------------------------------------
   // implements Entity
 
   const EntityName& getName() { return name; }
-  Entity* getParent() { return containingType; }
+  Entity* getParent() { return parent; }
 
   // -------------------------------------------------------------------------------------
   // implements Variable
+
+  Maybe<size_t> getContextPosition() {
+    return contextPosition;
+  }
 
   ConstrainedType getType(Port& port) {
     return port.import(type);
   }
 
 private:
-  EntityName name;
-  Class* containingType;
+  EntityName const name;
+  Entity* const parent;
+  Maybe<size_t> const contextPosition;
 
   // Context is relative to the variable's scope.
-  ConstrainedType type;
+  ConstrainedType const type;
+};
+
+class PointerVariableImpl: public PointerVariable {
+public:
+  PointerVariableImpl(EntityName&& name, Entity* parent, Maybe<size_t> contextPosition,
+                      ConstrainedType&& type, Exclusivity exclusivity,
+                      Maybe<PointerConstraints>&& pointerConstraints)
+      : name(move(name)), parent(parent), contextPosition(contextPosition), type(move(type)),
+        exclusivity(exclusivity), pointerConstraints(move(pointerConstraints)) {}
+
+  // -------------------------------------------------------------------------------------
+  // implements Entity
+
+  const EntityName& getName() { return name; }
+  Entity* getParent() { return parent; }
+
+  // -------------------------------------------------------------------------------------
+  // implements Variable
+
+  Maybe<size_t> getContextPosition() {
+    return contextPosition;
+  }
+
+  ConstrainedType getType(Port& port) {
+    return port.import(type);
+  }
+
+  // -------------------------------------------------------------------------------------
+  // implements PointerVaribale
+
+  Exclusivity getExclusivity() {
+    return exclusivity;
+  }
+
+  // Get the declared pointer constraints for the variable, if any.
+  Maybe<PointerConstraints> getPointerConstraints(Port& port) {
+    return pointerConstraints.transform(
+        [&](const PointerConstraints& orig) { return port.import(orig); });
+  }
+
+private:
+  EntityName const name;
+  Entity* const parent;
+  Maybe<size_t> const contextPosition;
+
+  // Context is relative to the variable's scope.
+  ConstrainedType const type;
+  Exclusivity const exclusivity;
+  Maybe<PointerConstraints> const pointerConstraints;
 };
 
 }  // namespace compiler

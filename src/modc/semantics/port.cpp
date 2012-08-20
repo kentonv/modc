@@ -52,6 +52,8 @@ Maybe<const Context::Binding&> Port::getBinding(size_t index) {
       return *additionalBinding;
     }
 
+    // TODO:  If the additional binding's static value is sufficiently known then we may not need
+    //   to bind it.
     switch (additionalValueType) {
       case AdditionalValueType::NONE:
         // assert below
@@ -125,45 +127,63 @@ Context Port::import(const Context& input) {
   return Context(input.unboundCount, move(newBindings));
 }
 
+LocalVariablePath Port::importPointerTarget(const LocalVariablePath& input) {
+  Maybe<size_t> pos = input.root->getContextPosition();
+  if (pos == nullptr) {
+    // TODO:  We obviously should never encounter local variables when importing, but what about
+    //   member variables?  Will they already have the parent object set as the root or do we
+    //   need to do that?
+    throw "Can't port variable reference not rooted in a context variable.";
+  }
+
+  Maybe<const Context::Binding&> substitution = getBinding(*pos);
+  if (substitution == nullptr) {
+    // This variable is not bound so the pointer remains unchanged.
+    return input;
+  } else {
+    switch (substitution->getKind()) {
+      case Context::Binding::Kind::DATA:
+        throw "Pointers cannot be declared to point at non-pointer context variables.";
+
+      case Context::Binding::Kind::POINTER: {
+        LocalVariablePath newTarget = substitution->pointer;
+        newTarget.member.append(input.member);
+        return move(newTarget);
+      }
+    }
+  }
+
+  throw "Can't get here";
+}
+
 DataConstraints Port::import(const DataConstraints& input) {
   vector<DataConstraints::PossiblePointer> newPossiblePointers;
   newPossiblePointers.reserve(input.possiblePointers.size());
   for (auto& ptr: input.possiblePointers) {
-    Maybe<size_t> pos = ptr.target.root->getContextPosition();
-    if (pos == nullptr) {
-      // TODO:  We obviously should never encounter local variables when importing, but what about
-      //   member variables?  Will they already have the parent object set as the root or do we
-      //   need to do that?
-      throw "Can't port variable reference not rooted in a context variable.";
-    }
-
-    Maybe<const Context::Binding&> substitution = getBinding(*pos);
-    if (substitution == nullptr) {
-      // This variable is not bound so the pointer remains unchanged.
-      newPossiblePointers.push_back(ptr);
-    } else {
-      switch (substitution->getKind()) {
-        case Context::Binding::Kind::DATA:
-          throw "Pointers cannot be declared to point at non-pointer context variables.";
-
-        case Context::Binding::Kind::POINTER: {
-          LocalVariablePath newTarget = substitution->pointer;
-          newTarget.member.append(ptr.target.member);
-          newPossiblePointers.emplace_back(
-              MemberPath(ptr.member),
-              move(newTarget),
-              ptr.exclusivity,
-              ptr.targetSpecificity);
-          break;
-        }
-      }
-    }
+    newPossiblePointers.emplace_back(
+        MemberPath(ptr.member),
+        importPointerTarget(ptr.target),
+        ptr.exclusivity,
+        ptr.targetSpecificity);
   }
 
   // TODO:  intRanges
   assert(input.intRanges.empty());
 
   return DataConstraints(move(newPossiblePointers), input.additionalPointers);
+}
+
+PointerConstraints Port::import(const PointerConstraints& input) {
+  vector<PointerConstraints::PossibleTarget> newTargets;
+  newTargets.reserve(input.possibleTargets.size());
+
+  for (auto& target: input.possibleTargets) {
+    newTargets.emplace_back(
+        importPointerTarget(target.path),
+        target.specificity);
+  }
+
+  return PointerConstraints(move(newTargets), input.additionalTargets);
 }
 
 ConstrainedType Port::import(const ConstrainedType& input) {

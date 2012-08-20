@@ -119,6 +119,12 @@ public:
   void checkConstraints(const PointerConstraints& allowed, const PointerConstraints& actual,
                         ErrorLocation location);
 
+  // Called when a pointer (oldPointer) goes out-of-scope.  Any references to it within other
+  // variables' constraints must be replaced with oldPointer's possible targets.
+  void substitutePointer(PointerConstraints& constraintsToUpdate,
+                         const LocalVariablePath& oldPointer,
+                         const PointerConstraints& oldPointerConstraints);
+
   Maybe<DescribedRvalue> applyDefaultConversion(
       DescribedRvalue&& input, VariableUsageSet& variablesUsed, ErrorLocation location);
   Maybe<Thing> applyDefaultConversion(

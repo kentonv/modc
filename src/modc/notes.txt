@@ -1,8 +1,6 @@
 next:
-- Create a Port class and move all the port() methods to it.
-  - This can keep track of any type parameters that need to become implicit parameters.  (well,
-    if we add export methods...)
-- start implementing Entity classes.
+- start compiling statements in Scope?
+- implement more Entity classes.
 
 
 also:

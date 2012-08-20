@@ -45,7 +45,7 @@ public:
   virtual ~Variable();
 
   // If this is a context variable, get its index in the context.  Otherwise, return null.
-  virtual Maybe<size_t> getContextPosition() const = 0;
+  virtual Maybe<size_t> getContextPosition() = 0;
 
   // Get the declared type for the variable.  Note that this only contains constraints that
   // were explicitly declared in the code along with the variable's declaration.  Additional
@@ -68,10 +68,8 @@ public:
 
   virtual Exclusivity getExclusivity() = 0;
 
-  // Get constraints independently of any binding for the object of which this variable is a member.
-  // Instead, the object's type's context is provided.
-  virtual Maybe<UnboundPointerConstraints> getUnboundConstraints(
-      const Context& containingTypeContext) = 0;
+  // Get the declared pointer constraints for the variable, if any.
+  virtual Maybe<PointerConstraints> getPointerConstraints(Port& port) = 0;
 };
 
 // =======================================================================================
