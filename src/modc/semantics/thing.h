@@ -109,6 +109,8 @@ struct DataConstraints {
   struct Range {
     Indirect<Thing> start;
     Indirect<Thing> end;
+
+    VALUE_TYPE2(Range, Thing&&, start, Thing&&, end);
   };
   vector<Range> intRanges;
 

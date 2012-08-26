@@ -988,9 +988,7 @@ Maybe<Thing> Compiler::evaluate(ast::Expression& expression, VariableUsageSet& v
         if (parameter == nullptr) {
           hadError = true;
         } else {
-          positionalElements.emplace_back(
-              param.styleAllowance,
-              evaluate(*param.expression, subVariablesUsed.back()));
+          positionalElements.emplace_back(param.styleAllowance, move(*parameter));
         }
       }
 

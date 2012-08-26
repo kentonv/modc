@@ -68,13 +68,6 @@ public:
   // operations, check that the usages do not conflict, and then merge them all into this set.
   void merge(vector<VariableUsageSet>&& parallelUsages);
 
-  bool operator==(const VariableUsageSet& other) const {
-    return variablesUsed == other.variablesUsed;
-  }
-  bool operator!=(const VariableUsageSet& other) const {
-    return variablesUsed != other.variablesUsed;
-  }
-
 private:
   struct Usage {
     Style style;

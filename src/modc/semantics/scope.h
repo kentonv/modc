@@ -25,20 +25,11 @@ namespace compiler {
 
 class Entity;
 
+// Scope keeps track of knowledge about the current scope, e.g. what variables are defined, what
+// their properties are, etc.  Scope does NOT keep track of code, only auxiliary knowledge.
 class Scope {
-  // Scope keeps track of knowledge about the current scope, e.g. what variables are defined, what
-  // their properties are, etc.  Scope does NOT keep track of code, only auxiliary knowledge.
 public:
   RESOURCE_TYPE_BOILERPLATE(Scope);
-
-  const Context& getContext();
-
-  const Bound<Entity>& getEntity();
-
-  // If input.params is filled in, returns it.  Otherwise, finds the context corresponding to
-  // input.scope and returns that.  In other words, this effectively fills in input.params if it
-  // isn't filled in already.
-  const Context& fillContext(const Context& input);
 
   // Get the local variable's current descriptor including transient constraints.
   DataDescriptor getVariableDescriptor(DataVariable* variable);
@@ -48,54 +39,63 @@ public:
   void setVariableConstraints(PointerVariable* variable, const PointerConstraints& ptrConstraints,
                               const DataConstraints& dataConstraints);
 
+  // Add this entity to the pool of known entities.  This simply ensures that the object is not
+  // deleted until the whole module is unloaded.
+  void addEntity(OwnedPtr<Entity> entity);
+
+  class NamedBinding {
+  public:
+    UNION_TYPE_BOILERPLATE(NamedBinding);
+
+    enum class Kind {
+      ENTITY,
+      CONSTRAINED_TYPE
+    };
+
+    Kind getKind();
+
+    union {
+      Bound<Entity> entity;
+      ConstrainedType type;
+    };
+  };
+
+  // Bind / look up local variables.
+  void bind(const string& name, NamedBinding&& value);
+  Maybe<const NamedBinding&> lookupBinding(const string& name);
+
+  // Declare variables.
+  void declareDataVariable(DataVariable* variable,
+                           DataConstraints&& impliedConstraints,
+                           DataValue&& staticValue);
+  void declarePointerVariable(PointerVariable* variable,
+                              PointerConstraints&& impliedConstraints,
+                              Maybe<DataValue&> staticValue);
+
   // Get a pointer to the variable's value.  May be a partial value.  If the caller is simulating
   // changes to the value, it should modify the value directly.
   DataValue* getVariable(Variable* variable);
 
-
-
-
-  // For EXPRESSION
-
-  Thing lookupBuiltinType(BuiltinType::Builtin type);
-
-  Maybe<Thing> lookupBinding(const string& name);
-  // Note that this may instantiate a template.
-  // Note also that this returns a proxy specific to the current scope.
-
-  // For DECLARATION
-
-  Variable& declareVariable(const string& name, Thing&& value);
-
-  // Code will be compiled on-demand.
-  void declareClass(const string& name, TypeDescriptor&& descirptor,
-                    const vector<ast::Statement>& code);
-
-  // Code will be compiled on-demand.
-  void declareFunction(const string& name, FunctionDescriptor&& descirptor,
-                       const vector<ast::Statement>& code);
-
   // Sub-blocks.
   OwnedPtr<Scope> startBlock();
   OwnedPtr<Scope> startLoop();
-  OwnedPtr<Scope> startParallel();
 
-  class IfElse {
+  class Branch {
   public:
-    ~IfElse();
+    ~Branch();
 
-    OwnedPtr<Scope> addIf(Thing&& condition);
-    OwnedPtr<Scope> addElse();
+    OwnedPtr<Scope> addBranch();
+    OwnedPtr<Scope> addDefaultBranch();
   };
-  OwnedPtr<IfElse> startIfElse();
+  OwnedPtr<Branch> startBranch();
 
   // Other control flow.
   void addBreak(Maybe<string> loopName);
   void addContinue(Maybe<string> loopName);
-  void addReturn(Thing&& value);
+  void addReturn();
 
 private:
-  const Scope& parent;
+  Maybe<const Scope&> parent;
 
   OwnedPtrMap<string, Entity> bindings;
   map<string, OwnedPtrVector<Function> > functions;
