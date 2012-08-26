@@ -82,12 +82,12 @@ private:
 class Compiler {
 public:
   Compiler(Scope& scope,
-           Evaluator<DataValue, Maybe<DataValue&>>& evaluator,
+           Evaluator<DataValue, Pointer>& evaluator,
            Evaluator<DataExpression, PointerExpression>& expressionBuilder)
       : scope(scope), evaluator(evaluator), expressionBuilder(expressionBuilder) {}
 
   Scope& scope;
-  Evaluator<DataValue, Maybe<DataValue&>>& evaluator;
+  Evaluator<DataValue, Pointer>& evaluator;
   Evaluator<DataExpression, PointerExpression>& expressionBuilder;
 
   bool areEqual(const Thing& a, const Thing& b);

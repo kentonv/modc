@@ -188,10 +188,10 @@ struct DescribedData {
 struct DescribedPointer {
   PointerDescriptor descriptor;
   PointerExpression expression;
-  Maybe<DataValue&> staticPointer;
+  Pointer staticPointer;
 
   VALUE_TYPE3(DescribedPointer, PointerDescriptor&&, descriptor, PointerExpression&&, expression,
-              Maybe<DataValue&>, staticPointer);
+              Pointer&&, staticPointer);
 };
 
 class DescribedRvalue {

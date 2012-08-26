@@ -70,7 +70,7 @@ public:
                            DataValue&& staticValue);
   void declarePointerVariable(PointerVariable* variable,
                               PointerConstraints&& impliedConstraints,
-                              Maybe<DataValue&> staticValue);
+                              Pointer&& staticValue);
 
   // Get a pointer to the variable's value.  May be a partial value.  If the caller is simulating
   // changes to the value, it should modify the value directly.

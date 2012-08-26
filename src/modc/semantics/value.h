@@ -35,6 +35,8 @@ using std::map;
 
 class DataVariable;
 class PointerVariable;
+class MemberPath;
+class Pointer;
 
 class DataValue {
 public:
@@ -61,7 +63,7 @@ public:
 
   struct Object {
     map<DataVariable*, DataValue> fields;
-    map<PointerVariable*, Maybe<DataValue&>> pointerFields;
+    map<PointerVariable*, Pointer> pointerFields;
   };
 
   union {
@@ -83,6 +85,39 @@ private:
   Kind kind;
 };
 
+class DataHolder {
+public:
+  RESOURCE_TYPE_BOILERPLATE(DataHolder);
+
+  virtual ~DataHolder();
+
+  virtual const DataValue& get() = 0;
+  virtual void set(DataValue&& value) = 0;
+
+  virtual DataHolder& getMemberHolder(const MemberPath& path) = 0;
+};
+
+class Pointer {
+public:
+  UNION_TYPE_BOILERPLATE(Pointer);
+
+  enum class Kind {
+    UNKNOWN,
+    KNOWN
+  };
+
+  Kind getKind() { return kind; }
+
+  // Only valid if Kind is KNOWN.
+  DataHolder* holder;
+
+  static Pointer fromUnknown();
+  static Pointer fromDataHolder(DataHolder& holder);
+
+private:
+  Kind kind;
+};
+
 class Rvalue {
 public:
   UNION_TYPE_BOILERPLATE(Rvalue);
@@ -96,11 +131,11 @@ public:
 
   union {
     DataValue data;
-    DataValue* pointer;
+    Pointer pointer;
   };
 
   static Rvalue fromData(DataValue&& data);
-  static Rvalue fromPointer(DataValue* pointer);
+  static Rvalue fromPointer(Pointer&& pointer);
 };
 
 }  // namespace compiler
