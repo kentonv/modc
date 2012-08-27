@@ -60,7 +60,6 @@ void destroy(T& obj) {
   bool operator!=(const TYPENAME& other) const { return !(*this == other); }
 
 #define RESOURCE_TYPE_BOILERPLATE(TYPENAME) \
-  TYPENAME(TYPENAME& other) = delete; \
   TYPENAME(const TYPENAME& other) = delete; \
   TYPENAME(TYPENAME&& other) = delete; \
   TYPENAME(const TYPENAME&& other) = delete; \

@@ -35,8 +35,8 @@ using std::map;
 
 class DataVariable;
 class PointerVariable;
-class MemberPath;
 class Pointer;
+class Variable;
 
 class DataValue {
 public:
@@ -85,16 +85,42 @@ private:
   Kind kind;
 };
 
-class DataHolder {
+struct MemberPath {
+  // TODO:  What about array subscripts?
+  vector<Variable*> path;
+
+  VALUE_TYPE1(MemberPath, vector<Variable*>&&, path);
+  MemberPath() {}
+
+  bool isPrefix(const MemberPath& other) const;
+
+  // These return nullptr if the path contained an UNKNOWN before the last component.  They
+  // assert-fail if the path contained an unset optional member, since you were supposed to verify
+  // that that wasn't the case separately.
+  Maybe<const DataValue&> readFrom(const DataValue& value) const;
+  Maybe<DataValue&> readFrom(DataValue& value) const;
+
+  void append(const MemberPath& other);
+};
+
+struct LocalVariablePath {
+  Variable* root;
+  MemberPath member;
+
+  VALUE_TYPE2(LocalVariablePath, Variable*, root, MemberPath&&, member);
+
+  LocalVariablePath(Variable* root): root(root) {}
+
+  bool isPrefix(const LocalVariablePath& other) const;
+};
+
+class PointerManager {
 public:
-  RESOURCE_TYPE_BOILERPLATE(DataHolder);
+  RESOURCE_TYPE_BOILERPLATE(PointerManager);
+  virtual ~PointerManager();
 
-  virtual ~DataHolder();
-
-  virtual const DataValue& get() = 0;
-  virtual void set(DataValue&& value) = 0;
-
-  virtual DataHolder& getMemberHolder(const MemberPath& path) = 0;
+  virtual const DataValue& get(const LocalVariablePath& path) = 0;
+  virtual void set(const LocalVariablePath& path, DataValue&& value) = 0;
 };
 
 class Pointer {
@@ -103,16 +129,27 @@ public:
 
   enum class Kind {
     UNKNOWN,
-    KNOWN
+    RAW,
+    MANAGED
   };
 
   Kind getKind() { return kind; }
 
-  // Only valid if Kind is KNOWN.
-  DataHolder* holder;
+  struct ManagedPointer {
+    PointerManager* manager;
+    LocalVariablePath path;
+
+    VALUE_TYPE2(ManagedPointer, PointerManager*, manager, LocalVariablePath&&, path);
+  };
+
+  union {
+    DataValue* raw;
+    ManagedPointer managed;
+  };
 
   static Pointer fromUnknown();
-  static Pointer fromDataHolder(DataHolder& holder);
+  static Pointer fromRaw(DataValue* pointer);
+  static Pointer fromManaged(PointerManager* manager, LocalVariablePath&& path);
 
 private:
   Kind kind;

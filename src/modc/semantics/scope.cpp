@@ -21,51 +21,5 @@ namespace compiler {
 
 class Entity;
 
-// Get the local variable's current descriptor including transient constraints.
-DataDescriptor Scope::getVariableDescriptor(DataVariable* variable) {
-
-}
-
-PointerDescriptor Scope::getVariableDescriptor(PointerVariable* variable) {
-
-}
-
-void Scope::setVariableConstraints(DataVariable* variable, const DataConstraints& constraints) {
-
-}
-void Scope::setVariableConstraints(
-    PointerVariable* variable, const PointerConstraints& ptrConstraints,
-    const DataConstraints& dataConstraints) {
-
-}
-
-
-// =======================================================================================
-// Sub-blocks.
-
-OwnedPtr<Scope> Scope::startBlock() {
-
-}
-OwnedPtr<Scope> Scope::startLoop() {
-
-}
-
-OwnedPtr<Scope::Branch> Scope::startBranch() {
-
-}
-
-// =======================================================================================
-// Other control flow.
-
-void Scope::addBreak(Maybe<string> loopName) {
-
-}
-void Scope::addContinue(Maybe<string> loopName) {
-
-}
-void Scope::addReturn() {
-
-}
-
 }  // namespace compiler
 }  // namespace modc

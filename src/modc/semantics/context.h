@@ -39,35 +39,6 @@ class Context;
 class Variable;
 class Port;
 
-struct MemberPath {
-  // TODO:  What about array subscripts?
-  vector<Variable*> path;
-
-  VALUE_TYPE1(MemberPath, vector<Variable*>&&, path);
-  MemberPath() {}
-
-  bool isPrefix(const MemberPath& other) const;
-
-  // These return nullptr if the path contained an UNKNOWN before the last component.  They
-  // assert-fail if the path contained an unset optional member, since you were supposed to verify
-  // that that wasn't the case separately.
-  Maybe<const DataValue&> readFrom(const DataValue& value) const;
-  Maybe<DataValue&> readFrom(DataValue& value) const;
-
-  void append(const MemberPath& other);
-};
-
-struct LocalVariablePath {
-  Variable* root;
-  MemberPath member;
-
-  VALUE_TYPE2(LocalVariablePath, Variable*, root, MemberPath&&, member);
-
-  LocalVariablePath(Variable* root): root(root) {}
-
-  bool isPrefix(const LocalVariablePath& other) const;
-};
-
 // A list of bindings for context variables, e.g. "this" and type parameters.  A particular Context
 // object is specific to some scope, as it defines all of the context variables visible in that
 // scope.  Context bindings are ordered from outermost to innermost -- e.g. for an inner class, the
