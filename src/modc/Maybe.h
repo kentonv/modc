@@ -148,7 +148,6 @@ public:
 
   ~Maybe() noexcept {}
 
-  inline operator bool() const { return ptr != nullptr; }
   inline T& operator*() { return *ptr; }
   inline const T& operator*() const { return *ptr; }
   inline T* operator->() { return ptr; }
@@ -156,6 +155,8 @@ public:
 
   inline bool operator==(const Maybe& other) const { return ptr == other.ptr; }
   inline bool operator!=(const Maybe& other) const { return ptr != other.ptr; }
+  inline bool operator==(std::nullptr_t) const { return ptr == nullptr; }
+  inline bool operator!=(std::nullptr_t) const { return ptr != nullptr; }
 
 private:
   T* ptr;

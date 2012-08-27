@@ -478,7 +478,7 @@ Maybe<Expression> parseBinaryOp(TokenParserInput& input, int minPriority) {
       Maybe<const ast::BinaryOperatorInfo&> info =
           ast::findBinaryOperatorInfo(input.current().keyword);
 
-      if (!info || info->priority < minPriority) {
+      if (info == nullptr || info->priority < minPriority) {
         break;
       }
 
@@ -739,7 +739,7 @@ auto assignmentOp = [](TokenParserInput& input) -> Maybe<Maybe<ast::BinaryOperat
   }
 
   Maybe<const ast::BinaryOperatorInfo&> info = ast::findBinaryOperatorInfo(keyword);
-  if (!info) {
+  if (info == nullptr) {
     return nullptr;
   }
 
