@@ -1,9 +1,7 @@
 next:
 - start compiling statements in Scope?
 - implement more Entity classes.
-- Seems like pointer values can't just be raw pointers because we need to compile multiple
-  branches that don't all run in practice.  Instead they need to be identifiers, and Scope
-  needs to maintain a map from these identifiers to their current known contents.
+- Scope::State, and Scope in general.
 
 
 also:
