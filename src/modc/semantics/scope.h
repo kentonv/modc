@@ -129,7 +129,8 @@ public:
                       Maybe<Pointer>&& staticValue,
                       ErrorLocation location);
 
-  // Assert that the variable now has the given constraints.
+  // Assert that the variable now has the given constraints, e.g. because the code being compiled
+  // dynamically checked this.
   void assertConstraints(LocalVariablePath&& path, Maybe<DataConstraints>&& constraints);
   void assertConstraints(LocalVariablePath&& path, Maybe<PointerConstraints>&& constraints);
 
@@ -162,6 +163,39 @@ private:
     Loop* loop;
     Fork* fork;
   };
+
+  enum VariableState {
+    UNINITIALIZED,
+    INITIALIZED,
+    DESTROYED    // e.g. moved away
+  };
+
+  struct State {
+    // Map variable paths to changes that have been made vs. parent scope.  Note that a map must
+    // not contain two keys where one is a prefix of the other -- the prefix should have superseded
+    // the more-specific entry.
+    map<LocalVariablePath, VariableState> variableStates;
+    map<LocalVariablePath, Maybe<DataValue>> dataValues;
+    map<LocalVariablePath, Maybe<Pointer>> pointerValues;
+    map<LocalVariablePath, Maybe<DataConstraints>> dataConstraints;
+    map<LocalVariablePath, Maybe<PointerConstraints>> pointerConstraints;
+
+    // Given a state representing a diff from this one, integrate the changes from the diff into
+    // this state.
+    void integrate(State&& diff);
+
+    // Given a state derived from the same base state as this one -- i.e. representing a different
+    // branch of the code -- combine it into this state to form a merged state representing the
+    // state after one of the two branches has completed.
+    void merge(State&& other);
+  };
+
+  State current;
+  // break states
+  // continue states
+  // return states
+
+  // Bindings
 };
 
 }  // namespace compiler
