@@ -4,5 +4,17 @@ next:
 - Scope::State, and Scope in general.
 
 
-also:
-- Fix Maybe<T&> operator bool!
+constraint verification:
+- for each variable, track timestamps for:
+  - last access (read or write)
+  - last write
+  - last time constraints were verified
+- at each access, verify constraints were not invalidated since the last verification
+
+
+loops:
+loop {
+  state = compile(loop, originalState);
+  if (state == originalState) break;
+  originalState.mergeBranch(state);
+}

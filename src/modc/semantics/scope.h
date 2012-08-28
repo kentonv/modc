@@ -17,6 +17,8 @@
 #ifndef KENTONSCODE_MODC_SEMANTICS_SCOPE_H_
 #define KENTONSCODE_MODC_SEMANTICS_SCOPE_H_
 
+#include <string>
+#include <map>
 #include "../macros.h"
 #include "thing.h"
 
@@ -24,9 +26,53 @@ namespace modc {
 namespace compiler {
 
 class Entity;
-class ErrorLocation;
-class VariableUsageSet;
 class Scope;
+
+using std::string;
+using std::map;
+
+class ErrorLocation {
+public:
+  explicit ErrorLocation(ast::Expression& expression);
+
+  template <typename... Parts>
+  void error(Parts&&... parts);
+  void error(errors::Error&& error);
+};
+
+class VariableUsageSet {
+public:
+  enum class Style {
+    IDENTITY,
+    MUTABLE,
+    IMMUTABLE,
+    MEMBER_MUTABLE,
+    MEMBER_IMMUTABLE,
+    ASSIGNMENT
+  };
+
+  void addUsage(const PointerConstraints& pointer, Exclusivity exclusivity, ErrorLocation location);
+
+  void addUsage(const LocalVariablePath& variable, Exclusivity exclusivity, ErrorLocation location);
+
+  // TODO:  Does this need context?  We do need to distinguish between the same member of
+  //   different parents.  Maybe it just needs a path?
+  void addSequential(Variable* variable, Style style, ErrorLocation location);
+
+  // Given a list of VariableUsageSets representing variable usage in a series of parallel
+  // operations, check that the usages do not conflict, and then merge them all into this set.
+  void merge(vector<VariableUsageSet>&& parallelUsages);
+
+private:
+  struct Usage {
+    Style style;
+    ErrorLocation location;
+
+    Usage(Style style, ErrorLocation location): style(style), location(location) {}
+  };
+
+  map<Variable*, Usage> variablesUsed;
+};
 
 // Scope keeps track of knowledge about the current scope, e.g. what variables are defined, what
 // their properties are, etc.  Scope does NOT keep track of code, only auxiliary knowledge.
@@ -61,7 +107,7 @@ public:
   public:
     RESOURCE_TYPE_BOILERPLATE(Loop);
 
-    Loop(Scope& parent, const string& name);
+    Loop(Scope& parent);
     ~Loop();
 
     Scope& innerScope();
@@ -72,11 +118,12 @@ public:
 
   ~Scope();
 
-  void addBreak(Maybe<string> loopName);
-  void addContinue(Maybe<string> loopName);
+  void addBreak(Loop& loop);
+  void addContinue(Loop& loop);
   void addReturn();
 
-  bool canControlGetHere();
+  // Is the current line reachable?  This becomes false immediately after break/continue/return.
+  bool isReachable();
 
   // -------------------------------------------------------------------------------------
   // Bindings
@@ -103,7 +150,7 @@ public:
   Maybe<const NamedBinding&> lookupBinding(const string& name);
 
   // -------------------------------------------------------------------------------------
-  // Varibales
+  // Variables
 
   // Get the local variable's current descriptor including transient constraints.
   DataDescriptor getVariableDescriptor(DataVariable* variable);
@@ -164,38 +211,100 @@ private:
     Fork* fork;
   };
 
-  enum VariableState {
-    UNINITIALIZED,
-    INITIALIZED,
-    DESTROYED    // e.g. moved away
+  // -------------------------------------------------------------------------------------
+  // Bindings
+
+  map<string, NamedBinding> bindings;
+
+  // -------------------------------------------------------------------------------------
+  // Variable states
+
+  template <typename Value, typename Constraints>
+  struct VariableState {
+    // This variable's state in the parent scope.  Null if declared in the current scope.
+    Maybe<const VariableState&> parentState;
+
+    // Bits indicating which parts of the state have changed from parentState.  If parentState is
+    // null then these should all be true.
+    bool isInitializedChanged: 1;
+    bool lastAccessChanged: 1;
+    bool lastWriteChanged: 1;
+    bool lastVerifiedChanged: 1;
+    bool staticValueChanged: 1;
+    bool constraintsChanged: 1;
+
+    // The changed parts.  Each of these is only valid if the corresponding bit is true.
+    bool isInitialized: 1;
+    int lastAccess;
+    int lastWrite;
+    int lastVerified;
+    Maybe<Value> staticValue;
+    Maybe<Constraints> constraints;
+
+    VariableState():
+        parentState(nullptr),
+        isInitializedChanged(true),
+        lastAccessChanged(true),
+        lastWriteChanged(true),
+        lastVerifiedChanged(true),
+        staticValueChanged(true),
+        constraintsChanged(true),
+        isInitialized(false),
+        lastAccess(0),
+        lastWrite(0),
+        lastVerified(0),
+        staticValue(nullptr),
+        constraints(nullptr) {}
+    explicit VariableState(const VariableState& parentState):
+        parentState(move(parentState)),
+        isInitializedChanged(false),
+        lastAccessChanged(false),
+        lastWriteChanged(false),
+        lastVerifiedChanged(false),
+        staticValueChanged(false),
+        constraintsChanged(false),
+        isInitialized(false),
+        lastAccess(0),
+        lastWrite(0),
+        lastVerified(0),
+        staticValue(nullptr),
+        constraints(nullptr) {}
   };
 
+  typedef VariableState<DataValue, DataConstraints> DataVariableState;
+  typedef VariableState<Pointer, PointerConstraints> PointerVariableState;
+
   struct State {
+    // Increments whenever something changes.
+    int timestamp;
+
     // Map variable paths to changes that have been made vs. parent scope.  Note that a map must
     // not contain two keys where one is a prefix of the other -- the prefix should have superseded
     // the more-specific entry.
-    map<LocalVariablePath, VariableState> variableStates;
-    map<LocalVariablePath, Maybe<DataValue>> dataValues;
-    map<LocalVariablePath, Maybe<Pointer>> pointerValues;
-    map<LocalVariablePath, Maybe<DataConstraints>> dataConstraints;
-    map<LocalVariablePath, Maybe<PointerConstraints>> pointerConstraints;
+    map<LocalVariablePath, DataVariableState> dataVariables;
+    map<LocalVariablePath, PointerVariableState> pointerVariables;
 
     // Given a state representing a diff from this one, integrate the changes from the diff into
     // this state.
     void integrate(State&& diff);
 
-    // Given a state derived from the same base state as this one -- i.e. representing a different
-    // branch of the code -- combine it into this state to form a merged state representing the
+    // Given a state derived from the same base state as this one, representing a different
+    // branch of the code, combine it into this state to form a merged state representing the
     // state after one of the two branches has completed.
-    void merge(State&& other);
+    void mergeBranch(State&& other);
   };
 
-  State current;
-  // break states
-  // continue states
-  // return states
+  // If null, current location is unreachable.
+  Maybe<State> currentState;
 
-  // Bindings
+  // States reached at "break" statements within this scope which exit the scope.
+  std::multimap<Loop*, State> breakStates;
+
+  // States reached at "continue" statements within this scope which exit the scope.
+  std::multimap<Loop*, State> continueStates;
+
+  // States reached at "return" statements within this scope.
+  std::vector<State> returnStates;
 };
 
 }  // namespace compiler

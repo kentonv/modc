@@ -36,49 +36,6 @@
 namespace modc {
 namespace compiler {
 
-class ErrorLocation {
-public:
-  explicit ErrorLocation(ast::Expression& expression);
-
-  template <typename... Parts>
-  void error(Parts&&... parts);
-  void error(errors::Error&& error);
-};
-
-class VariableUsageSet {
-public:
-  enum class Style {
-    IDENTITY,
-    MUTABLE,
-    IMMUTABLE,
-    MEMBER_MUTABLE,
-    MEMBER_IMMUTABLE,
-    ASSIGNMENT
-  };
-
-  void addUsage(const PointerConstraints& pointer, Exclusivity exclusivity, ErrorLocation location);
-
-  void addUsage(const LocalVariablePath& variable, Exclusivity exclusivity, ErrorLocation location);
-
-  // TODO:  Does this need context?  We do need to distinguish between the same member of
-  //   different parents.  Maybe it just needs a path?
-  void addSequential(Variable* variable, Style style, ErrorLocation location);
-
-  // Given a list of VariableUsageSets representing variable usage in a series of parallel
-  // operations, check that the usages do not conflict, and then merge them all into this set.
-  void merge(vector<VariableUsageSet>&& parallelUsages);
-
-private:
-  struct Usage {
-    Style style;
-    ErrorLocation location;
-
-    Usage(Style style, ErrorLocation location): style(style), location(location) {}
-  };
-
-  map<Variable*, Usage> variablesUsed;
-};
-
 class Compiler {
 public:
   Compiler(Scope& scope,
